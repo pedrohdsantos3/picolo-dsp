@@ -1,0 +1,918 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>TONE3000 Android</title>
+  <style>
+    :root {
+      --bg: #0d0e12;
+      --panel: #15171d;
+      --panel2: #1b1e26;
+      --stroke: #2a2e39;
+      --text: #f4f5f7;
+      --muted: #9399a8;
+      --accent: #ff5a36;
+      --good: #55d187;
+      --danger: #ff6666;
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      padding:
+        max(14px, env(safe-area-inset-top))
+        14px
+        max(18px, env(safe-area-inset-bottom));
+    }
+
+    button, input {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    .app {
+      max-width: 980px;
+      margin: 0 auto;
+      display: grid;
+      gap: 12px;
+    }
+
+    .header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 4px 2px 8px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .logo {
+      width: 38px;
+      height: 38px;
+      border-radius: 12px;
+      background: linear-gradient(145deg, #ff744f, #d83b1e);
+      display: grid;
+      place-items: center;
+      font-weight: 900;
+      letter-spacing: -2px;
+      box-shadow: 0 6px 28px rgba(255,90,54,.22);
+    }
+
+    .brand-copy { min-width: 0; }
+
+    .brand-title {
+      font-size: 18px;
+      font-weight: 850;
+      letter-spacing: .02em;
+    }
+
+    .brand-sub {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn {
+      border: 1px solid var(--stroke);
+      background: var(--panel2);
+      border-radius: 11px;
+      padding: 10px 12px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .btn.good {
+      background: rgba(85,209,135,.12);
+      color: var(--good);
+      border-color: rgba(85,209,135,.28);
+    }
+
+    .btn.danger {
+      background: rgba(255,102,102,.10);
+      color: var(--danger);
+      border-color: rgba(255,102,102,.25);
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--stroke);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .presetbar {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 8px;
+      padding: 10px;
+    }
+
+    .preset-slots {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0,1fr));
+      gap: 7px;
+    }
+
+    .preset {
+      min-width: 0;
+      border: 1px solid var(--stroke);
+      background: #111319;
+      border-radius: 10px;
+      padding: 9px 7px;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .preset .n {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .preset .name {
+      display: block;
+      margin-top: 3px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .chain-wrap {
+      padding: 12px;
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .section-title {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      font-weight: 850;
+    }
+
+    .chain {
+      display: flex;
+      gap: 9px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      scroll-snap-type: x proximity;
+    }
+
+    .block {
+      position: relative;
+      min-height: 132px;
+      min-width: 190px;
+      flex: 0 0 190px;
+      scroll-snap-align: start;
+      padding: 13px;
+      background: linear-gradient(180deg,#20232b,#191b22);
+      border: 1px solid #343946;
+      border-radius: 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .block.active {
+      border-color: rgba(255,90,54,.65);
+      box-shadow: inset 0 0 0 1px rgba(255,90,54,.14);
+    }
+
+    .block-tag {
+      color: var(--muted);
+      text-transform: uppercase;
+      font-size: 10px;
+      font-weight: 850;
+      letter-spacing: .11em;
+    }
+
+    .block-title {
+      font-size: 16px;
+      font-weight: 850;
+      line-height: 1.15;
+      margin-top: 5px;
+      word-break: break-word;
+    }
+
+    .block-sub {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.25;
+    }
+
+    .block-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 12px;
+    }
+
+    .block-actions .btn {
+      padding: 7px 8px;
+      flex: 1;
+      font-size: 11px;
+    }
+
+    .controls {
+      padding: 12px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 10px;
+    }
+
+    .control-card {
+      border: 1px solid var(--stroke);
+      border-radius: 13px;
+      padding: 12px;
+      background: #111319;
+    }
+
+    .control-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .control-name {
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .value {
+      font-variant-numeric: tabular-nums;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    .master {
+      padding: 12px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0,1fr));
+      gap: 8px;
+    }
+
+    .route {
+      border: 1px solid var(--stroke);
+      border-radius: 12px;
+      padding: 11px;
+      background: #111319;
+      cursor: pointer;
+    }
+
+    .route-label {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      font-weight: 800;
+    }
+
+    .route-value {
+      margin-top: 4px;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .footer {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 12px;
+    }
+
+    .status {
+      min-width: 0;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .status.live {
+      color: var(--good);
+    }
+
+    .modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.72);
+      padding: 22px 14px;
+      z-index: 10;
+      align-items: flex-end;
+    }
+
+    .modal.open { display: flex; }
+
+    .sheet {
+      width: min(760px,100%);
+      margin: 0 auto;
+      background: #171920;
+      border: 1px solid #343946;
+      border-radius: 18px;
+      padding: 14px;
+      max-height: 82vh;
+      overflow: auto;
+    }
+
+    .sheet h2 {
+      margin: 2px 0 12px;
+      font-size: 18px;
+    }
+
+    .sheet pre {
+      background: #0d0e12;
+      border: 1px solid var(--stroke);
+      border-radius: 12px;
+      padding: 12px;
+      overflow: auto;
+      white-space: pre-wrap;
+      color: #ccd0da;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .save-grid {
+      display: grid;
+      grid-template-columns: repeat(4,1fr);
+      gap: 7px;
+      margin-top: 8px;
+    }
+
+    @media (max-width: 620px) {
+      .controls {
+        grid-template-columns: 1fr;
+      }
+
+      .master {
+        grid-template-columns: repeat(2,1fr);
+      }
+
+      .presetbar {
+        grid-template-columns: 1fr;
+      }
+
+      .preset-slots {
+        order: 2;
+      }
+
+      .presetbar > .btn {
+        width: 100%;
+      }
+
+      .header {
+        grid-template-columns: 1fr;
+      }
+
+      .top-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="header">
+    <div class="brand">
+      <div class="logo">T3</div>
+      <div class="brand-copy">
+        <div class="brand-title">TONE3000 Android</div>
+        <div class="brand-sub">TinyALSA · NAM A2 · 48 kHz / 64 frames</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button class="btn" onclick="openDiagnostics()">DIAGNOSTICS</button>
+      <button class="btn" onclick="Tone3000Android.showDebugUi()">DEBUG UI</button>
+    </div>
+  </header>
+
+  <section class="panel presetbar">
+    <button class="btn" onclick="openSaveSheet()">SAVE</button>
+    <div id="presetSlots" class="preset-slots"></div>
+    <button class="btn primary" onclick="addNam()">+ ADD NAM</button>
+  </section>
+
+  <section class="panel chain-wrap">
+    <div class="section-head">
+      <div class="section-title">Signal Chain</div>
+      <div id="chainState" class="status">Gate → NAM → EQ</div>
+    </div>
+
+    <div id="chain" class="chain"></div>
+  </section>
+
+  <section class="panel controls">
+    <div class="control-card">
+      <div class="control-head">
+        <span class="control-name">Input</span>
+        <span id="inputGainValue" class="value">0.0 dB</span>
+      </div>
+      <input id="inputGain" type="range" min="-24" max="24" step=".5" value="0">
+    </div>
+
+    <div class="control-card">
+      <div class="control-head">
+        <span class="control-name">Output</span>
+        <span id="outputGainValue" class="value">0.0 dB</span>
+      </div>
+      <input id="outputGain" type="range" min="-24" max="12" step=".5" value="0">
+    </div>
+
+    <div class="control-card">
+      <div class="control-head">
+        <span class="control-name">Gate threshold</span>
+        <span id="gateThresholdValue" class="value">-65.0 dB</span>
+      </div>
+      <input id="gateThreshold" type="range" min="-90" max="-20" step=".5" value="-65">
+    </div>
+
+    <div class="control-card">
+      <div class="control-head">
+        <span class="control-name">Low</span>
+        <span id="eqLowValue" class="value">0.0 dB</span>
+      </div>
+      <input id="eqLow" type="range" min="-12" max="12" step=".5" value="0">
+    </div>
+
+    <div class="control-card">
+      <div class="control-head">
+        <span class="control-name">Mid</span>
+        <span id="eqMidValue" class="value">0.0 dB</span>
+      </div>
+      <input id="eqMid" type="range" min="-12" max="12" step=".5" value="0">
+    </div>
+
+    <div class="control-card">
+      <div class="control-head">
+        <span class="control-name">High</span>
+        <span id="eqHighValue" class="value">0.0 dB</span>
+      </div>
+      <input id="eqHigh" type="range" min="-12" max="12" step=".5" value="0">
+    </div>
+  </section>
+
+  <section class="panel master">
+    <button class="route" onclick="cycleInput()">
+      <div class="route-label">Input route</div>
+      <div id="inputRoute" class="route-value">Input 1</div>
+    </button>
+
+    <button class="route" onclick="cycleOutput()">
+      <div class="route-label">Output route</div>
+      <div id="outputRoute" class="route-value">Output 1-2</div>
+    </button>
+
+    <button id="audioButton" class="btn good" onclick="toggleAudio()">START AUDIO</button>
+    <button class="btn" onclick="scanUsb()">USB AUDIO</button>
+  </section>
+
+  <footer class="panel footer">
+    <div id="status" class="status">Ready</div>
+    <button class="btn" onclick="refreshNow()">REFRESH</button>
+    <button class="btn danger" onclick="stopAudio()">STOP</button>
+  </footer>
+</div>
+
+<div id="saveModal" class="modal" onclick="modalBackground(event,'saveModal')">
+  <div class="sheet">
+    <h2>Save preset</h2>
+    <div id="saveGrid" class="save-grid"></div>
+    <div style="margin-top:12px">
+      <button class="btn" onclick="closeModal('saveModal')">CANCEL</button>
+    </div>
+  </div>
+</div>
+
+<div id="diagnosticsModal" class="modal" onclick="modalBackground(event,'diagnosticsModal')">
+  <div class="sheet">
+    <h2>Realtime diagnostics</h2>
+    <pre id="diagnostics">Loading...</pre>
+    <div style="margin-top:12px; display:flex; gap:8px">
+      <button class="btn primary" onclick="refreshDiagnostics()">REFRESH</button>
+      <button class="btn" onclick="closeModal('diagnosticsModal')">CLOSE</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let state = null;
+  let interactionUntil = {};
+  let statusTimer = null;
+
+  const $ = (id) => document.getElementById(id);
+
+  function bridgeAvailable() {
+    return typeof Tone3000Android !== 'undefined';
+  }
+
+  function setStatus(message, live = false) {
+    const el = $('status');
+    el.textContent = message || 'Ready';
+    el.classList.toggle('live', !!live);
+
+    if (statusTimer) clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => {
+      if (state) {
+        el.textContent = state.running ? 'Audio active' : 'Audio stopped';
+        el.classList.toggle('live', !!state.running);
+      }
+    }, 4500);
+  }
+
+  function hold(id, ms = 900) {
+    interactionUntil[id] = Date.now() + ms;
+  }
+
+  function canSync(id) {
+    return !interactionUntil[id] || Date.now() > interactionUntil[id];
+  }
+
+  function formatDb(v) {
+    const n = Number(v || 0);
+    return `${n >= 0 ? '+' : ''}${n.toFixed(1)} dB`;
+  }
+
+  function presetShortLabel(p) {
+    if (!p || !p.saved) return 'Empty';
+    const label = p.toneTitle || p.modelName || p.label || `Preset ${p.slot}`;
+    return label.replace(/^Preset \d+\s*•\s*/i, '');
+  }
+
+  function renderPresets(presets) {
+    const root = $('presetSlots');
+    root.innerHTML = '';
+
+    (presets || []).forEach((p) => {
+      const button = document.createElement('button');
+      button.className = 'preset';
+      button.innerHTML = `
+        <span class="n">Preset ${p.slot}</span>
+        <span class="name">${escapeHtml(presetShortLabel(p))}</span>
+      `;
+      button.onclick = () => {
+        if (!p.saved) {
+          setStatus(`Preset ${p.slot} is empty`);
+          return;
+        }
+        setStatus(`Loading preset ${p.slot}…`);
+        Tone3000Android.loadPreset(p.slot);
+        setTimeout(refreshNow, 650);
+      };
+      root.appendChild(button);
+    });
+  }
+
+  function renderSaveSlots(presets) {
+    const root = $('saveGrid');
+    root.innerHTML = '';
+
+    for (let slot = 1; slot <= 4; slot++) {
+      const p = (presets || []).find(x => x.slot === slot);
+      const b = document.createElement('button');
+      b.className = 'btn';
+      b.textContent = `Preset ${slot}${p && p.saved ? ' · overwrite' : ''}`;
+      b.onclick = () => {
+        Tone3000Android.savePreset(slot);
+        closeModal('saveModal');
+        setStatus(`Saving preset ${slot}…`);
+        setTimeout(refreshNow, 500);
+      };
+      root.appendChild(b);
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  function parseRoutes(routing) {
+    const text = String(routing || '');
+    const input = text.match(/Input:\s*([^\n]+)/i);
+    const output = text.match(/Output:\s*([^\n]+)/i);
+    return {
+      input: input ? input[1] : `Input ${(state?.inputChannel || 0) + 1}`,
+      output: output ? output[1] : 'Output pair'
+    };
+  }
+
+  function syncRange(id, value, labelId) {
+    if (!canSync(id)) return;
+    $(id).value = value;
+    $(labelId).textContent = formatDb(value);
+  }
+
+  function namCard(nam) {
+    const index = Number(nam.chainIndex || 0);
+    const isPrimary = !!nam.primary;
+    const title = nam.modelName || (isPrimary ? 'No capture loaded' : `NAM ${index + 1}`);
+    const subtitle = nam.toneTitle || (nam.size ? `Capture ${String(nam.size).toUpperCase()}` : '');
+    const bypassLabel = nam.bypass ? 'BYPASSED' : 'BYPASS';
+
+    return `
+      <article class="block ${nam.bypass ? '' : 'active'}">
+        <div>
+          <div class="block-tag">NAM ${index + 1}${isPrimary ? ' · PRIMARY' : ' · SERIAL'}</div>
+          <div class="block-title">${escapeHtml(title)}</div>
+          <div class="block-sub">${escapeHtml(subtitle)}</div>
+        </div>
+        <div class="block-actions">
+          ${isPrimary
+            ? `<button class="btn primary" onclick="browse()">SWAP</button>`
+            : ''}
+          <button class="btn" onclick="toggleNamBypass(${index}, ${nam.bypass ? 'false' : 'true'})">${bypassLabel}</button>
+        </div>
+      </article>
+    `;
+  }
+
+  function renderChain(s) {
+    const chain = $('chain');
+    const nams = Array.isArray(s.namChain) ? s.namChain : [];
+
+    const gate = `
+      <article class="block ${s.gateEnabled ? 'active' : ''}">
+        <div>
+          <div class="block-tag">Master</div>
+          <div class="block-title">Noise Gate</div>
+          <div class="block-sub">${s.gateEnabled ? `On · ${formatDb(s.gateThreshold)}` : 'Off'}</div>
+        </div>
+        <div class="block-actions">
+          <button class="btn" onclick="toggleGate()">${s.gateEnabled ? 'POWER ON' : 'POWER OFF'}</button>
+        </div>
+      </article>
+    `;
+
+    const namCards = nams.map(namCard).join('');
+
+    const add = Number(s.namBlockCount || 0) < 4
+      ? `
+        <article class="block" style="border-style:dashed; justify-content:center">
+          <div>
+            <div class="block-tag">Signal Chain</div>
+            <div class="block-title">+ NAM</div>
+            <div class="block-sub">Add another NAM block in series.</div>
+          </div>
+          <div class="block-actions">
+            <button class="btn primary" onclick="addNam()">ADD NAM</button>
+          </div>
+        </article>
+      `
+      : '';
+
+    const eq = `
+      <article class="block">
+        <div>
+          <div class="block-tag">Master</div>
+          <div class="block-title">3-Band EQ</div>
+          <div class="block-sub">Low 120 Hz · Mid 750 Hz · High 4 kHz</div>
+        </div>
+        <div class="block-actions">
+          <button class="btn" onclick="resetEq()">FLAT</button>
+          ${nams.length > 1 ? `<button class="btn danger" onclick="clearExtraNams()">CLEAR NAM 2+</button>` : ''}
+        </div>
+      </article>
+    `;
+
+    chain.innerHTML = gate + namCards + add + eq;
+  }
+
+  function render(s) {
+    state = s;
+
+    syncRange('inputGain', s.inputGain, 'inputGainValue');
+    syncRange('outputGain', s.outputGain, 'outputGainValue');
+    syncRange('gateThreshold', s.gateThreshold, 'gateThresholdValue');
+    syncRange('eqLow', s.eqLow, 'eqLowValue');
+    syncRange('eqMid', s.eqMid, 'eqMidValue');
+    syncRange('eqHigh', s.eqHigh, 'eqHighValue');
+
+    const routes = parseRoutes(s.routing);
+    $('inputRoute').textContent = routes.input;
+    $('outputRoute').textContent = routes.output;
+
+    $('audioButton').textContent = s.running ? 'AUDIO ACTIVE' : 'START AUDIO';
+    $('audioButton').classList.toggle('good', !s.running);
+
+    const namCount = Number(s.namBlockCount || 0);
+    $('chainState').textContent =
+      `${s.gateEnabled ? 'Gate → ' : ''}${namCount || 1} NAM${namCount === 1 ? '' : 's'} → EQ`;
+
+    renderChain(s);
+    renderPresets(s.presets);
+    renderSaveSlots(s.presets);
+
+    if (!statusTimer) {
+      $('status').textContent = s.running ? 'Audio active' : 'Audio stopped';
+      $('status').classList.toggle('live', !!s.running);
+    }
+  }
+
+  function refreshNow() {
+    if (!bridgeAvailable()) return;
+    try {
+      const raw = Tone3000Android.getState();
+      render(JSON.parse(raw));
+    } catch (e) {
+      setStatus(`Bridge error: ${e}`);
+    }
+  }
+
+  function bindRange(id, bridgeMethod) {
+    const el = $(id);
+
+    const apply = () => {
+      hold(id);
+      const value = Number(el.value);
+      const labelId = `${id}Value`;
+      if ($(labelId)) $(labelId).textContent = formatDb(value);
+      bridgeMethod(value);
+    };
+
+    el.addEventListener('input', apply);
+  }
+
+  bindRange('inputGain', (v) => Tone3000Android.setInputGain(v));
+  bindRange('outputGain', (v) => Tone3000Android.setOutputGain(v));
+  bindRange('gateThreshold', (v) => Tone3000Android.setGateThreshold(v));
+  bindRange('eqLow', (v) => Tone3000Android.setEqLow(v));
+  bindRange('eqMid', (v) => Tone3000Android.setEqMid(v));
+  bindRange('eqHigh', (v) => Tone3000Android.setEqHigh(v));
+
+  function toggleGate() {
+    const next = !(state && state.gateEnabled);
+    Tone3000Android.setGateEnabled(next);
+    setStatus(`Gate ${next ? 'on' : 'off'}`);
+    setTimeout(refreshNow, 80);
+  }
+
+  function toggleBypass() {
+    const bypassed = Tone3000Android.toggleBypass();
+    setStatus(bypassed ? 'NAM bypassed' : 'NAM active');
+    setTimeout(refreshNow, 80);
+  }
+
+  function resetEq() {
+    hold('eqLow'); hold('eqMid'); hold('eqHigh');
+    $('eqLow').value = 0; $('eqMid').value = 0; $('eqHigh').value = 0;
+    $('eqLowValue').textContent = formatDb(0);
+    $('eqMidValue').textContent = formatDb(0);
+    $('eqHighValue').textContent = formatDb(0);
+    Tone3000Android.setEqLow(0);
+    Tone3000Android.setEqMid(0);
+    Tone3000Android.setEqHigh(0);
+    setStatus('EQ reset to flat');
+  }
+
+  function cycleInput() {
+    Tone3000Android.cycleInput();
+    setTimeout(refreshNow, 70);
+  }
+
+  function cycleOutput() {
+    Tone3000Android.cycleOutput();
+    setTimeout(refreshNow, 70);
+  }
+
+  function toggleAudio() {
+    if (state && state.running) {
+      stopAudio();
+      return;
+    }
+
+    setStatus('Starting audio…');
+    const result = Tone3000Android.startAudio();
+    setStatus(String(result).split('\n')[0], String(result).startsWith('AUDIO ACTIVE'));
+    setTimeout(refreshNow, 120);
+  }
+
+  function stopAudio() {
+    Tone3000Android.stopAudio();
+    setStatus('Audio stopped');
+    setTimeout(refreshNow, 100);
+  }
+
+  function browse() {
+    setStatus('Opening TONE3000 to replace NAM 1…');
+    Tone3000Android.browseTone3000();
+  }
+
+  function addNam() {
+    setStatus('Opening TONE3000 to add a NAM block…');
+    Tone3000Android.addNam();
+  }
+
+  function toggleNamBypass(chainIndex, enabled) {
+    Tone3000Android.setNamBypass(chainIndex, enabled);
+    setStatus(`NAM ${chainIndex + 1} ${enabled ? 'bypassed' : 'active'}`);
+    setTimeout(refreshNow, 80);
+  }
+
+  function clearExtraNams() {
+    Tone3000Android.clearExtraNams();
+    setStatus('Clearing extra NAM blocks…');
+    setTimeout(refreshNow, 400);
+  }
+
+  function scanUsb() {
+    const result = Tone3000Android.scanUsbAudio();
+    setStatus(String(result).split('\n')[0]);
+    openDiagnostics(String(result));
+  }
+
+  function openSaveSheet() {
+    $('saveModal').classList.add('open');
+  }
+
+  function openDiagnostics(initialText) {
+    $('diagnosticsModal').classList.add('open');
+    if (initialText) {
+      $('diagnostics').textContent = initialText;
+    } else {
+      refreshDiagnostics();
+    }
+  }
+
+  function refreshDiagnostics() {
+    try {
+      $('diagnostics').textContent = Tone3000Android.getStats();
+    } catch (e) {
+      $('diagnostics').textContent = String(e);
+    }
+  }
+
+  function closeModal(id) {
+    $(id).classList.remove('open');
+  }
+
+  function modalBackground(event, id) {
+    if (event.target.id === id) closeModal(id);
+  }
+
+  refreshNow();
+  setInterval(refreshNow, 700);
+</script>
+</body>
+</html>
