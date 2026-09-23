@@ -5293,7 +5293,7 @@ class MainActivity : AppCompatActivity() {
 
                 .appendQueryParameter(
                     "format",
-                    "nam"
+                    if (prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") == "IR") "ir" else "nam"
                 )
 
                 .appendQueryParameter(
