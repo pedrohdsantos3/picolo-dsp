@@ -107,6 +107,9 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_CABINET_IR_PATH =
             "cabinet_ir_path"
 
+        private const val PREF_CABINET_IR_IMAGE =
+            "cabinet_ir_image"
+
         private const val PREF_CABINET_IR_BYPASS =
             "cabinet_ir_bypass"
 
@@ -2084,6 +2087,7 @@ class MainActivity : AppCompatActivity() {
         val cabinetPath = prefs.getString(PREF_CABINET_IR_PATH, null)
         result.put("cabinetIrLoaded", cabinetPath != null && File(cabinetPath).exists())
         result.put("cabinetIrName", cabinetPath?.let { File(it).name } ?: "")
+        result.put("cabinetIrImage", prefs.getString(PREF_CABINET_IR_IMAGE, ""))
         result.put("cabinetIrBypass", prefs.getBoolean(PREF_CABINET_IR_BYPASS, false))
         result.put("cabinetIrPosition", prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS))
         result.put("cabinetIrInGain", prefs.getFloat(PREF_CABINET_IR_IN_GAIN, 0.0f).toDouble())
@@ -2898,7 +2902,7 @@ class MainActivity : AppCompatActivity() {
                         size = model.optString("size", "custom"),
                         modelUrl = modelUrl
                     )
-                    Thread { downloadAndLoadCabinet(toneId, title, onlineModel, token) }.start()
+                    Thread { downloadAndLoadCabinet(toneId, title, imageUrl, onlineModel, token) }.start()
                     return true
                 }
                 val mode = if (targetInsertId.startsWith("nam-")) {
@@ -2925,6 +2929,7 @@ class MainActivity : AppCompatActivity() {
         private fun downloadAndLoadCabinet(
             toneId: String,
             toneTitle: String,
+            imageUrl: String,
             model: OnlineModel,
             token: String
         ) {
@@ -2939,6 +2944,7 @@ class MainActivity : AppCompatActivity() {
                 nativeSetImpulseResponsePosition(position)
                 prefs.edit()
                     .putString(PREF_CABINET_IR_PATH, normalized.absolutePath)
+                    .putString(PREF_CABINET_IR_IMAGE, imageUrl)
                     .putInt(PREF_CABINET_IR_POSITION, position)
                     .putBoolean(PREF_CABINET_IR_BYPASS, false)
                     .putFloat(PREF_CABINET_IR_MIX, 1.0f)
@@ -3045,6 +3051,7 @@ class MainActivity : AppCompatActivity() {
             }
             prefs.edit()
                 .remove(PREF_CABINET_IR_PATH)
+                .remove(PREF_CABINET_IR_IMAGE)
                 .remove(PREF_CABINET_IR_BYPASS)
                 .remove(PREF_CABINET_IR_POSITION)
                 .remove(PREF_CABINET_IR_IN_GAIN)

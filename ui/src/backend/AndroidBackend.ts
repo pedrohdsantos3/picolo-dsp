@@ -107,7 +107,7 @@ function chainState(): any {
   const cabinetBands = Array.isArray(source.cabinetIrEq) ? source.cabinetIrEq : [];
   const cabinet = source.cabinetIrLoaded ? {
     blockId: 'cabinet-ir', kind: 'tone',
-    tone: { id: -1, title: source.cabinetIrName || 'Cabinet IR', format: 'IR', models: [], models_count: 1, a2_models_count: 0, downloads_count: 0, favorites_count: 0 },
+    tone: { id: -1, title: source.cabinetIrName || 'Cabinet IR', format: 'IR', images: source.cabinetIrImage ? [source.cabinetIrImage] : [], models: [], models_count: 1, a2_models_count: 0, downloads_count: 0, favorites_count: 0 },
     activeModelId: -1, loaded: true, loadFailed: false, modelLoading: false, irLong: false,
     params: {
       enabled: !Boolean(source.cabinetIrBypass), normalize: false, slimSize: 0,
