@@ -150,6 +150,9 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_NAM_EQ_LOW_DB = "nam_eq_low_db"
         private const val PREF_NAM_EQ_MID_DB = "nam_eq_mid_db"
         private const val PREF_NAM_EQ_HIGH_DB = "nam_eq_high_db"
+        private const val PREF_NAM_EQ_BAND3_DB = "nam_eq_band3_db"
+        private const val PREF_NAM_EQ_BAND4_DB = "nam_eq_band4_db"
+        private const val PREF_NAM_EQ_BAND5_DB = "nam_eq_band5_db"
         private const val PREF_NAM_BYPASS = "nam_bypass"
         private const val PREF_NAM_EQ_PRE = "nam_eq_pre"
         private const val PREF_NAM_NORMALIZE = "nam_normalize"
@@ -1625,6 +1628,9 @@ class MainActivity : AppCompatActivity() {
                     eqLowDb = prefs.getFloat(PREF_NAM_EQ_LOW_DB, 0.0f),
                     eqMidDb = prefs.getFloat(PREF_NAM_EQ_MID_DB, 0.0f),
                     eqHighDb = prefs.getFloat(PREF_NAM_EQ_HIGH_DB, 0.0f)
+                    ,eqBand3Db = prefs.getFloat(PREF_NAM_EQ_BAND3_DB, 0.0f)
+                    ,eqBand4Db = prefs.getFloat(PREF_NAM_EQ_BAND4_DB, 0.0f)
+                    ,eqBand5Db = prefs.getFloat(PREF_NAM_EQ_BAND5_DB, 0.0f)
                     ,eqPre = prefs.getBoolean(PREF_NAM_EQ_PRE, false)
                     ,normalize = prefs.getBoolean(PREF_NAM_NORMALIZE, true)
                     ,a2Full = prefs.getBoolean(PREF_NAM_A2_FULL, false)
@@ -1650,6 +1656,9 @@ class MainActivity : AppCompatActivity() {
                 .remove(PREF_NAM_EQ_LOW_DB)
                 .remove(PREF_NAM_EQ_MID_DB)
                 .remove(PREF_NAM_EQ_HIGH_DB)
+                .remove(PREF_NAM_EQ_BAND3_DB)
+                .remove(PREF_NAM_EQ_BAND4_DB)
+                .remove(PREF_NAM_EQ_BAND5_DB)
                 .remove(PREF_NAM_EQ_PRE)
                 .remove(PREF_NAM_NORMALIZE)
                 .remove(PREF_NAM_A2_FULL)
@@ -1672,6 +1681,9 @@ class MainActivity : AppCompatActivity() {
             .putFloat(PREF_NAM_EQ_LOW_DB, first.eqLowDb)
             .putFloat(PREF_NAM_EQ_MID_DB, first.eqMidDb)
             .putFloat(PREF_NAM_EQ_HIGH_DB, first.eqHighDb)
+            .putFloat(PREF_NAM_EQ_BAND3_DB, first.eqBand3Db)
+            .putFloat(PREF_NAM_EQ_BAND4_DB, first.eqBand4Db)
+            .putFloat(PREF_NAM_EQ_BAND5_DB, first.eqBand5Db)
             .putBoolean(PREF_NAM_BYPASS, first.bypass)
             .putBoolean(PREF_NAM_EQ_PRE, first.eqPre)
             .putBoolean(PREF_NAM_NORMALIZE, first.normalize)
@@ -2151,6 +2163,12 @@ class MainActivity : AppCompatActivity() {
                 .put("eqLowDb", prefs.getFloat(PREF_NAM_EQ_LOW_DB, 0.0f))
                 .put("eqMidDb", prefs.getFloat(PREF_NAM_EQ_MID_DB, 0.0f))
                 .put("eqHighDb", prefs.getFloat(PREF_NAM_EQ_HIGH_DB, 0.0f))
+                .put("eqBand3Db", prefs.getFloat(PREF_NAM_EQ_BAND3_DB, 0.0f))
+                .put("eqBand4Db", prefs.getFloat(PREF_NAM_EQ_BAND4_DB, 0.0f))
+                .put("eqBand5Db", prefs.getFloat(PREF_NAM_EQ_BAND5_DB, 0.0f))
+                .put("eqPre", prefs.getBoolean(PREF_NAM_EQ_PRE, false))
+                .put("normalize", prefs.getBoolean(PREF_NAM_NORMALIZE, true))
+                .put("a2Full", prefs.getBoolean(PREF_NAM_A2_FULL, false))
         )
 
 
@@ -3968,6 +3986,9 @@ class MainActivity : AppCompatActivity() {
                     .putFloat(presetKey(slot, "nam_eq_low_db"), prefs.getFloat(PREF_NAM_EQ_LOW_DB, 0.0f))
                     .putFloat(presetKey(slot, "nam_eq_mid_db"), prefs.getFloat(PREF_NAM_EQ_MID_DB, 0.0f))
                     .putFloat(presetKey(slot, "nam_eq_high_db"), prefs.getFloat(PREF_NAM_EQ_HIGH_DB, 0.0f))
+                    .putFloat(presetKey(slot, "nam_eq_band3_db"), prefs.getFloat(PREF_NAM_EQ_BAND3_DB, 0.0f))
+                    .putFloat(presetKey(slot, "nam_eq_band4_db"), prefs.getFloat(PREF_NAM_EQ_BAND4_DB, 0.0f))
+                    .putFloat(presetKey(slot, "nam_eq_band5_db"), prefs.getFloat(PREF_NAM_EQ_BAND5_DB, 0.0f))
                     .putBoolean(presetKey(slot, "nam_eq_pre"), prefs.getBoolean(PREF_NAM_EQ_PRE, false))
                     .putBoolean(presetKey(slot, "nam_normalize"), prefs.getBoolean(PREF_NAM_NORMALIZE, true))
                     .putBoolean(presetKey(slot, "nam_a2_full"), prefs.getBoolean(PREF_NAM_A2_FULL, false))
@@ -4235,6 +4256,9 @@ class MainActivity : AppCompatActivity() {
                     .putFloat(PREF_NAM_EQ_LOW_DB, prefs.getFloat(presetKey(slot, "nam_eq_low_db"), 0.0f))
                     .putFloat(PREF_NAM_EQ_MID_DB, prefs.getFloat(presetKey(slot, "nam_eq_mid_db"), 0.0f))
                     .putFloat(PREF_NAM_EQ_HIGH_DB, prefs.getFloat(presetKey(slot, "nam_eq_high_db"), 0.0f))
+                    .putFloat(PREF_NAM_EQ_BAND3_DB, prefs.getFloat(presetKey(slot, "nam_eq_band3_db"), 0.0f))
+                    .putFloat(PREF_NAM_EQ_BAND4_DB, prefs.getFloat(presetKey(slot, "nam_eq_band4_db"), 0.0f))
+                    .putFloat(PREF_NAM_EQ_BAND5_DB, prefs.getFloat(presetKey(slot, "nam_eq_band5_db"), 0.0f))
                     .putBoolean(PREF_NAM_EQ_PRE, prefs.getBoolean(presetKey(slot, "nam_eq_pre"), false))
                     .putBoolean(PREF_NAM_NORMALIZE, prefs.getBoolean(presetKey(slot, "nam_normalize"), true))
                     .putBoolean(PREF_NAM_A2_FULL, prefs.getBoolean(presetKey(slot, "nam_a2_full"), false))
