@@ -5467,6 +5467,10 @@ namespace {
                     const float targetGain = std::clamp(0.65f / blockPeak, 0.25f, 4.0f);
                     const float smoothed = normalizeGain * 0.98f + targetGain * 0.02f;
                     mNamNormalizeGain[slot].store(smoothed, std::memory_order_relaxed);
+                } else if (!normalize) {
+                    // Do not retain a gain learned while normalization was on.
+                    // Turning NORM off must return the block to unity gain.
+                    mNamNormalizeGain[slot].store(1.0f, std::memory_order_relaxed);
                 }
             };
 
