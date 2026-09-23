@@ -2592,7 +2592,7 @@ namespace {
                             : (
                                     namBlockCount() ==
                                     2
-                                    ? "A2_LITE_MULTI_NAM_256X4_SINGLE_FASTEST_CORE"
+                                    ? "A2_LITE_MULTI_NAM_128X4_SINGLE_FASTEST_CORE"
                                     : "A2_LITE_LOW_LATENCY_128X4_SINGLE_FASTEST_CORE"
                             )
                     )
@@ -3444,7 +3444,7 @@ namespace {
                             : (
                                     namBlockCount() ==
                                     2
-                                    ? "A2_LITE_MULTI_NAM_256X4_SINGLE_FASTEST_CORE"
+                                    ? "A2_LITE_MULTI_NAM_128X4_SINGLE_FASTEST_CORE"
                                     : "A2_LITE_LOW_LATENCY_128X4_SINGLE_FASTEST_CORE"
                             )
                     )
