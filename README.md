@@ -125,16 +125,39 @@ há uma convolução global adicional quando o Cabinet está em outro ponto.
 
 #### Pedal, amp e cabinet
 
-`PEDAL` e `AMP` são classificações visuais do capture (derivadas dos metadados
-do tone), não tipos de DSP diferentes. A arquitetura oficial do TONE3000 trata
-todo bloco de tone como `NAM model / IR` com a mesma sequência de controles:
-In Gain → EQ PRE (opcional) → modelo → EQ POST (opcional) → Mix → Out Gain.
-Essa é a cadeia descrita no [repositório oficial do plugin](https://github.com/tone-3000/tone3000-plugin).
-Portanto o Android não inventa knobs de “Drive”, “Bass”, “Treble” ou similares
-para um pedal/amp quando esses parâmetros não existem no arquivo `.nam`; os
-controles específicos continuam sendo parte do capture treinado. Isso mantém a
-cadeia compatível com presets do plugin open source e evita que a classificação
-visual seja confundida com uma API de parâmetros proprietária.
+O desenho alvo da cadeia separa explicitamente os papéis: haverá um único bloco
+`AMP`, que acessará o browser e carregará um NAM; blocos `IR` continuarão
+acessando o browser, mas aceitarão somente cabinets/impulse responses; e blocos
+`PEDAL` serão processadores DSP nativos, sem executar NAM. Enquanto o backend de
+pedais não estiver pronto, captures classificados como `PEDAL` permanecem em
+modo de compatibilidade e podem usar o caminho NAM existente.
+
+### Roadmap de DSP para pedais
+
+O roadmap abaixo é intencionalmente separado da implementação atual da cadeia:
+
+1. **Contrato da cadeia:** limitar AMP a um único modelo NAM e manter IR como
+   bloco independente, com browser filtrado por tipo.
+2. **Base nativa:** criar uma interface C++ de processador de pedal, com
+   `prepare`, processamento por bloco, bypass, mix e parâmetros atômicos,
+   integrada ao mesmo thread de áudio TinyALSA.
+3. **Primeiro efeito:** portar um overdrive baseado no ecossistema ChowDSP,
+   começando preferencialmente pelo `chowdsp_wdf` (BSD-3-Clause) e não pelo
+   plugin BYOD completo. O WDF é uma biblioteca C++ header-only de modelagem
+   de circuitos em tempo real: <https://github.com/Chowdhury-DSP/chowdsp_wdf>.
+4. **Controles do pedal:** expor Drive, Tone e Level no card PEDAL, com
+   automação segura para o thread de áudio e presets persistentes.
+5. **Validação:** comparar resposta e CPU contra um capture NAM de referência,
+   medir xruns/latência no SM-G781B + EVO4 e só então substituir o fallback NAM
+   para PEDAL.
+6. **Expansão:** adicionar boost, distortion/fuzz, compressor, wah e modulação
+   usando processadores nativos; avaliar cada licença do `chowdsp_utils` antes
+   de incorporar código, pois os módulos têm licenças diferentes.
+
+O BYOD é uma referência importante de arquitetura — cadeia configurável e
+diversos circuitos de distorção — mas seu código é GPLv3. Não será incorporado
+diretamente sem uma decisão explícita de licenciamento:
+<https://github.com/Chowdhury-DSP/BYOD>.
 
 Antes de aceitar uso ao vivo, validar com a interface USB conectada: ausência
 de captura não é considerada falha de inicialização, mas xruns, artefatos e o
