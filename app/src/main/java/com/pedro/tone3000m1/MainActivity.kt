@@ -2820,6 +2820,40 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        /** Starts the existing authenticated TONE3000 downloader for a tone
+         * selected by the official React browser. The React payload already
+         * contains compatible models, so no second browser/OAuth round-trip is
+         * needed here. */
+        @JavascriptInterface
+        fun loadTone(toneJson: String, targetInsertId: String): Boolean {
+            return try {
+                val tone = JSONObject(toneJson)
+                val toneId = tone.optString("id")
+                val title = tone.optString("title", "Tone $toneId")
+                val models = tone.optJSONArray("models") ?: JSONArray()
+                if (toneId.isBlank() || models.length() == 0) return false
+                val model = models.getJSONObject(0)
+                val modelUrl = model.optString("model_url", model.optString("modelUrl"))
+                if (modelUrl.isBlank()) return false
+                val token = prefs.getString(PREF_ACCESS_TOKEN, null) ?: return false
+                val mode = if (targetInsertId.startsWith("nam-")) {
+                    "replace:${targetInsertId.removePrefix("nam-").toIntOrNull() ?: 0}"
+                } else "add"
+                prefs.edit().putString(PREF_PENDING_IMPORT_MODE, mode).apply()
+                val onlineModel = OnlineModel(
+                    id = model.optLong("id", 0L),
+                    name = model.optString("name", "capture-${model.optLong("id", 0L)}"),
+                    size = model.optString("size", "custom"),
+                    modelUrl = modelUrl
+                )
+                runOnUiThread { downloadAndLoadModel(toneId, title, onlineModel, token) }
+                true
+            } catch (error: Exception) {
+                Log.e(API_TAG, "React tone load failed", error)
+                false
+            }
+        }
+
         @JavascriptInterface
         fun addCabinetIr() {
             runOnUiThread {

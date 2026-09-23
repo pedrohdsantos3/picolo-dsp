@@ -176,6 +176,10 @@ export class AndroidBackend implements IAudioBackend {
       if (typeof response !== 'string') return response;
       try { return JSON.parse(response); } catch { return { error: response }; }
     };
+    if (name === 'loadTone') return async (toneJson, targetInsertId) =>
+      call('loadTone', String(toneJson), String(targetInsertId ?? ''));
+    if (name === 'swapTone') return async (blockId, toneJson) =>
+      Boolean(await call('loadTone', String(toneJson), String(blockId)));
     if (name === 'setBlockParam') return async (blockId, param, value) => {
       if (String(blockId) === 'cabinet-ir') {
         if (param === 'inputGain') return call('setCabinetInGain', db(value) * 48 - 24);
