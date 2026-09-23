@@ -898,6 +898,23 @@ export const ChainBlock: React.FC<ChainBlockProps> = ({
                           boxSize={showInfo ? IMAGE_SIZE_INFO : IMAGE_SIZE}
                         />
                       </div>
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: '8rem',
+                          left: '8rem',
+                          padding: '3rem 7rem',
+                          borderRadius: '4rem',
+                          background: 'rgba(0,0,0,0.78)',
+                          color: '#fff',
+                          fontSize: '10rem',
+                          fontWeight: 700,
+                          letterSpacing: '0.08em',
+                          pointerEvents: 'none',
+                        }}
+                      >
+                        {formatBadge || 'AMP'}
+                      </div>
                       {(modelBusy || block.loadFailed) && (
                         <div
                           style={{
