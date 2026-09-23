@@ -80,6 +80,7 @@ function chainState(): any {
       },
     };
   });
+  const cabinetBands = Array.isArray(source.cabinetIrEq) ? source.cabinetIrEq : [];
   const cabinet = source.cabinetIrLoaded ? {
     blockId: 'cabinet-ir', kind: 'tone',
     tone: { id: -1, title: source.cabinetIrName || 'Cabinet IR', format: 'IR', models: [], models_count: 1, a2_models_count: 0, downloads_count: 0, favorites_count: 0 },
@@ -89,7 +90,10 @@ function chainState(): any {
       inputGain: (db(source.cabinetIrInGain) + 24) / 48,
       outputGain: (db(source.cabinetIrOutGain) + 24) / 36,
       mix: Math.max(0, Math.min(1, db(source.cabinetIrMix, 1))),
-      eq: { enabled: true, pre: Boolean(source.cabinetIrEqPre), bands: [] },
+      eq: { enabled: true, pre: Boolean(source.cabinetIrEqPre), bands: [
+        [120, 'lowshelf'], [750, 'bell'], [4000, 'highshelf'],
+        [1800, 'bell'], [3500, 'bell'], [8000, 'highshelf'],
+      ].map(([freqHz, type], band) => ({ type, freqHz, gainDb: db(cabinetBands[band]), q: 0.8 })) },
     },
   } : null;
   const ordered = cabinet ? (() => {
@@ -131,6 +135,13 @@ export class AndroidBackend implements IAudioBackend {
     if (name === 'getChainState') return async () => chainState();
     if (name === 'getMeterLevels') return async () => ({ input: [-60, -60], output: [-60, -60], blocks: {}, cpu: 0, correlation: 1 });
     if (name === 'setBlockParam') return async (blockId, param, value) => {
+      if (String(blockId) === 'cabinet-ir') {
+        if (param === 'inputGain') return call('setCabinetInGain', db(value) * 48 - 24);
+        if (param === 'outputGain') return call('setCabinetOutGain', db(value) * 36 - 24);
+        if (param === 'mix') return call('setCabinetMix', value);
+        if (param === 'enabled') return call('setCabinetBypass', !Boolean(value));
+        return Promise.resolve();
+      }
       const index = Number(String(blockId).replace('nam-', ''));
       if (param === 'inputGain') return call('setNamInGain', index, db(value) * 48 - 24);
       if (param === 'outputGain') return call('setNamGain', index, db(value) * 36 - 24);
@@ -139,9 +150,28 @@ export class AndroidBackend implements IAudioBackend {
       if (param === 'normalize') return call('setNamNormalize', index, Boolean(value));
       return Promise.resolve();
     };
-    if (name === 'setBlockEqPre') return async (blockId, pre) => call('setNamEqPosition', Number(String(blockId).replace('nam-', '')), pre);
+    if (name === 'setBlockEqBand') return async (blockId, band, value) => {
+      const id = String(blockId);
+      const gain = typeof value === 'object' && value !== null ? (value as any).gainDb : value;
+      if (id === 'cabinet-ir') return call('setCabinetEq', Number(band), gain);
+      return call('setNamEq', Number(id.replace('nam-', '')), Number(band), gain);
+    };
+    if (name === 'setBlockEqPre') return async (blockId, pre) => {
+      if (String(blockId) === 'cabinet-ir') return call('setCabinetEqPosition', pre);
+      return call('setNamEqPosition', Number(String(blockId).replace('nam-', '')), pre);
+    };
+    if (name === 'setBlockEqEnabled') return async () => undefined;
+    if (name === 'resetBlockEq') return async (blockId) => {
+      const id = String(blockId);
+      for (let band = 0; band < 6; band++) {
+        if (id === 'cabinet-ir') await call('setCabinetEq', band, 0);
+        else await call('setNamEq', Number(id.replace('nam-', '')), band, 0);
+      }
+    };
     if (name === 'setBlockSlimSize') return async (blockId, size) => call('setNamQuality', Number(String(blockId).replace('nam-', '')), Number(size) >= 0.5);
-    if (name === 'removeChainBlock') return async (blockId) => call('removeNam', Number(String(blockId).replace('nam-', '')));
+    if (name === 'removeChainBlock') return async (blockId) => String(blockId) === 'cabinet-ir'
+      ? call('removeCabinetIr')
+      : call('removeNam', Number(String(blockId).replace('nam-', '')));
     if (name === 'reorderChainBlocks') return async (ids) => { for (let i = 0; i < (ids as string[]).length; i++) { const target = Number(String((ids as string[])[i]).replace('nam-', '')); if (target !== i) await call('moveNam', target, i - target); } };
     if (name === 'setStereoMode' || name === 'setInputMode' || name === 'setMultiCore') return async () => undefined;
     return (...args: unknown[]) => call(name, ...args);

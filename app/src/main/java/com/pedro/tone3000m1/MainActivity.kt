@@ -1306,6 +1306,17 @@ class MainActivity : AppCompatActivity() {
                 settings.allowFileAccess =
                     true
 
+                // The bundled React build loads its JS/CSS chunks from the
+                // same file:// origin. WebView disables cross-file access by
+                // default, which leaves the official UI blank on Android.
+                // Keep the bundle self-contained in app assets and explicitly
+                // allow its local chunks to resolve.
+                settings.allowFileAccessFromFileURLs =
+                    true
+
+                settings.allowUniversalAccessFromFileURLs =
+                    true
+
 
                 addJavascriptInterface(
                     PluginBridge(),
@@ -1361,8 +1372,10 @@ class MainActivity : AppCompatActivity() {
                     }
 
 
+                // The React frontend is the primary UI; the previous HTML
+                // implementation remains packaged as a rollback target.
                 loadUrl(
-                    "file:///android_asset/tone3000/index.html"
+                    "file:///android_asset/tone3000-official/index.html"
                 )
             }
 

@@ -95,7 +95,7 @@ export const PluginHeader = React.memo(function PluginHeader({
         rel="noopener noreferrer"
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16rem' }}
       >
-        <img src="/t3k.svg" alt="T3K" style={{ width: '160rem' }} />
+        <img src="./t3k.svg" alt="T3K" style={{ width: '160rem' }} />
       </a>
       {/* 40px between header items; tight pairs (undo/redo) group inside. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '40rem' }}>

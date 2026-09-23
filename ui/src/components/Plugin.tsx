@@ -32,6 +32,12 @@ import type { Model } from '../types/tone';
 import type { ToneBlock } from '../types/chain';
 
 export const Plugin: React.FC = () => {
+  // Android hosts the design in a full-screen WebView rather than a JUCE
+  // editor with a fixed 1024px window. Let the outer frame consume the full
+  // landscape viewport so the meters, chain and faceplate do not leave black
+  // letterbox bands at the sides. Desktop/plugin hosts retain the authored
+  // design-width box and its intentional letterboxing.
+  const androidFullscreen = typeof window !== 'undefined' && Boolean(window.Tone3000Android);
   const [showSettings, setShowSettings] = useState(false);
   // Which tab Settings opens on; banner / gear land on System (setup first).
   const settingsTabRef = useRef<SettingsTab>('system');
@@ -396,7 +402,7 @@ export const Plugin: React.FC = () => {
         position: 'relative',
         // Explicit design-space box: rem lengths track the root font-size
         // (useUiScale), so this and every dimension inside scale together.
-        width: `${DESIGN_WIDTH}rem`,
+        width: androidFullscreen ? '100%' : `${DESIGN_WIDTH}rem`,
         // The window grows by the chrome-strip height (see useChromeChoreography),
         // so the 578px core UI between them keeps its full space.
         // (Figma's 600 includes a 22px mock OS title bar outside JUCE setSize.)
