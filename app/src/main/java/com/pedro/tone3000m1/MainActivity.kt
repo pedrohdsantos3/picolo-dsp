@@ -3027,6 +3027,27 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        @JavascriptInterface
+        fun resetToDefault(): Boolean {
+            return try {
+                nativeClearNamChain()
+                nativeClearImpulseResponse()
+                clearPersistedModel()
+                persistExtraNamChain(emptyList())
+                prefs.edit()
+                    .remove(PREF_CABINET_IR_PATH)
+                    .remove(PREF_CABINET_IR_POSITION)
+                    .remove(PREF_CABINET_IR_BYPASS)
+                    .apply()
+                bypass = false
+                nativeSetBypass(false)
+                true
+            } catch (error: Exception) {
+                Log.e(API_TAG, "Reset to default failed", error)
+                false
+            }
+        }
+
 
         @JavascriptInterface
         fun setNamBypass(

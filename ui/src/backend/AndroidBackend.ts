@@ -188,6 +188,7 @@ export class AndroidBackend implements IAudioBackend {
       const payload = JSON.stringify({ id: tone.id, title: tone.title, models: [{ ...model, id: modelId }] });
       return Boolean(await call('loadTone', payload, String(blockId)));
     };
+    if (name === 'resetToDefault') return async () => call('resetToDefault');
     if (name === 'setBlockParam') return async (blockId, param, value) => {
       if (String(blockId) === 'cabinet-ir') {
         if (param === 'inputGain') return call('setCabinetInGain', db(value) * 48 - 24);
