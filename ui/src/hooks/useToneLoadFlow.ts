@@ -37,6 +37,23 @@ const stripExtension = (name: string) => {
   return dot > 0 ? name.slice(0, dot) : name;
 };
 
+const chooseModuleType = () => new Promise<string | null>((resolve) => {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:24px';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:#242426;color:#fff;border-radius:12px;padding:20px;min-width:260px;font-family:monospace';
+  panel.innerHTML = '<div style="font-size:16px;font-weight:bold;margin-bottom:14px">Adicionar módulo</div>';
+  const select = document.createElement('select');
+  select.style.cssText = 'width:100%;padding:12px;background:#151517;color:#fff;border:1px solid #777;border-radius:6px;font-size:15px';
+  [['AMP', 'AMP (NAM A2-Lite)'], ['PEDAL', 'PEDAL (NAM ultraleve)'], ['IR', 'IR (somente cabinet)']].forEach(([value, label]) => {
+    const option = document.createElement('option'); option.value = value; option.textContent = label; select.appendChild(option);
+  });
+  const button = document.createElement('button');
+  button.textContent = 'CONTINUAR'; button.style.cssText = 'margin-top:14px;width:100%;padding:11px;background:#ddd;color:#111;border:0;border-radius:6px;font-weight:bold';
+  button.onclick = () => { overlay.remove(); resolve(select.value); };
+  panel.append(select, button); overlay.appendChild(panel); document.body.appendChild(overlay);
+});
+
 /** All files under a dropped directory, subfolders included. readEntries
     hands out batches (Chromium caps them at 100), so each reader drains in
     a loop. */
@@ -122,10 +139,7 @@ export function useToneLoadFlow({
   const handleAddModel = useCallback(
     (side: ChainSide, insertBlockId: string) => {
       requireConnection(async () => {
-        const selected = window.prompt(
-          'Tipo do módulo: AMP, PEDAL ou IR',
-          'AMP'
-        )?.trim().toUpperCase();
+        const selected = await chooseModuleType();
         if (selected !== 'AMP' && selected !== 'PEDAL' && selected !== 'IR') return;
         window.Tone3000Android?.setSelectedAddType?.(selected);
         sessionStorage.removeItem(SWAP_STORAGE_KEY);
