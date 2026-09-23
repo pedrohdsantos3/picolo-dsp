@@ -1707,6 +1707,7 @@ class MainActivity : AppCompatActivity() {
                     ,normalize = prefs.getBoolean(PREF_NAM_NORMALIZE, true)
                     ,a2Full = prefs.getBoolean(PREF_NAM_A2_FULL, false)
                     ,imageUrl = prefs.getString(PREF_LAST_TONE_IMAGE, "") ?: ""
+                    ,moduleType = prefs.getString(PREF_LAST_MODEL_TYPE, "AMP") ?: "AMP"
                 )
             )
         }
@@ -1750,6 +1751,7 @@ class MainActivity : AppCompatActivity() {
             .putString(PREF_LAST_TONE_ID, first.toneId)
             .putString(PREF_LAST_TONE_TITLE, first.toneTitle)
             .putString(PREF_LAST_TONE_IMAGE, first.imageUrl)
+            .putString(PREF_LAST_MODEL_TYPE, first.moduleType)
             .putFloat(PREF_NAM_GAIN_DB, first.gainDb)
             .putFloat(PREF_NAM_IN_GAIN_DB, first.inGainDb)
             .putFloat(PREF_NAM_MIX, first.mix)
