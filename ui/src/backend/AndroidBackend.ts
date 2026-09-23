@@ -86,7 +86,7 @@ function chainState(): any {
       tone: {
         id: Number(nam.modelId ?? index),
         title: nam.toneTitle || nam.modelName || `NAM ${index + 1}`,
-        format: 'NAM',
+        format: String(nam.moduleType || 'AMP').toUpperCase(),
         moduleType: String(nam.moduleType || 'AMP').toUpperCase(),
         images: Array.isArray(nam.images) ? nam.images.filter((url: any) => typeof url === 'string' && url.length > 0) : [],
         models: [], models_count: 1, a2_models_count: 1,
