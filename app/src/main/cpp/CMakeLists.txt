@@ -91,6 +91,7 @@ add_library(
 
         ${NAM_SOURCES}
         ${AUDIO_DSP_SOURCES}
+        "${NAM_CORE_DIR}/NAM/linear.cpp"
 )
 
 
