@@ -174,6 +174,9 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_PENDING_TONE_IMAGE =
             "pending_tone_image"
 
+        private const val PREF_PENDING_TONE_TYPE =
+            "pending_tone_type"
+
         private const val MAX_NAM_BLOCKS =
             4
 
@@ -1459,6 +1462,7 @@ class MainActivity : AppCompatActivity() {
         val normalize: Boolean = true,
         val a2Full: Boolean = false,
         val imageUrl: String = ""
+        ,val moduleType: String = "AMP"
     )
 
 
@@ -1567,6 +1571,7 @@ class MainActivity : AppCompatActivity() {
                         ,normalize = item.optBoolean("normalize", true)
                         ,a2Full = item.optBoolean("a2Full", false)
                         ,imageUrl = item.optString("imageUrl", "")
+                        ,moduleType = item.optString("moduleType", "AMP").uppercase()
                     )
                 )
             }
@@ -1647,6 +1652,7 @@ class MainActivity : AppCompatActivity() {
                     .put("normalize", entry.normalize)
                     .put("a2Full", entry.a2Full)
                     .put("imageUrl", entry.imageUrl)
+                    .put("moduleType", entry.moduleType)
             )
         }
 
@@ -2238,6 +2244,7 @@ class MainActivity : AppCompatActivity() {
                 .put("eqEnabled", prefs.getBoolean(PREF_NAM_EQ_ENABLED, true))
                 .put("normalize", prefs.getBoolean(PREF_NAM_NORMALIZE, true))
                 .put("a2Full", prefs.getBoolean(PREF_NAM_A2_FULL, false))
+                .put("moduleType", "AMP")
                 .put("images", JSONArray().put(prefs.getString(PREF_LAST_TONE_IMAGE, "")))
             )
         }
@@ -2281,6 +2288,7 @@ class MainActivity : AppCompatActivity() {
                         .put("eqEnabled", entry.eqEnabled)
                         .put("normalize", entry.normalize)
                         .put("a2Full", entry.a2Full)
+                        .put("moduleType", entry.moduleType)
                         .put("images", JSONArray().put(entry.imageUrl))
                 )
             }
@@ -2911,6 +2919,7 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit()
                     .putString(PREF_PENDING_IMPORT_MODE, mode)
                     .putString(PREF_PENDING_TONE_IMAGE, imageUrl)
+                    .putString(PREF_PENDING_TONE_TYPE, if (format == "PEDAL" || format == "PEDALS") "PEDAL" else "AMP")
                     .apply()
                 val onlineModel = OnlineModel(
                     id = model.optLong("id", 0L),
@@ -6361,6 +6370,7 @@ class MainActivity : AppCompatActivity() {
     ) {
 
         val imageUrl = prefs.getString(PREF_PENDING_TONE_IMAGE, "") ?: ""
+        val moduleType = prefs.getString(PREF_PENDING_TONE_TYPE, "AMP") ?: "AMP"
 
         startButton.isEnabled =
             false
@@ -6513,6 +6523,7 @@ class MainActivity : AppCompatActivity() {
                             bypass =
                                 false
                             ,imageUrl = imageUrl
+                            ,moduleType = moduleType
                         )
                     )
 
