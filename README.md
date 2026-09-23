@@ -102,6 +102,19 @@ controles de ganho/mix, bypass, EQ de seis bandas PRE/POST, remoção e posiçã
 cadeia. O processamento nativo aplica exatamente a posição selecionada; não
 há uma convolução global adicional quando o Cabinet está em outro ponto.
 
+#### Pedal, amp e cabinet
+
+`PEDAL` e `AMP` são classificações visuais do capture (derivadas dos metadados
+do tone), não tipos de DSP diferentes. A arquitetura oficial do TONE3000 trata
+todo bloco de tone como `NAM model / IR` com a mesma sequência de controles:
+In Gain → EQ PRE (opcional) → modelo → EQ POST (opcional) → Mix → Out Gain.
+Essa é a cadeia descrita no [repositório oficial do plugin](https://github.com/tone-3000/tone3000-plugin).
+Portanto o Android não inventa knobs de “Drive”, “Bass”, “Treble” ou similares
+para um pedal/amp quando esses parâmetros não existem no arquivo `.nam`; os
+controles específicos continuam sendo parte do capture treinado. Isso mantém a
+cadeia compatível com presets do plugin open source e evita que a classificação
+visual seja confundida com uma API de parâmetros proprietária.
+
 Antes de aceitar uso ao vivo, validar com a interface USB conectada: ausência
 de captura não é considerada falha de inicialização, mas xruns, artefatos e o
 tempo de processamento devem ser medidos com o hardware real e com a cadeia
