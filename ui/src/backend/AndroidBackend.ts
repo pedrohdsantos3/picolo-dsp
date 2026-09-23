@@ -35,6 +35,22 @@ function db(value: unknown, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function statDb(stats: string, key: string): number {
+  const match = stats.match(new RegExp(`${key}=[^\\n]*?\\((-?\\d+(?:\\.\\d+)?) dBFS\\)`));
+  const value = match ? Number(match[1]) : -60;
+  return Number.isFinite(value) ? Math.max(-60, Math.min(0, value)) : -60;
+}
+
+function meterState(): any {
+  const raw = bridge()?.getStats?.();
+  const stats = typeof raw === 'string' ? raw : '';
+  const input = statDb(stats, 'capturePeak');
+  const output = statDb(stats, 'postEqPeak');
+  const cpuMatch = stats.match(/CPU budget used\(avg\)=(-?\\d+(?:\\.\\d+)?)%/);
+  const cpu = cpuMatch ? Math.max(0, Number(cpuMatch[1])) : 0;
+  return { input: [input, input], output: [output, output], blocks: {}, cpu, correlation: 1 };
+}
+
 function stateSnapshot(): any {
   try {
     return JSON.parse(bridge()?.getState?.() ?? '{}');
@@ -133,7 +149,7 @@ export class AndroidBackend implements IAudioBackend {
 
   getPluginFunction(name: string): (...args: unknown[]) => Promise<unknown> {
     if (name === 'getChainState') return async () => chainState();
-    if (name === 'getMeterLevels') return async () => ({ input: [-60, -60], output: [-60, -60], blocks: {}, cpu: 0, correlation: 1 });
+    if (name === 'getMeterLevels') return async () => meterState();
     if (name === 'setBlockParam') return async (blockId, param, value) => {
       if (String(blockId) === 'cabinet-ir') {
         if (param === 'inputGain') return call('setCabinetInGain', db(value) * 48 - 24);

@@ -556,7 +556,10 @@ export const ChainBlock: React.FC<ChainBlockProps> = ({
         width: `${CARD_WIDTH}rem`,
         height: '100%',
         boxSizing: 'border-box',
-        overflowY: showInfo ? 'auto' : 'hidden',
+        // The Android landscape middle band is shorter than the full NAM
+        // control card. Keep the card height stable, but allow its controls
+        // to scroll instead of disappearing behind the pinned faceplate.
+        overflowY: 'auto',
         overflowX: 'hidden',
       }}
     >

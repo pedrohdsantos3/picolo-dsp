@@ -509,7 +509,12 @@ export const Plugin: React.FC = () => {
               style={{
                 flex: 1,
                 height: '100%',
-                overflow: 'hidden',
+                // Block detail cards are taller than the compact landscape
+                // middle band on Android. Keep the faceplate pinned while
+                // allowing the block controls to scroll into view instead of
+                // being clipped underneath it.
+                overflowX: 'hidden',
+                overflowY: 'auto',
                 minHeight: 0,
                 minWidth: 0,
                 boxSizing: 'border-box',
