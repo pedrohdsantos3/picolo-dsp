@@ -409,7 +409,16 @@ class MainActivity : AppCompatActivity() {
                     }
                     val result = nativeLoadImpulseResponse(destination.absolutePath)
                     if (result.startsWith("IR LOADED")) {
-                        prefs.edit().putString(PREF_CABINET_IR_PATH, destination.absolutePath).apply()
+                        val position = if (prefs.contains(PREF_CABINET_IR_POSITION)) {
+                            prefs.getInt(PREF_CABINET_IR_POSITION, nativeGetNamBlockCount())
+                        } else {
+                            nativeGetNamBlockCount()
+                        }.coerceIn(0, nativeGetNamBlockCount())
+                        nativeSetImpulseResponsePosition(position)
+                        prefs.edit()
+                            .putString(PREF_CABINET_IR_PATH, destination.absolutePath)
+                            .putInt(PREF_CABINET_IR_POSITION, position)
+                            .apply()
                     }
                     runOnUiThread { status.text = result }
                 } catch (e: Exception) {
