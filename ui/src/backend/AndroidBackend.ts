@@ -171,6 +171,11 @@ export class AndroidBackend implements IAudioBackend {
       await call('savePreset', slot);
       return { id: String(slot), name: String(nameArg || `Preset ${slot}`) };
     };
+    if (name === 'loadLocalTone') return async (title, files, targetBlockId) => {
+      const response = await call('loadLocalTone', String(title), JSON.stringify(files ?? []), String(targetBlockId ?? ''));
+      if (typeof response !== 'string') return response;
+      try { return JSON.parse(response); } catch { return { error: response }; }
+    };
     if (name === 'setBlockParam') return async (blockId, param, value) => {
       if (String(blockId) === 'cabinet-ir') {
         if (param === 'inputGain') return call('setCabinetInGain', db(value) * 48 - 24);

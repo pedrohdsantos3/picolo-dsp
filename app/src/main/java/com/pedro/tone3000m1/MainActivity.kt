@@ -2771,6 +2771,55 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        /** Receives a local .nam payload from the official React UI. The
+         * bridge deliberately accepts JSON text because WebView's
+         * JavascriptInterface cannot marshal arrays of objects reliably. */
+        @JavascriptInterface
+        fun loadLocalTone(title: String, filesJson: String, targetBlockId: String): String {
+            return try {
+                val files = JSONArray(filesJson)
+                if (files.length() == 0) return JSONObject().put("error", "No local file").toString()
+                val source = files.getJSONObject(0)
+                val name = source.optString("name", "$title.nam")
+                if (!name.lowercase(Locale.US).endsWith(".nam")) {
+                    return JSONObject().put("error", "Only .nam files are supported on Android").toString()
+                }
+                val encoded = source.optString("data")
+                if (encoded.isBlank()) return JSONObject().put("error", "Empty local file").toString()
+                val safeName = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val destination = File(filesDir, "local-${System.currentTimeMillis()}-$safeName")
+                destination.writeBytes(Base64.decode(encoded, Base64.DEFAULT))
+
+                val entries = readNamChainEntries().toMutableList()
+                val requested = targetBlockId.removePrefix("nam-").toIntOrNull()
+                val target = requested?.takeIf { it in entries.indices } ?: entries.size
+                if (target >= MAX_NAM_BLOCKS) {
+                    destination.delete()
+                    return JSONObject().put("error", "NAM chain full").toString()
+                }
+                val entry = ExtraNamEntry(
+                    toneId = "local-${destination.name}",
+                    toneTitle = title,
+                    modelId = 0L,
+                    modelName = name.removeSuffix(".nam"),
+                    size = "unknown",
+                    path = destination.absolutePath,
+                    bypass = false
+                )
+                if (target < entries.size) entries[target] = entry else entries.add(entry)
+                persistNamChainEntries(entries)
+                val result = rebuildNativeNamChain(entries)
+                if (!result.contains("failed", ignoreCase = true) && !result.contains("error", ignoreCase = true)) {
+                    JSONObject().put("blockId", "nam-$target").toString()
+                } else {
+                    JSONObject().put("error", result).toString()
+                }
+            } catch (error: Exception) {
+                Log.e(API_TAG, "Local tone import failed", error)
+                JSONObject().put("error", error.message ?: "Local import failed").toString()
+            }
+        }
+
         @JavascriptInterface
         fun addCabinetIr() {
             runOnUiThread {
