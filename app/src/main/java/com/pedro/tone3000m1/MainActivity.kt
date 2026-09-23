@@ -31,6 +31,7 @@ import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -98,6 +99,21 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_LAST_TONE_TITLE =
             "last_tone_title"
 
+        private const val PREF_CABINET_IR_PATH =
+            "cabinet_ir_path"
+
+        private const val PREF_CABINET_IR_BYPASS =
+            "cabinet_ir_bypass"
+
+        private const val PREF_CABINET_IR_POSITION =
+            "cabinet_ir_position"
+
+        private const val PREF_CABINET_IR_IN_GAIN = "cabinet_ir_in_gain_db"
+        private const val PREF_CABINET_IR_OUT_GAIN = "cabinet_ir_out_gain_db"
+        private const val PREF_CABINET_IR_MIX = "cabinet_ir_mix"
+        private const val PREF_CABINET_IR_EQ_PRE = "cabinet_ir_eq_pre"
+        private const val PREF_CABINET_IR_EQ_PREFIX = "cabinet_ir_eq_"
+
         private const val PREF_INPUT_GAIN =
             "input_gain_db"
 
@@ -127,6 +143,17 @@ class MainActivity : AppCompatActivity() {
 
         private const val PREF_EXTRA_NAM_CHAIN =
             "extra_nam_chain"
+
+        private const val PREF_NAM_GAIN_DB = "nam_gain_db"
+        private const val PREF_NAM_IN_GAIN_DB = "nam_in_gain_db"
+        private const val PREF_NAM_MIX = "nam_mix"
+        private const val PREF_NAM_EQ_LOW_DB = "nam_eq_low_db"
+        private const val PREF_NAM_EQ_MID_DB = "nam_eq_mid_db"
+        private const val PREF_NAM_EQ_HIGH_DB = "nam_eq_high_db"
+        private const val PREF_NAM_BYPASS = "nam_bypass"
+        private const val PREF_NAM_EQ_PRE = "nam_eq_pre"
+        private const val PREF_NAM_NORMALIZE = "nam_normalize"
+        private const val PREF_NAM_A2_FULL = "nam_a2_full"
 
         private const val PREF_PENDING_IMPORT_MODE =
             "pending_import_mode"
@@ -222,16 +249,40 @@ class MainActivity : AppCompatActivity() {
         path: String
     ): String
 
+    external fun nativeLoadImpulseResponse(path: String): String
+
+    external fun nativeSetImpulseResponseBypass(bypass: Boolean)
+    external fun nativeClearImpulseResponse()
+
+    external fun nativeSetImpulseResponsePosition(namBlocksBefore: Int)
+    external fun nativeSetImpulseResponseInGainDb(db: Float)
+    external fun nativeSetImpulseResponseOutGainDb(db: Float)
+    external fun nativeSetImpulseResponseMix(mix: Float)
+    external fun nativeSetImpulseResponseEqDb(band: Int, db: Float)
+    external fun nativeSetImpulseResponseEqPre(pre: Boolean)
+
     external fun nativeAddChainModel(
         path: String
     ): String
 
     external fun nativeClearExtraNamBlocks(): String
 
+    external fun nativeClearNamChain(): String
+
     external fun nativeSetChainNamBypass(
         chainIndex: Int,
         bypass: Boolean
     )
+
+    external fun nativeSetChainNamQuality(chainIndex: Int, full: Boolean): String
+
+    external fun nativeSetChainNamGainDb(chainIndex: Int, db: Float)
+    external fun nativeSetChainNamInGainDb(chainIndex: Int, db: Float)
+    external fun nativeSetChainNamMix(chainIndex: Int, mix: Float)
+    external fun nativeSetChainNamNormalize(chainIndex: Int, enabled: Boolean)
+
+    external fun nativeSetChainNamEqDb(chainIndex: Int, band: Int, db: Float)
+    external fun nativeSetChainNamEqPre(chainIndex: Int, pre: Boolean)
 
     external fun nativeGetNamBlockCount(): Int
 
@@ -344,6 +395,27 @@ class MainActivity : AppCompatActivity() {
                 status.text =
                     "RECORD_AUDIO permission denied"
             }
+        }
+
+    private val openIrFile =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            Thread {
+                try {
+                    val destination = File(filesDir, "cabinet-${System.currentTimeMillis()}.wav")
+                    contentResolver.openInputStream(uri).use { input ->
+                        requireNotNull(input) { "Unable to open selected IR" }
+                        FileOutputStream(destination).use { output -> input.copyTo(output) }
+                    }
+                    val result = nativeLoadImpulseResponse(destination.absolutePath)
+                    if (result.startsWith("IR LOADED")) {
+                        prefs.edit().putString(PREF_CABINET_IR_PATH, destination.absolutePath).apply()
+                    }
+                    runOnUiThread { status.text = result }
+                } catch (e: Exception) {
+                    runOnUiThread { status.text = "IR LOAD FAILED\n${e.message}" }
+                }
+            }.start()
         }
 
 
@@ -1090,6 +1162,8 @@ class MainActivity : AppCompatActivity() {
                         bypass
                     )
 
+                    prefs.edit().putBoolean(PREF_NAM_BYPASS, bypass).apply()
+
                     updateBypassButton()
                 }
             }
@@ -1320,7 +1394,19 @@ class MainActivity : AppCompatActivity() {
         val modelName: String,
         val size: String,
         val path: String,
-        val bypass: Boolean
+        val bypass: Boolean,
+        val gainDb: Float = 0.0f,
+        val inGainDb: Float = 0.0f,
+        val mix: Float = 1.0f,
+        val eqLowDb: Float = 0.0f,
+        val eqMidDb: Float = 0.0f,
+        val eqHighDb: Float = 0.0f,
+        val eqBand3Db: Float = 0.0f,
+        val eqBand4Db: Float = 0.0f,
+        val eqBand5Db: Float = 0.0f,
+        val eqPre: Boolean = false,
+        val normalize: Boolean = true,
+        val a2Full: Boolean = false
     )
 
 
@@ -1408,7 +1494,19 @@ class MainActivity : AppCompatActivity() {
                             item.optBoolean(
                                 "bypass",
                                 false
-                            )
+                            ),
+                        gainDb = item.optDouble("gainDb", 0.0).toFloat(),
+                        inGainDb = item.optDouble("inGainDb", 0.0).toFloat(),
+                        mix = item.optDouble("mix", 1.0).toFloat(),
+                        eqLowDb = item.optDouble("eqLowDb", 0.0).toFloat(),
+                        eqMidDb = item.optDouble("eqMidDb", 0.0).toFloat(),
+                        eqHighDb = item.optDouble("eqHighDb", 0.0).toFloat()
+                        ,eqBand3Db = item.optDouble("eqBand3Db", 0.0).toFloat()
+                        ,eqBand4Db = item.optDouble("eqBand4Db", 0.0).toFloat()
+                        ,eqBand5Db = item.optDouble("eqBand5Db", 0.0).toFloat()
+                        ,eqPre = item.optBoolean("eqPre", false)
+                        ,normalize = item.optBoolean("normalize", true)
+                        ,a2Full = item.optBoolean("a2Full", false)
                     )
                 )
             }
@@ -1471,6 +1569,18 @@ class MainActivity : AppCompatActivity() {
                         "bypass",
                         entry.bypass
                     )
+                    .put("gainDb", entry.gainDb)
+                    .put("inGainDb", entry.inGainDb)
+                    .put("mix", entry.mix)
+                    .put("eqLowDb", entry.eqLowDb)
+                    .put("eqMidDb", entry.eqMidDb)
+                    .put("eqHighDb", entry.eqHighDb)
+                    .put("eqBand3Db", entry.eqBand3Db)
+                    .put("eqBand4Db", entry.eqBand4Db)
+                    .put("eqBand5Db", entry.eqBand5Db)
+                    .put("eqPre", entry.eqPre)
+                    .put("normalize", entry.normalize)
+                    .put("a2Full", entry.a2Full)
             )
         }
 
@@ -1482,6 +1592,176 @@ class MainActivity : AppCompatActivity() {
                 array.toString()
             )
             .apply()
+    }
+
+
+    private fun readNamChainEntries(): MutableList<ExtraNamEntry> {
+        val result = mutableListOf<ExtraNamEntry>()
+        val firstPath = prefs.getString(PREF_LAST_MODEL_PATH, null)
+
+        if (firstPath != null && File(firstPath).exists()) {
+            result.add(
+                ExtraNamEntry(
+                    toneId = prefs.getString(PREF_LAST_TONE_ID, "") ?: "",
+                    toneTitle = prefs.getString(PREF_LAST_TONE_TITLE, "") ?: "",
+                    modelId = 0L,
+                    modelName = prefs.getString(PREF_LAST_MODEL_NAME, File(firstPath).name)
+                        ?: File(firstPath).name,
+                    size = prefs.getString(PREF_LAST_MODEL_SIZE, "unknown") ?: "unknown",
+                    path = firstPath,
+                    bypass = prefs.getBoolean(PREF_NAM_BYPASS, bypass),
+                    gainDb = prefs.getFloat(PREF_NAM_GAIN_DB, 0.0f),
+                    inGainDb = prefs.getFloat(PREF_NAM_IN_GAIN_DB, 0.0f),
+                    mix = prefs.getFloat(PREF_NAM_MIX, 1.0f),
+                    eqLowDb = prefs.getFloat(PREF_NAM_EQ_LOW_DB, 0.0f),
+                    eqMidDb = prefs.getFloat(PREF_NAM_EQ_MID_DB, 0.0f),
+                    eqHighDb = prefs.getFloat(PREF_NAM_EQ_HIGH_DB, 0.0f)
+                    ,eqPre = prefs.getBoolean(PREF_NAM_EQ_PRE, false)
+                    ,normalize = prefs.getBoolean(PREF_NAM_NORMALIZE, true)
+                    ,a2Full = prefs.getBoolean(PREF_NAM_A2_FULL, false)
+                )
+            )
+        }
+
+        result.addAll(readExtraNamChain())
+        return result
+    }
+
+
+    private fun persistNamChainEntries(entries: List<ExtraNamEntry>) {
+        if (entries.isEmpty()) {
+            clearPersistedModel()
+            persistExtraNamChain(emptyList())
+            bypass = false
+            return
+        }
+
+        val first = entries.first()
+
+        prefs.edit()
+            .putString(PREF_LAST_MODEL_PATH, first.path)
+            .putString(PREF_LAST_MODEL_NAME, first.modelName)
+            .putString(PREF_LAST_MODEL_SIZE, first.size)
+            .putString(PREF_LAST_TONE_ID, first.toneId)
+            .putString(PREF_LAST_TONE_TITLE, first.toneTitle)
+            .putFloat(PREF_NAM_GAIN_DB, first.gainDb)
+            .putFloat(PREF_NAM_IN_GAIN_DB, first.inGainDb)
+            .putFloat(PREF_NAM_MIX, first.mix)
+            .putFloat(PREF_NAM_EQ_LOW_DB, first.eqLowDb)
+            .putFloat(PREF_NAM_EQ_MID_DB, first.eqMidDb)
+            .putFloat(PREF_NAM_EQ_HIGH_DB, first.eqHighDb)
+            .putBoolean(PREF_NAM_BYPASS, first.bypass)
+            .putBoolean(PREF_NAM_EQ_PRE, first.eqPre)
+            .putBoolean(PREF_NAM_NORMALIZE, first.normalize)
+            .putBoolean(PREF_NAM_A2_FULL, first.a2Full)
+            .apply()
+
+        persistExtraNamChain(entries.drop(1))
+        bypass = first.bypass
+    }
+
+
+    private fun rebuildNativeNamChain(entries: List<ExtraNamEntry>): String {
+        val wasRunning = nativeIsRunning()
+        nativeClearNamChain()
+
+        entries.forEachIndexed { index, entry ->
+            val result = if (index == 0) {
+                nativeLoadModel(entry.path)
+            } else {
+                nativeAddChainModel(entry.path)
+            }
+
+            val loaded = if (index == 0) {
+                result.startsWith("MODEL LOADED")
+            } else {
+                result.startsWith("CHAIN NAM ADDED")
+            }
+
+            if (!loaded) {
+                return result
+            }
+
+            nativeSetChainNamBypass(index, entry.bypass)
+            nativeSetChainNamGainDb(index, entry.gainDb)
+            nativeSetChainNamInGainDb(index, entry.inGainDb)
+            nativeSetChainNamMix(index, entry.mix)
+            nativeSetChainNamEqDb(index, 0, entry.eqLowDb)
+            nativeSetChainNamEqDb(index, 1, entry.eqMidDb)
+            nativeSetChainNamEqDb(index, 2, entry.eqHighDb)
+            nativeSetChainNamEqDb(index, 3, entry.eqBand3Db)
+            nativeSetChainNamEqDb(index, 4, entry.eqBand4Db)
+            nativeSetChainNamEqDb(index, 5, entry.eqBand5Db)
+            nativeSetChainNamEqPre(index, entry.eqPre)
+            nativeSetChainNamNormalize(index, entry.normalize)
+            if (entry.a2Full) nativeSetChainNamQuality(index, true)
+        }
+
+        if (wasRunning) {
+            val audioResult = nativeStart()
+            if (!audioResult.startsWith("AUDIO ACTIVE")) {
+                return audioResult
+            }
+        }
+
+        return "NAM CHAIN READY\nblocks=${entries.size}" +
+                if (wasRunning) "\nAUDIO ACTIVE" else ""
+    }
+
+
+    private fun applyPersistedNamControls() {
+        readNamChainEntries().forEachIndexed { index, entry ->
+            nativeSetChainNamGainDb(index, entry.gainDb)
+            nativeSetChainNamInGainDb(index, entry.inGainDb)
+            nativeSetChainNamMix(index, entry.mix)
+            nativeSetChainNamEqDb(index, 0, entry.eqLowDb)
+            nativeSetChainNamEqDb(index, 1, entry.eqMidDb)
+            nativeSetChainNamEqDb(index, 2, entry.eqHighDb)
+            nativeSetChainNamEqDb(index, 3, entry.eqBand3Db)
+            nativeSetChainNamEqDb(index, 4, entry.eqBand4Db)
+            nativeSetChainNamEqDb(index, 5, entry.eqBand5Db)
+            nativeSetChainNamEqPre(index, entry.eqPre)
+            nativeSetChainNamNormalize(index, entry.normalize)
+            if (entry.a2Full) nativeSetChainNamQuality(index, true)
+        }
+    }
+
+
+    private fun removeNamBlock(chainIndex: Int) {
+        Thread {
+            val entries = readNamChainEntries()
+
+            if (chainIndex !in entries.indices) {
+                return@Thread
+            }
+
+            val removed = entries.removeAt(chainIndex)
+            val result = rebuildNativeNamChain(entries)
+
+            if (
+                entries.isEmpty() ||
+                result.startsWith("NAM CHAIN READY")
+            ) {
+                persistNamChainEntries(entries)
+
+                if (entries.none { it.path == removed.path }) {
+                    try {
+                        File(removed.path).delete()
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+
+            runOnUiThread {
+                startButton.isEnabled = entries.isNotEmpty()
+                updateBypassButton()
+                status.text = if (entries.isEmpty()) {
+                    "NAM CHAIN EMPTY\n\nUse ADD NAM to insert a block."
+                } else {
+                    result
+                }
+            }
+        }.start()
     }
 
 
@@ -1703,6 +1983,19 @@ class MainActivity : AppCompatActivity() {
             )
         )
 
+        val cabinetPath = prefs.getString(PREF_CABINET_IR_PATH, null)
+        result.put("cabinetIrLoaded", cabinetPath != null && File(cabinetPath).exists())
+        result.put("cabinetIrName", cabinetPath?.let { File(it).name } ?: "")
+        result.put("cabinetIrBypass", prefs.getBoolean(PREF_CABINET_IR_BYPASS, false))
+        result.put("cabinetIrPosition", prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS))
+        result.put("cabinetIrInGain", prefs.getFloat(PREF_CABINET_IR_IN_GAIN, 0.0f).toDouble())
+        result.put("cabinetIrOutGain", prefs.getFloat(PREF_CABINET_IR_OUT_GAIN, 0.0f).toDouble())
+        result.put("cabinetIrMix", prefs.getFloat(PREF_CABINET_IR_MIX, 1.0f).toDouble())
+        result.put("cabinetIrEqPre", prefs.getBoolean(PREF_CABINET_IR_EQ_PRE, false))
+        val cabinetEq = JSONArray()
+        for (band in 0 until 6) cabinetEq.put(prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + band, 0.0f).toDouble())
+        result.put("cabinetIrEq", cabinetEq)
+
         result.put(
             "inputGain",
             prefs.getFloat(
@@ -1802,10 +2095,6 @@ class MainActivity : AppCompatActivity() {
                     0
                 )
                 .put(
-                    "primary",
-                    true
-                )
-                .put(
                     "modelName",
                     prefs.getString(
                         PREF_LAST_MODEL_NAME,
@@ -1830,6 +2119,12 @@ class MainActivity : AppCompatActivity() {
                     "bypass",
                     bypass
                 )
+                .put("gainDb", prefs.getFloat(PREF_NAM_GAIN_DB, 0.0f))
+                .put("inGainDb", prefs.getFloat(PREF_NAM_IN_GAIN_DB, 0.0f))
+                .put("mix", prefs.getFloat(PREF_NAM_MIX, 1.0f))
+                .put("eqLowDb", prefs.getFloat(PREF_NAM_EQ_LOW_DB, 0.0f))
+                .put("eqMidDb", prefs.getFloat(PREF_NAM_EQ_MID_DB, 0.0f))
+                .put("eqHighDb", prefs.getFloat(PREF_NAM_EQ_HIGH_DB, 0.0f))
         )
 
 
@@ -1842,10 +2137,6 @@ class MainActivity : AppCompatActivity() {
                             "chainIndex",
                             index +
                                     1
-                        )
-                        .put(
-                            "primary",
-                            false
                         )
                         .put(
                             "modelName",
@@ -1863,6 +2154,15 @@ class MainActivity : AppCompatActivity() {
                             "bypass",
                             entry.bypass
                         )
+                        .put("gainDb", entry.gainDb)
+                        .put("inGainDb", entry.inGainDb)
+                        .put("mix", entry.mix)
+                        .put("eqLowDb", entry.eqLowDb)
+                        .put("eqMidDb", entry.eqMidDb)
+                        .put("eqHighDb", entry.eqHighDb)
+                        .put("eqBand3Db", entry.eqBand3Db)
+                        .put("eqBand4Db", entry.eqBand4Db)
+                        .put("eqBand5Db", entry.eqBand5Db)
                 )
             }
 
@@ -1871,6 +2171,27 @@ class MainActivity : AppCompatActivity() {
             "namChain",
             namChain
         )
+
+        val signalChain = JSONArray()
+        val irLoaded = cabinetPath != null && File(cabinetPath).exists()
+        val irPosition = prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS)
+            .coerceIn(0, namChain.length())
+        for (index in 0 until namChain.length()) {
+            if (irLoaded && irPosition == index) {
+                signalChain.put(JSONObject()
+                    .put("type", "CABINET_IR")
+                    .put("position", index)
+                    .put("name", cabinetPath?.let { File(it).name } ?: "Cabinet IR"))
+            }
+            signalChain.put(namChain.getJSONObject(index).put("type", "NAM"))
+        }
+        if (irLoaded && irPosition >= namChain.length()) {
+            signalChain.put(JSONObject()
+                .put("type", "CABINET_IR")
+                .put("position", namChain.length())
+                .put("name", cabinetPath?.let { File(it).name } ?: "Cabinet IR"))
+        }
+        result.put("signalChain", signalChain)
 
 
         val presets =
@@ -2319,6 +2640,8 @@ class MainActivity : AppCompatActivity() {
                 bypass
             )
 
+            prefs.edit().putBoolean(PREF_NAM_BYPASS, bypass).apply()
+
 
             runOnUiThread {
 
@@ -2363,9 +2686,132 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
 
                 startTone3000SelectFlow(
-                    "add"
+                    if (nativeGetNamBlockCount() == 0) {
+                        "replace"
+                    } else {
+                        "add"
+                    }
                 )
             }
+        }
+
+        @JavascriptInterface
+        fun addCabinetIr() {
+            runOnUiThread {
+                openIrFile.launch(arrayOf("audio/wav", "audio/x-wav", "audio/*"))
+            }
+        }
+
+        @JavascriptInterface
+        fun removeCabinetIr() {
+            nativeClearImpulseResponse()
+            prefs.getString(PREF_CABINET_IR_PATH, null)?.let { path ->
+                try { File(path).delete() } catch (_: Exception) { }
+            }
+            prefs.edit()
+                .remove(PREF_CABINET_IR_PATH)
+                .remove(PREF_CABINET_IR_BYPASS)
+                .remove(PREF_CABINET_IR_POSITION)
+                .apply()
+            runOnUiThread { status.text = "CABINET IR REMOVED" }
+        }
+
+        @JavascriptInterface
+        fun setCabinetBypass(bypassed: Boolean) {
+            nativeSetImpulseResponseBypass(bypassed)
+            prefs.edit().putBoolean(PREF_CABINET_IR_BYPASS, bypassed).apply()
+        }
+
+        @JavascriptInterface
+        fun moveCabinet(direction: Int) {
+            val maxPosition = nativeGetNamBlockCount().coerceIn(0, MAX_NAM_BLOCKS)
+            val current = prefs.getInt(PREF_CABINET_IR_POSITION, maxPosition).coerceIn(0, maxPosition)
+            val next = (current + direction.coerceIn(-1, 1)).coerceIn(0, maxPosition)
+            nativeSetImpulseResponsePosition(next)
+            prefs.edit().putInt(PREF_CABINET_IR_POSITION, next).apply()
+        }
+
+        @JavascriptInterface
+        fun setCabinetInGain(db: Double) {
+            val value = db.toFloat().coerceIn(-24.0f, 24.0f)
+            nativeSetImpulseResponseInGainDb(value)
+            prefs.edit().putFloat(PREF_CABINET_IR_IN_GAIN, value).apply()
+        }
+
+        @JavascriptInterface
+        fun setCabinetOutGain(db: Double) {
+            val value = db.toFloat().coerceIn(-24.0f, 12.0f)
+            nativeSetImpulseResponseOutGainDb(value)
+            prefs.edit().putFloat(PREF_CABINET_IR_OUT_GAIN, value).apply()
+        }
+
+        @JavascriptInterface
+        fun setCabinetMix(mix: Double) {
+            val value = mix.toFloat().coerceIn(0.0f, 1.0f)
+            nativeSetImpulseResponseMix(value)
+            prefs.edit().putFloat(PREF_CABINET_IR_MIX, value).apply()
+        }
+
+        @JavascriptInterface
+        fun setCabinetEq(band: Int, db: Double) {
+            if (band !in 0 until 6) return
+            val value = db.toFloat().coerceIn(-12.0f, 12.0f)
+            nativeSetImpulseResponseEqDb(band, value)
+            prefs.edit().putFloat(PREF_CABINET_IR_EQ_PREFIX + band, value).apply()
+        }
+
+        @JavascriptInterface
+        fun setCabinetEqPosition(pre: Boolean) {
+            nativeSetImpulseResponseEqPre(pre)
+            prefs.edit().putBoolean(PREF_CABINET_IR_EQ_PRE, pre).apply()
+        }
+
+
+        @JavascriptInterface
+        fun changeNam(chainIndex: Int) {
+            if (chainIndex !in 0 until nativeGetNamBlockCount()) {
+                return
+            }
+
+            runOnUiThread {
+                startTone3000SelectFlow("replace:$chainIndex")
+            }
+        }
+
+
+        @JavascriptInterface
+        fun removeNam(chainIndex: Int) {
+            removeNamBlock(chainIndex)
+        }
+
+
+        @JavascriptInterface
+        fun moveNam(chainIndex: Int, direction: Int) {
+            Thread {
+                val entries = readNamChainEntries()
+                val target = chainIndex + direction
+
+                if (
+                    chainIndex !in entries.indices ||
+                    target !in entries.indices
+                ) {
+                    return@Thread
+                }
+
+                val moved = entries.removeAt(chainIndex)
+                entries.add(target, moved)
+
+                val result = rebuildNativeNamChain(entries)
+
+                if (result.startsWith("NAM CHAIN READY")) {
+                    persistNamChainEntries(entries)
+                }
+
+                runOnUiThread {
+                    updateBypassButton()
+                    status.text = result
+                }
+            }.start()
         }
 
 
@@ -2385,6 +2831,8 @@ class MainActivity : AppCompatActivity() {
 
                 bypass =
                     enabled
+
+                prefs.edit().putBoolean(PREF_NAM_BYPASS, enabled).apply()
 
 
                 runOnUiThread {
@@ -2429,6 +2877,99 @@ class MainActivity : AppCompatActivity() {
                     entries
                 )
             }
+        }
+
+
+        @JavascriptInterface
+        fun setNamGain(chainIndex: Int, db: Double) {
+            setNamControl(chainIndex, db, 0)
+        }
+
+        @JavascriptInterface
+        fun setNamInGain(chainIndex: Int, db: Double) {
+            val entries = readNamChainEntries()
+            if (chainIndex !in entries.indices) return
+            val value = db.toFloat().coerceIn(-24.0f, 24.0f)
+            val all = entries.toMutableList()
+            all[chainIndex] = all[chainIndex].copy(inGainDb = value)
+            persistNamChainEntries(all)
+            nativeSetChainNamInGainDb(chainIndex, value)
+        }
+
+        @JavascriptInterface
+        fun setNamMix(chainIndex: Int, mix: Double) {
+            val entries = readNamChainEntries()
+            if (chainIndex !in entries.indices) return
+            val value = mix.toFloat().coerceIn(0.0f, 1.0f)
+            val all = entries.toMutableList()
+            all[chainIndex] = all[chainIndex].copy(mix = value)
+            persistNamChainEntries(all)
+            nativeSetChainNamMix(chainIndex, value)
+        }
+
+        @JavascriptInterface
+        fun setNamEq(chainIndex: Int, band: Int, db: Double) {
+            setNamControl(chainIndex, db, band + 1)
+        }
+
+        @JavascriptInterface
+        fun setNamEqPosition(chainIndex: Int, pre: Boolean) {
+            val entries = readNamChainEntries()
+            if (chainIndex !in entries.indices) return
+            val all = entries.toMutableList()
+            all[chainIndex] = all[chainIndex].copy(eqPre = pre)
+            persistNamChainEntries(all)
+            nativeSetChainNamEqPre(chainIndex, pre)
+        }
+
+        @JavascriptInterface
+        fun setNamNormalize(chainIndex: Int, enabled: Boolean) {
+            val entries = readNamChainEntries()
+            if (chainIndex !in entries.indices) return
+            val all = entries.toMutableList()
+            all[chainIndex] = all[chainIndex].copy(normalize = enabled)
+            persistNamChainEntries(all)
+            nativeSetChainNamNormalize(chainIndex, enabled)
+        }
+
+        @JavascriptInterface
+        fun setNamQuality(chainIndex: Int, full: Boolean) {
+            val entries = readNamChainEntries()
+            if (chainIndex !in entries.indices) return
+            val result = nativeSetChainNamQuality(chainIndex, full)
+            if (!result.startsWith("A2 ")) {
+                runOnUiThread { status.text = result }
+                return
+            }
+            val all = entries.toMutableList()
+            all[chainIndex] = all[chainIndex].copy(a2Full = full)
+            persistNamChainEntries(all)
+            runOnUiThread {
+                status.text = result
+                pluginWebView.evaluateJavascript("refreshNow()", null)
+            }
+        }
+
+        private fun setNamControl(chainIndex: Int, rawDb: Double, control: Int) {
+            val entries = readNamChainEntries()
+            if (chainIndex !in entries.indices) return
+            val current = entries[chainIndex]
+            val value = rawDb.toFloat().coerceIn(if (control == 0) -24.0f else -12.0f,
+                if (control == 0) 12.0f else 12.0f)
+            val updated = when (control) {
+                0 -> current.copy(gainDb = value)
+                1 -> current.copy(eqLowDb = value)
+                2 -> current.copy(eqMidDb = value)
+                3 -> current.copy(eqHighDb = value)
+                4 -> current.copy(eqBand3Db = value)
+                5 -> current.copy(eqBand4Db = value)
+                else -> current.copy(eqBand5Db = value)
+            }
+            val all = entries.toMutableList()
+            all[chainIndex] = updated
+            persistNamChainEntries(all)
+            if (control == 0) nativeSetChainNamGainDb(chainIndex, value)
+            else nativeSetChainNamEqDb(chainIndex, control - 1, value)
         }
 
 
@@ -2756,7 +3297,14 @@ class MainActivity : AppCompatActivity() {
         val gateThresholdDb: Float,
         val eqLowDb: Float,
         val eqMidDb: Float,
-        val eqHighDb: Float
+        val eqHighDb: Float,
+        val extraNamChainJson: String,
+        val cabinetIrPath: String?,
+        val cabinetIrBypass: Boolean,
+        val cabinetIrPosition: Int,
+        val cabinetIrInGain: Float,
+        val cabinetIrOutGain: Float,
+        val cabinetIrMix: Float
     )
 
 
@@ -2944,6 +3492,14 @@ class MainActivity : AppCompatActivity() {
                     ),
                     0.0f
                 )
+        ,
+            extraNamChainJson = prefs.getString(presetKey(slot, "extra_nam_chain"), "[]") ?: "[]",
+            cabinetIrPath = prefs.getString(presetKey(slot, "cabinet_ir_path"), null),
+            cabinetIrBypass = prefs.getBoolean(presetKey(slot, "cabinet_ir_bypass"), false),
+            cabinetIrPosition = prefs.getInt(presetKey(slot, "cabinet_ir_position"), MAX_NAM_BLOCKS),
+            cabinetIrInGain = prefs.getFloat(presetKey(slot, "cabinet_ir_in_gain"), 0.0f),
+            cabinetIrOutGain = prefs.getFloat(presetKey(slot, "cabinet_ir_out_gain"), 0.0f),
+            cabinetIrMix = prefs.getFloat(presetKey(slot, "cabinet_ir_mix"), 1.0f)
         )
     }
 
@@ -3154,6 +3710,24 @@ class MainActivity : AppCompatActivity() {
                     )
                 }
 
+                val currentCabinetPath = prefs.getString(PREF_CABINET_IR_PATH, null)
+                val cabinetPresetPath = currentCabinetPath?.let { cabinetPath ->
+                    val cabinetSource = File(cabinetPath)
+                    if (!cabinetSource.exists()) {
+                        null
+                    } else {
+                        val cabinetDestination = File(filesDir, "preset-$slot-cabinet.wav")
+                        cabinetSource.inputStream().use { input ->
+                            cabinetDestination.outputStream().use { output -> input.copyTo(output) }
+                        }
+                        if (cabinetDestination.exists() && cabinetDestination.length() > 0L) {
+                            cabinetDestination.absolutePath
+                        } else {
+                            null
+                        }
+                    }
+                }
+
 
                 val modelName =
                     prefs.getString(
@@ -3332,6 +3906,52 @@ class MainActivity : AppCompatActivity() {
                             0.0f
                         )
                     )
+
+                    .putString(
+                        presetKey(slot, "extra_nam_chain"),
+                        prefs.getString(PREF_EXTRA_NAM_CHAIN, "[]") ?: "[]"
+                    )
+                    .putString(
+                        presetKey(slot, "cabinet_ir_path"),
+                        cabinetPresetPath
+                    )
+                    .putBoolean(
+                        presetKey(slot, "cabinet_ir_bypass"),
+                        prefs.getBoolean(PREF_CABINET_IR_BYPASS, false)
+                    )
+                    .putInt(
+                        presetKey(slot, "cabinet_ir_position"),
+                        prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS)
+                    )
+                    .putFloat(
+                        presetKey(slot, "cabinet_ir_in_gain"),
+                        prefs.getFloat(PREF_CABINET_IR_IN_GAIN, 0.0f)
+                    )
+                    .putFloat(
+                        presetKey(slot, "cabinet_ir_out_gain"),
+                        prefs.getFloat(PREF_CABINET_IR_OUT_GAIN, 0.0f)
+                    )
+                    .putFloat(
+                        presetKey(slot, "cabinet_ir_mix"),
+                        prefs.getFloat(PREF_CABINET_IR_MIX, 1.0f)
+                    )
+                    .putBoolean(presetKey(slot, "nam_bypass"), prefs.getBoolean(PREF_NAM_BYPASS, bypass))
+                    .putFloat(presetKey(slot, "nam_gain_db"), prefs.getFloat(PREF_NAM_GAIN_DB, 0.0f))
+                    .putFloat(presetKey(slot, "nam_in_gain_db"), prefs.getFloat(PREF_NAM_IN_GAIN_DB, 0.0f))
+                    .putFloat(presetKey(slot, "nam_mix"), prefs.getFloat(PREF_NAM_MIX, 1.0f))
+                    .putFloat(presetKey(slot, "nam_eq_low_db"), prefs.getFloat(PREF_NAM_EQ_LOW_DB, 0.0f))
+                    .putFloat(presetKey(slot, "nam_eq_mid_db"), prefs.getFloat(PREF_NAM_EQ_MID_DB, 0.0f))
+                    .putFloat(presetKey(slot, "nam_eq_high_db"), prefs.getFloat(PREF_NAM_EQ_HIGH_DB, 0.0f))
+                    .putBoolean(presetKey(slot, "nam_eq_pre"), prefs.getBoolean(PREF_NAM_EQ_PRE, false))
+                    .putBoolean(presetKey(slot, "nam_normalize"), prefs.getBoolean(PREF_NAM_NORMALIZE, true))
+                    .putBoolean(presetKey(slot, "nam_a2_full"), prefs.getBoolean(PREF_NAM_A2_FULL, false))
+                    .putBoolean(presetKey(slot, "cabinet_ir_eq_pre"), prefs.getBoolean(PREF_CABINET_IR_EQ_PRE, false))
+                    .putFloat(presetKey(slot, "cabinet_ir_eq_0"), prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + 0, 0.0f))
+                    .putFloat(presetKey(slot, "cabinet_ir_eq_1"), prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + 1, 0.0f))
+                    .putFloat(presetKey(slot, "cabinet_ir_eq_2"), prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + 2, 0.0f))
+                    .putFloat(presetKey(slot, "cabinet_ir_eq_3"), prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + 3, 0.0f))
+                    .putFloat(presetKey(slot, "cabinet_ir_eq_4"), prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + 4, 0.0f))
+                    .putFloat(presetKey(slot, "cabinet_ir_eq_5"), prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + 5, 0.0f))
 
                     .apply()
 
@@ -3575,7 +4195,47 @@ class MainActivity : AppCompatActivity() {
                         preset.eqHighDb
                     )
 
+                    .putString(PREF_EXTRA_NAM_CHAIN, preset.extraNamChainJson)
+                    .putString(PREF_CABINET_IR_PATH, preset.cabinetIrPath)
+                    .putBoolean(PREF_CABINET_IR_BYPASS, preset.cabinetIrBypass)
+                    .putInt(PREF_CABINET_IR_POSITION, preset.cabinetIrPosition)
+                    .putFloat(PREF_CABINET_IR_IN_GAIN, preset.cabinetIrInGain)
+                    .putFloat(PREF_CABINET_IR_OUT_GAIN, preset.cabinetIrOutGain)
+                    .putFloat(PREF_CABINET_IR_MIX, preset.cabinetIrMix)
+                    .putBoolean(PREF_NAM_BYPASS, prefs.getBoolean(presetKey(slot, "nam_bypass"), false))
+                    .putFloat(PREF_NAM_GAIN_DB, prefs.getFloat(presetKey(slot, "nam_gain_db"), 0.0f))
+                    .putFloat(PREF_NAM_IN_GAIN_DB, prefs.getFloat(presetKey(slot, "nam_in_gain_db"), 0.0f))
+                    .putFloat(PREF_NAM_MIX, prefs.getFloat(presetKey(slot, "nam_mix"), 1.0f))
+                    .putFloat(PREF_NAM_EQ_LOW_DB, prefs.getFloat(presetKey(slot, "nam_eq_low_db"), 0.0f))
+                    .putFloat(PREF_NAM_EQ_MID_DB, prefs.getFloat(presetKey(slot, "nam_eq_mid_db"), 0.0f))
+                    .putFloat(PREF_NAM_EQ_HIGH_DB, prefs.getFloat(presetKey(slot, "nam_eq_high_db"), 0.0f))
+                    .putBoolean(PREF_NAM_EQ_PRE, prefs.getBoolean(presetKey(slot, "nam_eq_pre"), false))
+                    .putBoolean(PREF_NAM_NORMALIZE, prefs.getBoolean(presetKey(slot, "nam_normalize"), true))
+                    .putBoolean(PREF_NAM_A2_FULL, prefs.getBoolean(presetKey(slot, "nam_a2_full"), false))
+                    .putBoolean(PREF_CABINET_IR_EQ_PRE, prefs.getBoolean(presetKey(slot, "cabinet_ir_eq_pre"), false))
+                    .putFloat(PREF_CABINET_IR_EQ_PREFIX + 0, prefs.getFloat(presetKey(slot, "cabinet_ir_eq_0"), 0.0f))
+                    .putFloat(PREF_CABINET_IR_EQ_PREFIX + 1, prefs.getFloat(presetKey(slot, "cabinet_ir_eq_1"), 0.0f))
+                    .putFloat(PREF_CABINET_IR_EQ_PREFIX + 2, prefs.getFloat(presetKey(slot, "cabinet_ir_eq_2"), 0.0f))
+                    .putFloat(PREF_CABINET_IR_EQ_PREFIX + 3, prefs.getFloat(presetKey(slot, "cabinet_ir_eq_3"), 0.0f))
+                    .putFloat(PREF_CABINET_IR_EQ_PREFIX + 4, prefs.getFloat(presetKey(slot, "cabinet_ir_eq_4"), 0.0f))
+                    .putFloat(PREF_CABINET_IR_EQ_PREFIX + 5, prefs.getFloat(presetKey(slot, "cabinet_ir_eq_5"), 0.0f))
+
                     .apply()
+
+                val restoredChain = rebuildNativeNamChain(readNamChainEntries())
+                val irPath = preset.cabinetIrPath
+                if (irPath != null && File(irPath).exists()) {
+                    nativeLoadImpulseResponse(irPath)
+                    nativeSetImpulseResponseBypass(preset.cabinetIrBypass)
+                    nativeSetImpulseResponsePosition(preset.cabinetIrPosition)
+                    nativeSetImpulseResponseInGainDb(preset.cabinetIrInGain)
+                    nativeSetImpulseResponseOutGainDb(preset.cabinetIrOutGain)
+                    nativeSetImpulseResponseMix(preset.cabinetIrMix)
+                    nativeSetImpulseResponseEqPre(presetCabinetEqPre(preset.slot))
+                    for (band in 0 until 6) nativeSetImpulseResponseEqDb(band, presetCabinetEq(preset.slot, band))
+                } else {
+                    nativeClearImpulseResponse()
+                }
 
 
                 runOnUiThread {
@@ -3699,7 +4359,7 @@ class MainActivity : AppCompatActivity() {
 
                     status.text =
                         "PRESET $slot READY\n\n" +
-                                result
+                                result + "\n" + restoredChain
                 }
 
 
@@ -3730,6 +4390,12 @@ class MainActivity : AppCompatActivity() {
 
         }.start()
     }
+
+    private fun presetCabinetEqPre(slot: Int): Boolean =
+        prefs.getBoolean(presetKey(slot, "cabinet_ir_eq_pre"), false)
+
+    private fun presetCabinetEq(slot: Int, band: Int): Float =
+        prefs.getFloat(presetKey(slot, "cabinet_ir_eq_$band"), 0.0f)
 
 
     // ========================================================
@@ -3865,7 +4531,20 @@ class MainActivity : AppCompatActivity() {
                     )
                 ) {
 
-                    restoreExtraNamChainNative()
+                    val restored = restoreExtraNamChainNative()
+                    applyPersistedNamControls()
+                    val irPath = prefs.getString(PREF_CABINET_IR_PATH, null)
+                    if (irPath != null && File(irPath).exists()) {
+                        nativeLoadImpulseResponse(irPath)
+                        nativeSetImpulseResponseBypass(prefs.getBoolean(PREF_CABINET_IR_BYPASS, false))
+                        nativeSetImpulseResponsePosition(prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS))
+                        nativeSetImpulseResponseInGainDb(prefs.getFloat(PREF_CABINET_IR_IN_GAIN, 0.0f))
+                        nativeSetImpulseResponseOutGainDb(prefs.getFloat(PREF_CABINET_IR_OUT_GAIN, 0.0f))
+                        nativeSetImpulseResponseMix(prefs.getFloat(PREF_CABINET_IR_MIX, 1.0f))
+                        nativeSetImpulseResponseEqPre(prefs.getBoolean(PREF_CABINET_IR_EQ_PRE, false))
+                        for (band in 0 until 6) nativeSetImpulseResponseEqDb(band, prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + band, 0.0f))
+                    }
+                    restored
 
                 } else {
 
@@ -5029,16 +5708,21 @@ class MainActivity : AppCompatActivity() {
 
 
         val actionTitle =
-            if (
-                importMode ==
-                "add"
-            ) {
+            if (importMode == "add") {
 
                 "ADD NAM — SELECT CAPTURE"
 
             } else {
 
-                "REPLACE NAM 1 — SELECT CAPTURE"
+                val replacementIndex = importMode
+                    .removePrefix("replace:")
+                    .toIntOrNull()
+
+                if (replacementIndex != null) {
+                    "REPLACE NAM ${replacementIndex + 1} — SELECT CAPTURE"
+                } else {
+                    "REPLACE NAM 1 — SELECT CAPTURE"
+                }
             }
 
 
@@ -5159,6 +5843,10 @@ class MainActivity : AppCompatActivity() {
                         "replace"
                     ) ?: "replace"
 
+                val replacementIndex = importMode
+                    .removePrefix("replace:")
+                    .toIntOrNull()
+
 
                 nativeStop()
 
@@ -5238,6 +5926,14 @@ class MainActivity : AppCompatActivity() {
                         )
                     }
 
+                    val addedChainIndex = nativeGetNamBlockCount() - 1
+                    nativeSetChainNamInGainDb(addedChainIndex, 0.0f)
+                    nativeSetChainNamMix(addedChainIndex, 1.0f)
+                    nativeSetChainNamGainDb(addedChainIndex, 0.0f)
+                    nativeSetChainNamEqDb(addedChainIndex, 0, 0.0f)
+                    nativeSetChainNamEqDb(addedChainIndex, 1, 0.0f)
+                    nativeSetChainNamEqDb(addedChainIndex, 2, 0.0f)
+
 
                     val entries =
                         readExtraNamChain()
@@ -5299,6 +5995,57 @@ class MainActivity : AppCompatActivity() {
                                     addResult
                     }
 
+
+                    return@Thread
+                }
+
+
+                if (replacementIndex != null && replacementIndex > 0) {
+                    stage("REPLACING NAM BLOCK ${replacementIndex + 1}...\n${model.name}")
+
+                    val entries = readNamChainEntries()
+                    if (replacementIndex !in entries.indices) {
+                        throw RuntimeException("NAM block ${replacementIndex + 1} no longer exists.")
+                    }
+
+                    val previous = entries[replacementIndex]
+                    val committed = commitExtraDownloadedModel(
+                        pendingFile = downloaded,
+                        modelId = model.id
+                    )
+                    pendingFile = null
+
+                    entries[replacementIndex] = ExtraNamEntry(
+                        toneId = toneId,
+                        toneTitle = toneTitle,
+                        modelId = model.id,
+                        modelName = model.name,
+                        size = model.size,
+                        path = committed.absolutePath,
+                        bypass = previous.bypass
+                    )
+
+                    val replaceResult = rebuildNativeNamChain(entries)
+                    if (!replaceResult.startsWith("NAM CHAIN READY")) {
+                        committed.delete()
+                        throw RuntimeException(replaceResult)
+                    }
+
+                    persistNamChainEntries(entries)
+                    if (previous.path != committed.absolutePath) {
+                        File(previous.path).delete()
+                    }
+
+                    prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
+
+                    runOnUiThread {
+                        startButton.isEnabled = true
+                        status.text = "NAM BLOCK ${replacementIndex + 1} REPLACED\n\n" +
+                                "Tone: $toneTitle\n" +
+                                "Capture: ${model.name}\n" +
+                                "Size: ${model.size.uppercase()}\n\n" +
+                                replaceResult
+                    }
 
                     return@Thread
                 }

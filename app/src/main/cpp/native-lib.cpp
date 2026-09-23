@@ -6,6 +6,7 @@
 #include <NAM/activations.h>
 #include <NAM/get_dsp.h>
 #include <NAM/slimmable.h>
+#include "ImpulseResponse.h"
 
 #include <algorithm>
 #include <array>
@@ -62,15 +63,8 @@ namespace {
      */
     constexpr unsigned int PRESET_CROSSFADE_SAMPLES = 128;
 
-    /*
-     * M2.4 multi-NAM validation.
-     *
-     * Slot 0 is the existing primary NAM.
-     * Slots 1..3 are additional serial NAM blocks.
-     */
+    /* All NAM slots are peers in one serial signal chain. */
     constexpr unsigned int MAX_NAM_BLOCKS = 4;
-    constexpr unsigned int MAX_EXTRA_NAM_BLOCKS =
-            MAX_NAM_BLOCKS - 1;
 
     /*
      * A2 / SlimmableContainer quality.
@@ -1427,6 +1421,22 @@ namespace {
 
     public:
 
+        AudioEngine() {
+            for (unsigned int slot = 0; slot < MAX_NAM_BLOCKS; ++slot) {
+                mNamGainDb[slot].store(0.0f);
+                mNamInGainDb[slot].store(0.0f);
+                mNamMix[slot].store(1.0f);
+                mNamNormalize[slot].store(true);
+                mNamNormalizeGain[slot].store(1.0f);
+                mNamEqLowDb[slot].store(0.0f);
+                mNamEqMidDb[slot].store(0.0f);
+                mNamEqHighDb[slot].store(0.0f);
+                mNamEqBand3Db[slot].store(0.0f);
+                mNamEqBand4Db[slot].store(0.0f);
+                mNamEqBand5Db[slot].store(0.0f);
+            }
+        }
+
         ~AudioEngine() {
             stop();
         }
@@ -1546,7 +1556,7 @@ namespace {
                         candidate.get()
                 );
 
-                mModel =
+                mNamModels[0] =
                         std::move(
                                 candidate
                         );
@@ -1563,7 +1573,7 @@ namespace {
                         1
                 );
 
-                mBypass.store(
+                mNamBypass[0].store(
                         false
                 );
 
@@ -1627,6 +1637,57 @@ namespace {
                         ) +
                         e.what();
             }
+        }
+
+        std::string loadImpulseResponse(const std::string& path) {
+            stop();
+            auto candidate = std::make_unique<dsp::ImpulseResponse>(path.c_str(), TARGET_RATE);
+            if (candidate->GetWavState() != dsp::wav::LoadReturnCode::SUCCESS) {
+                return "IR LOAD FAILED\nInvalid or unsupported WAV file";
+            }
+            mOutputIr = std::move(candidate);
+            return "IR LOADED\nCabinet convolution active";
+        }
+
+        void setImpulseResponseBypass(bool bypass) {
+            mOutputIrBypass.store(bypass, std::memory_order_relaxed);
+        }
+
+        void clearImpulseResponse() {
+            stop();
+            mOutputIr.reset();
+            mOutputIrBypass.store(false, std::memory_order_relaxed);
+            mOutputIrPosition.store(static_cast<int>(MAX_NAM_BLOCKS), std::memory_order_relaxed);
+        }
+
+        void setImpulseResponsePosition(int namBlocksBefore) {
+            mOutputIrPosition.store(
+                    std::clamp(namBlocksBefore, 0, static_cast<int>(MAX_NAM_BLOCKS)),
+                    std::memory_order_relaxed
+            );
+        }
+
+        void setImpulseResponseInGainDb(float db) {
+            mOutputIrInGainDb.store(std::clamp(db, -24.0f, 24.0f), std::memory_order_relaxed);
+        }
+
+        void setImpulseResponseOutGainDb(float db) {
+            mOutputIrOutGainDb.store(std::clamp(db, -24.0f, 12.0f), std::memory_order_relaxed);
+        }
+
+        void setImpulseResponseMix(float mix) {
+            mOutputIrMix.store(std::clamp(mix, 0.0f, 1.0f), std::memory_order_relaxed);
+        }
+
+        void setImpulseResponseEqDb(int band, float db) {
+            if (band >= 0 && band < 6) {
+                mOutputIrEqDb[static_cast<size_t>(band)].store(
+                        std::clamp(db, -12.0f, 12.0f), std::memory_order_relaxed);
+            }
+        }
+
+        void setImpulseResponseEqPre(bool pre) {
+            mOutputIrEqPre.store(pre, std::memory_order_relaxed);
         }
 
         std::string switchPresetGapless(
@@ -2128,23 +2189,16 @@ namespace {
             stop();
 
 
-            if (!mModel) {
-                return
-                        "CHAIN NAM ADD FAILED\n"
-                        "Load the first NAM block before adding another.";
-            }
-
-
             unsigned int freeSlot =
-                    MAX_EXTRA_NAM_BLOCKS;
+                    MAX_NAM_BLOCKS;
 
 
             for (
                     unsigned int slot = 0;
-                    slot < MAX_EXTRA_NAM_BLOCKS;
+                    slot < MAX_NAM_BLOCKS;
                     ++slot
                     ) {
-                if (!mExtraModels[slot]) {
+                if (!mNamModels[slot]) {
                     freeSlot =
                             slot;
 
@@ -2155,7 +2209,7 @@ namespace {
 
             if (
                     freeSlot >=
-                    MAX_EXTRA_NAM_BLOCKS
+                    MAX_NAM_BLOCKS
                     ) {
                 return
                         "CHAIN NAM ADD FAILED\n"
@@ -2259,19 +2313,14 @@ namespace {
                 }
 
 
-                mExtraModels[freeSlot] =
+                mNamModels[freeSlot] =
                         std::move(
                                 candidate
                         );
 
 
-                mExtraModelBypass[freeSlot].store(
+                mNamBypass[freeSlot].store(
                         false
-                );
-
-
-                mExtraModelCount.fetch_add(
-                        1
                 );
 
 
@@ -2281,8 +2330,7 @@ namespace {
                         << "CHAIN NAM ADDED\n"
                         << "chainIndex="
                         << (
-                                freeSlot +
-                                1
+                                freeSlot
                         )
                         << "\n"
                         << "namBlocks="
@@ -2309,20 +2357,19 @@ namespace {
 
             for (
                     unsigned int slot = 0;
-                    slot < MAX_EXTRA_NAM_BLOCKS;
+                    slot < MAX_NAM_BLOCKS;
                     ++slot
                     ) {
-                mExtraModels[slot].reset();
+                if (slot == 0) {
+                    continue;
+                }
 
-                mExtraModelBypass[slot].store(
+                mNamModels[slot].reset();
+
+                mNamBypass[slot].store(
                         false
                 );
             }
-
-
-            mExtraModelCount.store(
-                    0
-            );
 
 
             return
@@ -2330,55 +2377,134 @@ namespace {
         }
 
 
+        std::string clearChainModels() {
+            stop();
+
+            for (unsigned int slot = 0; slot < MAX_NAM_BLOCKS; ++slot) {
+                mNamModels[slot].reset();
+                mNamBypass[slot].store(false);
+            }
+
+            mPendingModel.reset();
+            mCrossfadeOldModel.reset();
+            mPresetSwitchPending.store(false);
+            mCrossfadeActive.store(false);
+
+            return "NAM CHAIN CLEARED";
+        }
+
+
         void setChainNamBypass(
                 int chainIndex,
                 bool bypass
         ) {
-            if (chainIndex <= 0) {
-                mBypass.store(
-                        bypass
-                );
-
+            if (chainIndex < 0) {
                 return;
             }
 
-
             const unsigned int slot =
                     static_cast<unsigned int>(
-                            chainIndex -
-                            1
+                            chainIndex
                     );
 
 
             if (
                     slot >=
-                    MAX_EXTRA_NAM_BLOCKS
+                    MAX_NAM_BLOCKS
                     ) {
                 return;
             }
 
 
-            mExtraModelBypass[slot].store(
+            mNamBypass[slot].store(
                     bypass
             );
         }
 
+        std::string setChainNamQuality(int chainIndex, bool full) {
+            if (chainIndex < 0 || chainIndex >= static_cast<int>(MAX_NAM_BLOCKS)) {
+                return "A2 QUALITY FAILED\nInvalid block";
+            }
+            auto* model = mNamModels[static_cast<unsigned int>(chainIndex)].get();
+            auto* slimmable = dynamic_cast<nam::SlimmableModel*>(model);
+            if (!slimmable) {
+                return "A2 QUALITY UNAVAILABLE\nThis NAM is not slimmable";
+            }
+            const bool wasRunning = isRunning();
+            stop();
+            slimmable->SetSlimmableSize(full ? 1.0 : A2_LITE_SLIM_SIZE);
+            if (wasRunning) {
+                const auto result = start();
+                if (!result.starts_with("AUDIO ACTIVE")) return result;
+            }
+            return full ? "A2 FULL ACTIVE" : "A2 LITE ACTIVE";
+        }
+
+        void setChainNamGainDb(int chainIndex, float db) {
+            if (chainIndex >= 0 && chainIndex < static_cast<int>(MAX_NAM_BLOCKS)) {
+                mNamGainDb[static_cast<unsigned int>(chainIndex)].store(
+                        std::clamp(db, -24.0f, 12.0f), std::memory_order_relaxed);
+            }
+        }
+
+        void setChainNamInGainDb(int chainIndex, float db) {
+            if (chainIndex >= 0 && chainIndex < static_cast<int>(MAX_NAM_BLOCKS)) {
+                mNamInGainDb[static_cast<unsigned int>(chainIndex)].store(
+                        std::clamp(db, -24.0f, 24.0f), std::memory_order_relaxed);
+            }
+        }
+
+        void setChainNamMix(int chainIndex, float mix) {
+            if (chainIndex >= 0 && chainIndex < static_cast<int>(MAX_NAM_BLOCKS)) {
+                mNamMix[static_cast<unsigned int>(chainIndex)].store(
+                        std::clamp(mix, 0.0f, 1.0f), std::memory_order_relaxed);
+            }
+        }
+
+        void setChainNamNormalize(int chainIndex, bool enabled) {
+            if (chainIndex >= 0 && chainIndex < static_cast<int>(MAX_NAM_BLOCKS)) {
+                mNamNormalize[static_cast<unsigned int>(chainIndex)].store(enabled, std::memory_order_relaxed);
+            }
+        }
+
+        void setChainNamEqDb(int chainIndex, int band, float db) {
+            if (chainIndex < 0 || chainIndex >= static_cast<int>(MAX_NAM_BLOCKS)) {
+                return;
+            }
+            auto value = std::clamp(db, -12.0f, 12.0f);
+            const auto slot = static_cast<unsigned int>(chainIndex);
+            if (band == 0) mNamEqLowDb[slot].store(value, std::memory_order_relaxed);
+            if (band == 1) mNamEqMidDb[slot].store(value, std::memory_order_relaxed);
+            if (band == 2) mNamEqHighDb[slot].store(value, std::memory_order_relaxed);
+            if (band == 3) mNamEqBand3Db[slot].store(value, std::memory_order_relaxed);
+            if (band == 4) mNamEqBand4Db[slot].store(value, std::memory_order_relaxed);
+            if (band == 5) mNamEqBand5Db[slot].store(value, std::memory_order_relaxed);
+        }
+
+        void setChainNamEqPre(int chainIndex, bool pre) {
+            if (chainIndex >= 0 && chainIndex < static_cast<int>(MAX_NAM_BLOCKS)) {
+                mNamEqPre[static_cast<unsigned int>(chainIndex)].store(pre, std::memory_order_relaxed);
+            }
+        }
+
 
         int namBlockCount() const {
-            return
-                    mModel
-                    ? static_cast<int>(
-                            1 +
-                            mExtraModelCount.load()
-                    )
-                    : 0;
+            int count = 0;
+
+            for (const auto& model : mNamModels) {
+                if (model) {
+                    ++count;
+                }
+            }
+
+            return count;
         }
 
 
         std::string start() {
             stop();
 
-            if (!mModel) {
+            if (namBlockCount() == 0) {
                 return
                         "AUDIO START FAILED\n"
                         "No NAM model loaded";
@@ -2396,38 +2522,21 @@ namespace {
                         openError;
             }
 
-            mModel->Reset(
-                    TARGET_RATE,
-                    static_cast<int>(
-                            mBlockSize
-                    )
-            );
-
-            /*
-             * Reset() can rebuild/reinitialize model internals.
-             * Re-apply the selected A2 tier after the final Reset()
-             * used by the actual USB block size.
-             */
-            applyA2LiteSlimmableQuality(
-                    mModel.get()
-            );
-
-
             for (
                     unsigned int slot = 0;
-                    slot < MAX_EXTRA_NAM_BLOCKS;
+                    slot < MAX_NAM_BLOCKS;
                     ++slot
                     ) {
-                auto* extra =
-                        mExtraModels[slot].get();
+                auto* model =
+                        mNamModels[slot].get();
 
 
-                if (!extra) {
+                if (!model) {
                     continue;
                 }
 
 
-                extra->Reset(
+                model->Reset(
                         TARGET_RATE,
                         static_cast<int>(
                                 mBlockSize
@@ -2438,7 +2547,7 @@ namespace {
                 if (
                         auto* slimmable =
                                 dynamic_cast<nam::SlimmableModel*>(
-                                        extra
+                                        model
                                 )
                         ) {
                     slimmable->SetSlimmableSize(
@@ -2483,8 +2592,8 @@ namespace {
                             : (
                                     namBlockCount() ==
                                     2
-                                    ? "A2_LITE_MULTI_NAM_128X8_SINGLE_FASTEST_CORE"
-                                    : "A2_LITE_LOW_LATENCY_64X8_SINGLE_FASTEST_CORE"
+                                    ? "A2_LITE_MULTI_NAM_256X4_SINGLE_FASTEST_CORE"
+                                    : "A2_LITE_LOW_LATENCY_128X4_SINGLE_FASTEST_CORE"
                             )
                     )
                     << "\n"
@@ -2566,7 +2675,7 @@ namespace {
         void setBypass(
                 bool bypass
         ) {
-            mBypass.store(
+            mNamBypass[0].store(
                     bypass
             );
         }
@@ -3335,8 +3444,8 @@ namespace {
                             : (
                                     namBlockCount() ==
                                     2
-                                    ? "A2_LITE_MULTI_NAM_128X8_SINGLE_FASTEST_CORE"
-                                    : "A2_LITE_LOW_LATENCY_64X8_SINGLE_FASTEST_CORE"
+                                    ? "A2_LITE_MULTI_NAM_256X4_SINGLE_FASTEST_CORE"
+                                    : "A2_LITE_LOW_LATENCY_128X4_SINGLE_FASTEST_CORE"
                             )
                     )
                     << "\n"
@@ -3345,33 +3454,29 @@ namespace {
                     << " / "
                     << MAX_NAM_BLOCKS
                     << "\n"
-                    << "NAM1 bypass="
+                    << "NAM slot 0 bypass="
                     << (
-                            mBypass.load()
+                            mNamBypass[0].load()
                             ? "yes"
                             : "no"
                     )
-                    << " (block-only)"
                     << "\n";
 
             for (
-                    unsigned int slot = 0;
-                    slot < MAX_EXTRA_NAM_BLOCKS;
+                    unsigned int slot = 1;
+                    slot < MAX_NAM_BLOCKS;
                     ++slot
                     ) {
-                if (!mExtraModels[slot]) {
+                if (!mNamModels[slot]) {
                     continue;
                 }
 
                 out
-                        << "NAM"
-                        << (
-                                slot +
-                                2
-                        )
+                        << "NAM slot "
+                        << slot
                         << " bypass="
                         << (
-                                mExtraModelBypass[slot].load()
+                                mNamBypass[slot].load()
                                 ? "yes"
                                 : "no"
                         )
@@ -3927,14 +4032,13 @@ namespace {
                  * Realtime profile selection.
                  *
                  * 1 NAM:
-                 *   64 frames x 8 periods
-                 *   DSP deadline ~= 1.33 ms
+                 *   128 frames x 4 periods
+                 *   DSP deadline ~= 2.67 ms
                  *   nominal ring ~= 10.67 ms / direction
                  *
                  * 2 NAMs:
-                 *   128 frames x 8 periods
-                 *   DSP deadline ~= 2.67 ms
-                 *   nominal ring ~= 21.33 ms / direction
+                 *   prefer 128 frames x 4 periods (DSP deadline ~= 2.67 ms)
+                 *   fall back to 256 frames only when the USB PCM rejects it
                  *
                  * 3-4 NAMs:
                  *   256 frames x 4 periods
@@ -3945,7 +4049,7 @@ namespace {
                  * quantum without doubling total ALSA ring depth again.
                  * It is meant to absorb sustained multi-NAM execution-time
                  * spikes while keeping roughly the same total ring size as
-                 * the 2-NAM stability profile.
+                 * the multi-NAM stability profile.
                  */
                 const unsigned int activeNamBlocks =
                         namBlockCount();
@@ -3981,18 +4085,18 @@ namespace {
                     };
 
                     preferredPeriodCount =
-                            8;
+                            4;
 
                 } else {
                     blockCandidates = {
-                            64,
-                            96,
                             128,
+                            96,
+                            64,
                             256
                     };
 
                     preferredPeriodCount =
-                            8;
+                            4;
                 }
 
                 const auto captureFormats =
@@ -4967,10 +5071,10 @@ namespace {
              */
             mCrossfadeOldModel =
                     std::move(
-                            mModel
+                            mNamModels[0]
                     );
 
-            mModel =
+            mNamModels[0] =
                     std::move(
                             mPendingModel
                     );
@@ -5062,7 +5166,7 @@ namespace {
                     std::memory_order_relaxed
             );
 
-            mBypass.store(
+            mNamBypass[0].store(
                     false,
                     std::memory_order_relaxed
             );
@@ -5144,6 +5248,18 @@ namespace {
             std::vector<NAM_SAMPLE> namChainB(
                     frames
             );
+
+            std::vector<NAM_SAMPLE> namDry(
+                    frames
+            );
+
+            std::vector<float> postEqBuffer(frames);
+            std::vector<float> irDry(frames);
+            std::vector<double> irInput(frames);
+            double* irInputPointers[1] = {irInput.data()};
+            std::array<Biquad, 6> irEq;
+            std::array<float, 6> currentIrEqDb;
+            currentIrEqDb.fill(999.0f);
 
             NAM_SAMPLE* namInputPtr =
             namInput.data();
@@ -5264,6 +5380,137 @@ namespace {
             Biquad lowEq;
             Biquad midEq;
             Biquad highEq;
+
+            std::array<Biquad, MAX_NAM_BLOCKS> namLowEq;
+            std::array<Biquad, MAX_NAM_BLOCKS> namMidEq;
+            std::array<Biquad, MAX_NAM_BLOCKS> namHighEq;
+            std::array<Biquad, MAX_NAM_BLOCKS> namBand3Eq;
+            std::array<Biquad, MAX_NAM_BLOCKS> namBand4Eq;
+            std::array<Biquad, MAX_NAM_BLOCKS> namBand5Eq;
+
+            std::array<float, MAX_NAM_BLOCKS> currentNamLowDb;
+            std::array<float, MAX_NAM_BLOCKS> currentNamMidDb;
+            std::array<float, MAX_NAM_BLOCKS> currentNamHighDb;
+            std::array<float, MAX_NAM_BLOCKS> currentNamBand3Db;
+            std::array<float, MAX_NAM_BLOCKS> currentNamBand4Db;
+            std::array<float, MAX_NAM_BLOCKS> currentNamBand5Db;
+            currentNamLowDb.fill(999.0f);
+            currentNamMidDb.fill(999.0f);
+            currentNamHighDb.fill(999.0f);
+            currentNamBand3Db.fill(999.0f);
+            currentNamBand4Db.fill(999.0f);
+            currentNamBand5Db.fill(999.0f);
+
+            auto processNamControls = [&](unsigned int slot, NAM_SAMPLE* buffer, const NAM_SAMPLE* dry) {
+                const float lowDb = mNamEqLowDb[slot].load(std::memory_order_relaxed);
+                const float midDb = mNamEqMidDb[slot].load(std::memory_order_relaxed);
+                const float highDb = mNamEqHighDb[slot].load(std::memory_order_relaxed);
+                const float band3Db = mNamEqBand3Db[slot].load(std::memory_order_relaxed);
+                const float band4Db = mNamEqBand4Db[slot].load(std::memory_order_relaxed);
+                const float band5Db = mNamEqBand5Db[slot].load(std::memory_order_relaxed);
+                if (std::abs(lowDb - currentNamLowDb[slot]) > 0.001f) {
+                    namLowEq[slot].setLowShelf(TARGET_RATE, 120.0, lowDb);
+                    currentNamLowDb[slot] = lowDb;
+                }
+                if (std::abs(midDb - currentNamMidDb[slot]) > 0.001f) {
+                    namMidEq[slot].setPeaking(TARGET_RATE, 750.0, 0.8, midDb);
+                    currentNamMidDb[slot] = midDb;
+                }
+                if (std::abs(highDb - currentNamHighDb[slot]) > 0.001f) {
+                    namHighEq[slot].setHighShelf(TARGET_RATE, 4000.0, highDb);
+                    currentNamHighDb[slot] = highDb;
+                }
+                if (std::abs(band3Db - currentNamBand3Db[slot]) > 0.001f) {
+                    namBand3Eq[slot].setPeaking(TARGET_RATE, 1800.0, 0.8, band3Db);
+                    currentNamBand3Db[slot] = band3Db;
+                }
+                if (std::abs(band4Db - currentNamBand4Db[slot]) > 0.001f) {
+                    namBand4Eq[slot].setPeaking(TARGET_RATE, 3500.0, 0.8, band4Db);
+                    currentNamBand4Db[slot] = band4Db;
+                }
+                if (std::abs(band5Db - currentNamBand5Db[slot]) > 0.001f) {
+                    namBand5Eq[slot].setHighShelf(TARGET_RATE, 8000.0, band5Db);
+                    currentNamBand5Db[slot] = band5Db;
+                }
+                const float gain = std::pow(10.0f,
+                                            mNamGainDb[slot].load(std::memory_order_relaxed) / 20.0f);
+                const float mix = mNamMix[slot].load(std::memory_order_relaxed);
+                const bool normalize = mNamNormalize[slot].load(std::memory_order_relaxed);
+                const float normalizeGain = mNamNormalizeGain[slot].load(std::memory_order_relaxed);
+                float blockPeak = 0.0f;
+                for (unsigned int frame = 0; frame < frames; ++frame) {
+                    float value = static_cast<float>(buffer[frame]);
+                    if (!mNamEqPre[slot].load(std::memory_order_relaxed)) {
+                        value = namLowEq[slot].process(value);
+                        value = namMidEq[slot].process(value);
+                        value = namHighEq[slot].process(value);
+                        value = namBand3Eq[slot].process(value);
+                        value = namBand4Eq[slot].process(value);
+                        value = namBand5Eq[slot].process(value);
+                    }
+                    value = (static_cast<float>(dry[frame]) * (1.0f - mix) + value * mix) * gain * normalizeGain;
+                    blockPeak = std::max(blockPeak, std::abs(value));
+                    buffer[frame] = static_cast<NAM_SAMPLE>(value);
+                }
+                if (normalize && blockPeak > 0.0001f) {
+                    const float targetGain = std::clamp(0.65f / blockPeak, 0.25f, 4.0f);
+                    const float smoothed = normalizeGain * 0.98f + targetGain * 0.02f;
+                    mNamNormalizeGain[slot].store(smoothed, std::memory_order_relaxed);
+                }
+            };
+
+            auto processNamPreEq = [&](unsigned int slot, NAM_SAMPLE* buffer) {
+                if (!mNamEqPre[slot].load(std::memory_order_relaxed)) return;
+                for (unsigned int frame = 0; frame < frames; ++frame) {
+                    float value = static_cast<float>(buffer[frame]);
+                    value = namLowEq[slot].process(value);
+                    value = namMidEq[slot].process(value);
+                    value = namHighEq[slot].process(value);
+                    value = namBand3Eq[slot].process(value);
+                    value = namBand4Eq[slot].process(value);
+                    value = namBand5Eq[slot].process(value);
+                    buffer[frame] = static_cast<NAM_SAMPLE>(value);
+                }
+            };
+
+            auto processOutputIr = [&](NAM_SAMPLE* buffer) {
+                if (!mOutputIr || mOutputIrBypass.load(std::memory_order_relaxed)) return;
+                const float inGain = std::pow(10.0f, mOutputIrInGainDb.load(std::memory_order_relaxed) / 20.0f);
+                const float outGain = std::pow(10.0f, mOutputIrOutGainDb.load(std::memory_order_relaxed) / 20.0f);
+                const float mix = mOutputIrMix.load(std::memory_order_relaxed);
+                const float eqValues[6] = {
+                        mOutputIrEqDb[0].load(std::memory_order_relaxed),
+                        mOutputIrEqDb[1].load(std::memory_order_relaxed),
+                        mOutputIrEqDb[2].load(std::memory_order_relaxed),
+                        mOutputIrEqDb[3].load(std::memory_order_relaxed),
+                        mOutputIrEqDb[4].load(std::memory_order_relaxed),
+                        mOutputIrEqDb[5].load(std::memory_order_relaxed)
+                };
+                if (eqValues[0] != currentIrEqDb[0]) { irEq[0].setLowShelf(TARGET_RATE, 120.0, eqValues[0]); currentIrEqDb[0] = eqValues[0]; }
+                if (eqValues[1] != currentIrEqDb[1]) { irEq[1].setPeaking(TARGET_RATE, 750.0, 0.8, eqValues[1]); currentIrEqDb[1] = eqValues[1]; }
+                if (eqValues[2] != currentIrEqDb[2]) { irEq[2].setHighShelf(TARGET_RATE, 4000.0, eqValues[2]); currentIrEqDb[2] = eqValues[2]; }
+                if (eqValues[3] != currentIrEqDb[3]) { irEq[3].setPeaking(TARGET_RATE, 1800.0, 0.8, eqValues[3]); currentIrEqDb[3] = eqValues[3]; }
+                if (eqValues[4] != currentIrEqDb[4]) { irEq[4].setPeaking(TARGET_RATE, 3500.0, 0.8, eqValues[4]); currentIrEqDb[4] = eqValues[4]; }
+                if (eqValues[5] != currentIrEqDb[5]) { irEq[5].setHighShelf(TARGET_RATE, 8000.0, eqValues[5]); currentIrEqDb[5] = eqValues[5]; }
+                const bool eqPre = mOutputIrEqPre.load(std::memory_order_relaxed);
+                for (unsigned int frame = 0; frame < frames; ++frame) {
+                    irDry[frame] = static_cast<float>(buffer[frame]);
+                    float value = irDry[frame] * inGain;
+                    if (eqPre) {
+                        for (auto& filter : irEq) value = filter.process(value);
+                    }
+                    irInput[frame] = static_cast<double>(value);
+                }
+                double** irOutput = mOutputIr->Process(irInputPointers, 1, frames);
+                for (unsigned int frame = 0; frame < frames; ++frame) {
+                    const float wet = static_cast<float>(irOutput[0][frame]) * outGain;
+                    float wetValue = wet;
+                    if (!eqPre) {
+                        for (auto& filter : irEq) wetValue = filter.process(wetValue);
+                    }
+                    buffer[frame] = static_cast<NAM_SAMPLE>(irDry[frame] * (1.0f - mix) + wetValue * mix);
+                }
+            };
 
 
             float currentLowDb =
@@ -5673,26 +5920,20 @@ namespace {
                 );
 
 
-                /*
-                 * NAM 1 is a normal serial block.
-                 *
-                 * `mBypass` now means "bypass NAM 1", never "bypass the
-                 * entire engine". Gate -> NAM2..NAM4 -> EQ must remain in
-                 * the signal path when NAM1 is bypassed.
-                 */
-                const bool primaryBypassed =
-                        mBypass.load(
+                /* Slot 0 uses the same block-local bypass as every slot. */
+                const bool firstSlotBypassed =
+                        mNamBypass[0].load(
                                 std::memory_order_relaxed
                         );
 
 
                 /*
-                 * If NAM1 is bypassed during an in-flight preset crossfade,
+                 * If slot 0 is bypassed during an in-flight preset crossfade,
                  * cancel the crossfade state only. Old-model destruction
                  * remains outside the realtime thread.
                  */
                 if (
-                        primaryBypassed &&
+                        firstSlotBypassed &&
                         mCrossfadeActive.load(
                                 std::memory_order_acquire
                         )
@@ -5708,18 +5949,22 @@ namespace {
 
 
                 const bool crossfadeThisBlock =
-                        !primaryBypassed &&
+                        !firstSlotBypassed &&
                         mCrossfadeActive.load(
                                 std::memory_order_acquire
                         ) &&
                         mCrossfadeOldModel;
+
+                if (mOutputIrPosition.load(std::memory_order_relaxed) == 0) {
+                    processOutputIr(namInput.data());
+                }
 
 
                 const auto start =
                         std::chrono::steady_clock::now();
 
 
-                if (primaryBypassed) {
+                if (firstSlotBypassed) {
                     /*
                      * Block-local bypass:
                      * the gate output is forwarded to the next NAM block.
@@ -5731,6 +5976,11 @@ namespace {
                     );
 
                 } else {
+                    std::copy(namInput.begin(), namInput.end(), namDry.begin());
+                    const float inGain = std::pow(10.0f,
+                            mNamInGainDb[0].load(std::memory_order_relaxed) / 20.0f);
+                    for (auto& sample : namInput) sample = static_cast<NAM_SAMPLE>(sample * inGain);
+                    processNamPreEq(0, namInput.data());
                     if (crossfadeThisBlock) {
                         mCrossfadeOldModel->process(
                                 &namInputPtr,
@@ -5742,7 +5992,7 @@ namespace {
                     }
 
 
-                    mModel->process(
+                    mNamModels[0]->process(
                             &namInputPtr,
                             &namOutputPtr,
                             static_cast<int>(
@@ -5752,9 +6002,9 @@ namespace {
 
 
                     /*
-                     * Produce one concrete buffer for NAM1 output.
+                     * Produce one concrete buffer for slot 0 output.
                      * During a gapless preset switch this is the old/new
-                     * crossfade. Otherwise it is the current primary NAM.
+                     * crossfade. Otherwise it is the current slot 0 model.
                      */
                     for (
                             unsigned int frame = 0;
@@ -5767,7 +6017,7 @@ namespace {
                                 );
 
 
-                        float primaryOutput =
+                        float firstSlotOutput =
                                 newNamOutput;
 
 
@@ -5796,7 +6046,7 @@ namespace {
                                     );
 
 
-                            primaryOutput =
+                            firstSlotOutput =
                                     oldNamOutput *
                                     (
                                             1.0f -
@@ -5809,9 +6059,15 @@ namespace {
 
                         namChainA[frame] =
                                 static_cast<NAM_SAMPLE>(
-                                        primaryOutput
+                                        firstSlotOutput
                                 );
                     }
+
+                    processNamControls(0, namChainA.data(), namDry.data());
+                }
+
+                if (mOutputIrPosition.load(std::memory_order_relaxed) == 1) {
+                    processOutputIr(namChainA.data());
                 }
 
 
@@ -5823,17 +6079,17 @@ namespace {
 
 
                 for (
-                        unsigned int slot = 0;
-                        slot < MAX_EXTRA_NAM_BLOCKS;
+                        unsigned int slot = 1;
+                        slot < MAX_NAM_BLOCKS;
                         ++slot
                         ) {
-                    auto* extra =
-                            mExtraModels[slot].get();
+                    auto* model =
+                            mNamModels[slot].get();
 
 
                     if (
-                            !extra ||
-                            mExtraModelBypass[slot].load(
+                            !model ||
+                            mNamBypass[slot].load(
                                     std::memory_order_relaxed
                             )
                             ) {
@@ -5841,7 +6097,15 @@ namespace {
                     }
 
 
-                    extra->process(
+                    std::copy(chainCurrentPtr, chainCurrentPtr + frames, namDry.begin());
+                    const float inGain = std::pow(10.0f,
+                            mNamInGainDb[slot].load(std::memory_order_relaxed) / 20.0f);
+                    for (unsigned int frame = 0; frame < frames; ++frame) {
+                        chainCurrentPtr[frame] = static_cast<NAM_SAMPLE>(chainCurrentPtr[frame] * inGain);
+                    }
+                    processNamPreEq(slot, chainCurrentPtr);
+
+                    model->process(
                             &chainCurrentPtr,
                             &chainScratchPtr,
                             static_cast<int>(
@@ -5849,11 +6113,17 @@ namespace {
                             )
                     );
 
+                    processNamControls(slot, chainScratchPtr, namDry.data());
+
 
                     std::swap(
                             chainCurrentPtr,
                             chainScratchPtr
                     );
+
+                    if (mOutputIrPosition.load(std::memory_order_relaxed) == static_cast<int>(slot + 1)) {
+                        processOutputIr(chainCurrentPtr);
+                    }
                 }
 
 
@@ -5947,36 +6217,22 @@ namespace {
                             );
 
 
-                    const float output =
-                            postEq *
-                            outputGain;
+                    postEqBuffer[frame] = postEq;
+                }
 
-                    if (
-                            outputLeftChannel <
-                            mPlaybackChannels
-                            ) {
-                        writeSample(
-                                playbackBuffer.data(),
-                                frame,
-                                outputLeftChannel,
-                                mPlaybackChannels,
-                                mPlaybackFormat,
-                                output
-                        );
+                if (mOutputIrPosition.load(std::memory_order_relaxed) == static_cast<int>(MAX_NAM_BLOCKS)) {
+                    processOutputIr(reinterpret_cast<NAM_SAMPLE*>(postEqBuffer.data()));
+                }
+
+                for (unsigned int frame = 0; frame < frames; ++frame) {
+                    const float output = postEqBuffer[frame] * outputGain;
+                    if (outputLeftChannel < mPlaybackChannels) {
+                        writeSample(playbackBuffer.data(), frame, outputLeftChannel,
+                                    mPlaybackChannels, mPlaybackFormat, output);
                     }
-
-                    if (
-                            outputRightChannel <
-                            mPlaybackChannels
-                            ) {
-                        writeSample(
-                                playbackBuffer.data(),
-                                frame,
-                                outputRightChannel,
-                                mPlaybackChannels,
-                                mPlaybackFormat,
-                                output
-                        );
+                    if (outputRightChannel < mPlaybackChannels) {
+                        writeSample(playbackBuffer.data(), frame, outputRightChannel,
+                                    mPlaybackChannels, mPlaybackFormat, output);
                     }
                 }
 
@@ -6126,7 +6382,37 @@ namespace {
         }
 
 
-        std::unique_ptr<nam::DSP> mModel;
+        std::array<
+                std::unique_ptr<nam::DSP>,
+                MAX_NAM_BLOCKS
+        > mNamModels;
+
+        std::array<
+                std::atomic<bool>,
+                MAX_NAM_BLOCKS
+        > mNamBypass{};
+
+        std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamGainDb{};
+        std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamInGainDb{};
+        std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamMix{};
+        std::array<std::atomic<bool>, MAX_NAM_BLOCKS> mNamNormalize{};
+        std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamNormalizeGain{};
+
+        std::unique_ptr<dsp::ImpulseResponse> mOutputIr;
+        std::atomic<bool> mOutputIrBypass{false};
+        std::atomic<int> mOutputIrPosition{static_cast<int>(MAX_NAM_BLOCKS)};
+        std::atomic<float> mOutputIrInGainDb{0.0f};
+        std::atomic<float> mOutputIrOutGainDb{0.0f};
+        std::atomic<float> mOutputIrMix{1.0f};
+        std::array<std::atomic<float>, 6> mOutputIrEqDb{};
+        std::atomic<bool> mOutputIrEqPre{false};
+        std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamEqLowDb{};
+        std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamEqMidDb{};
+        std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamEqHighDb{};
+        std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamEqBand3Db{};
+        std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamEqBand4Db{};
+        std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamEqBand5Db{};
+        std::array<std::atomic<bool>, MAX_NAM_BLOCKS> mNamEqPre{};
 
         std::mutex mModelSwapMutex;
 
@@ -6203,21 +6489,6 @@ namespace {
                 0.0f;
 
 
-        std::array<
-                std::unique_ptr<nam::DSP>,
-                MAX_EXTRA_NAM_BLOCKS
-        > mExtraModels;
-
-        std::array<
-                std::atomic<bool>,
-                MAX_EXTRA_NAM_BLOCKS
-        > mExtraModelBypass{};
-
-        std::atomic<unsigned int> mExtraModelCount{
-                0
-        };
-
-
         pcm* mCapture =
                 nullptr;
 
@@ -6227,10 +6498,6 @@ namespace {
         std::thread mThread;
 
         std::atomic<bool> mRunning{
-                false
-        };
-
-        std::atomic<bool> mBypass{
                 false
         };
 
@@ -6515,6 +6782,81 @@ Java_com_pedro_tone3000m1_MainActivity_nativeLoadModel(
     );
 }
 
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeLoadImpulseResponse(
+        JNIEnv* env, jobject, jstring path
+) {
+    const char* chars = env->GetStringUTFChars(path, nullptr);
+    const std::string result = gEngine.loadImpulseResponse(chars);
+    env->ReleaseStringUTFChars(path, chars);
+    return makeJString(env, result);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseBypass(
+        JNIEnv*, jobject, jboolean bypass
+) {
+    gEngine.setImpulseResponseBypass(bypass == JNI_TRUE);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeClearImpulseResponse(
+        JNIEnv*, jobject
+) {
+    gEngine.clearImpulseResponse();
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponsePosition(
+        JNIEnv*, jobject, jint namBlocksBefore
+) {
+    gEngine.setImpulseResponsePosition(static_cast<int>(namBlocksBefore));
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseInGainDb(
+        JNIEnv*, jobject, jfloat db
+) {
+    gEngine.setImpulseResponseInGainDb(db);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseOutGainDb(
+        JNIEnv*, jobject, jfloat db
+) {
+    gEngine.setImpulseResponseOutGainDb(db);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseMix(
+        JNIEnv*, jobject, jfloat mix
+) {
+    gEngine.setImpulseResponseMix(mix);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseEqDb(
+        JNIEnv*, jobject, jint band, jfloat db
+) {
+    gEngine.setImpulseResponseEqDb(static_cast<int>(band), db);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseEqPre(
+        JNIEnv*, jobject, jboolean pre
+) {
+    gEngine.setImpulseResponseEqPre(pre == JNI_TRUE);
+}
+
 
 extern "C"
 JNIEXPORT jstring JNICALL
@@ -6563,6 +6905,19 @@ Java_com_pedro_tone3000m1_MainActivity_nativeClearExtraNamBlocks(
 
 
 extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeClearNamChain(
+        JNIEnv* env,
+        jobject
+) {
+    return makeJString(
+            env,
+            gEngine.clearChainModels()
+    );
+}
+
+
+extern "C"
 JNIEXPORT void JNICALL
 Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamBypass(
         JNIEnv*,
@@ -6577,6 +6932,63 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamBypass(
             bypass ==
             JNI_TRUE
     );
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamQuality(
+        JNIEnv* env, jobject, jint chainIndex, jboolean full
+) {
+    return makeJString(env, gEngine.setChainNamQuality(
+            static_cast<int>(chainIndex), full == JNI_TRUE));
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamGainDb(
+        JNIEnv*, jobject, jint chainIndex, jfloat db
+) {
+    gEngine.setChainNamGainDb(static_cast<int>(chainIndex), db);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamInGainDb(
+        JNIEnv*, jobject, jint chainIndex, jfloat db
+) {
+    gEngine.setChainNamInGainDb(static_cast<int>(chainIndex), db);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamMix(
+        JNIEnv*, jobject, jint chainIndex, jfloat mix
+) {
+    gEngine.setChainNamMix(static_cast<int>(chainIndex), mix);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamNormalize(
+        JNIEnv*, jobject, jint chainIndex, jboolean enabled
+) {
+    gEngine.setChainNamNormalize(static_cast<int>(chainIndex), enabled == JNI_TRUE);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamEqDb(
+        JNIEnv*, jobject, jint chainIndex, jint band, jfloat db
+) {
+    gEngine.setChainNamEqDb(static_cast<int>(chainIndex), static_cast<int>(band), db);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamEqPre(
+        JNIEnv*, jobject, jint chainIndex, jboolean pre
+) {
+    gEngine.setChainNamEqPre(static_cast<int>(chainIndex), pre == JNI_TRUE);
 }
 
 

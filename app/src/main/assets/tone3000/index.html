@@ -435,7 +435,7 @@
       <div class="logo">T3</div>
       <div class="brand-copy">
         <div class="brand-title">TONE3000 Android</div>
-        <div class="brand-sub">TinyALSA · NAM A2 · 48 kHz / 64 frames</div>
+        <div class="brand-sub">TinyALSA · NAM A2 · 48 kHz · adaptive blocks</div>
       </div>
     </div>
     <div class="top-actions">
@@ -666,23 +666,42 @@
 
   function namCard(nam) {
     const index = Number(nam.chainIndex || 0);
-    const isPrimary = !!nam.primary;
-    const title = nam.modelName || (isPrimary ? 'No capture loaded' : `NAM ${index + 1}`);
+    const title = nam.modelName || `NAM ${index + 1}`;
     const subtitle = nam.toneTitle || (nam.size ? `Capture ${String(nam.size).toUpperCase()}` : '');
     const bypassLabel = nam.bypass ? 'BYPASSED' : 'BYPASS';
 
     return `
       <article class="block ${nam.bypass ? '' : 'active'}">
         <div>
-          <div class="block-tag">NAM ${index + 1}${isPrimary ? ' · PRIMARY' : ' · SERIAL'}</div>
+          <div class="block-tag">NAM BLOCK ${index + 1}</div>
           <div class="block-title">${escapeHtml(title)}</div>
           <div class="block-sub">${escapeHtml(subtitle)}</div>
         </div>
         <div class="block-actions">
-          ${isPrimary
-            ? `<button class="btn primary" onclick="browse()">SWAP</button>`
-            : ''}
+          <button class="btn" onclick="moveNam(${index}, -1)" ${index === 0 ? 'disabled' : ''}>↑</button>
+          <button class="btn" onclick="moveNam(${index}, 1)" ${index === Number(state?.namBlockCount || 0) - 1 ? 'disabled' : ''}>↓</button>
+          <button class="btn primary" onclick="changeNam(${index})">CHANGE</button>
           <button class="btn" onclick="toggleNamBypass(${index}, ${nam.bypass ? 'false' : 'true'})">${bypassLabel}</button>
+        </div>
+        <div class="block-actions">
+          <button class="btn danger" style="width:100%" onclick="removeNam(${index})">REMOVE NAM BLOCK</button>
+        </div>
+        <div class="block-sub" style="width:100%; margin-top:10px">
+          <label>IN <span id="namInGainValue${index}">${formatDb(nam.inGainDb || 0)}</span> · MIX <span id="namMixValue${index}">${Math.round(Number(nam.mix ?? 1) * 100)}%</span> · OUT <span id="namGainValue${index}">${formatDb(nam.gainDb || 0)}</span></label>
+          <input type="range" min="-24" max="24" step="0.1" value="${Number(nam.inGainDb || 0)}" oninput="setNamInGain(${index}, this.value)">
+          <input type="range" min="0" max="1" step="0.01" value="${Number(nam.mix ?? 1)}" oninput="setNamMix(${index}, this.value)">
+          <input type="range" min="-24" max="12" step="0.1" value="${Number(nam.gainDb || 0)}" oninput="setNamGain(${index}, this.value)">
+          <label>LOW <span id="namLowValue${index}">${formatDb(nam.eqLowDb || 0)}</span> · MID <span id="namMidValue${index}">${formatDb(nam.eqMidDb || 0)}</span> · HIGH <span id="namHighValue${index}">${formatDb(nam.eqHighDb || 0)}</span></label>
+          <input type="range" min="-12" max="12" step="0.1" value="${Number(nam.eqLowDb || 0)}" oninput="setNamEq(${index}, 0, this.value)">
+          <input type="range" min="-12" max="12" step="0.1" value="${Number(nam.eqMidDb || 0)}" oninput="setNamEq(${index}, 1, this.value)">
+          <input type="range" min="-12" max="12" step="0.1" value="${Number(nam.eqHighDb || 0)}" oninput="setNamEq(${index}, 2, this.value)">
+          <label>EQ 1.8k <span id="namBand3Value${index}">${formatDb(nam.eqBand3Db || 0)}</span> · EQ 3.5k <span id="namBand4Value${index}">${formatDb(nam.eqBand4Db || 0)}</span> · AIR 8k <span id="namBand5Value${index}">${formatDb(nam.eqBand5Db || 0)}</span></label>
+          <button class="btn" onclick="setNamEqPosition(${index}, ${nam.eqPre ? 'false' : 'true'})">EQ ${nam.eqPre ? 'PRE' : 'POST'}</button>
+          <button class="btn" onclick="setNamNormalize(${index}, ${nam.normalize === false ? 'true' : 'false'})">NORM ${nam.normalize === false ? 'OFF' : 'ON'}</button>
+          <button class="btn" onclick="setNamQuality(${index}, ${nam.a2Full ? 'false' : 'true'})">A2 ${nam.a2Full ? 'FULL' : 'LITE'}</button>
+          <input type="range" min="-12" max="12" step="0.1" value="${Number(nam.eqBand3Db || 0)}" oninput="setNamEq(${index}, 3, this.value)">
+          <input type="range" min="-12" max="12" step="0.1" value="${Number(nam.eqBand4Db || 0)}" oninput="setNamEq(${index}, 4, this.value)">
+          <input type="range" min="-12" max="12" step="0.1" value="${Number(nam.eqBand5Db || 0)}" oninput="setNamEq(${index}, 5, this.value)">
         </div>
       </article>
     `;
@@ -691,6 +710,7 @@
   function renderChain(s) {
     const chain = $('chain');
     const nams = Array.isArray(s.namChain) ? s.namChain : [];
+    const irPosition = Number(s.cabinetIrPosition ?? nams.length);
 
     const gate = `
       <article class="block ${s.gateEnabled ? 'active' : ''}">
@@ -731,12 +751,49 @@
         </div>
         <div class="block-actions">
           <button class="btn" onclick="resetEq()">FLAT</button>
-          ${nams.length > 1 ? `<button class="btn danger" onclick="clearExtraNams()">CLEAR NAM 2+</button>` : ''}
         </div>
       </article>
     `;
 
-    chain.innerHTML = gate + namCards + add + eq;
+    const cabinet = `
+      <article class="block">
+        <div>
+          <div class="block-tag">Cabinet</div>
+          <div class="block-title">Impulse Response</div>
+          <div class="block-sub">${s.cabinetIrLoaded ? escapeHtml(s.cabinetIrName) : 'Load a WAV cabinet IR after the NAM chain.'}</div>
+        </div>
+        <div class="block-actions">
+          <button class="btn primary" onclick="addCabinetIr()">${s.cabinetIrLoaded ? 'REPLACE IR WAV' : 'LOAD IR WAV'}</button>
+          ${s.cabinetIrLoaded ? `<button class="btn danger" onclick="removeCabinetIr()">REMOVE IR</button>` : ''}
+          ${s.cabinetIrLoaded ? `<button class="btn" onclick="setCabinetBypass()">${s.cabinetIrBypass ? 'BYPASSED' : 'ACTIVE'}</button>` : ''}
+          ${s.cabinetIrLoaded ? `<button class="btn" onclick="moveCabinet(-1)" ${irPosition <= 0 ? 'disabled' : ''}>↑</button><button class="btn" onclick="moveCabinet(1)" ${irPosition >= nams.length ? 'disabled' : ''}>↓</button>` : ''}
+        </div>
+        ${s.cabinetIrLoaded ? `<div class="block-sub" style="width:100%; margin-top:10px">
+          <label>IN <span id="cabinetInValue">${formatDb(s.cabinetIrInGain || 0)}</span> · MIX <span id="cabinetMixValue">${Math.round(Number(s.cabinetIrMix ?? 1) * 100)}%</span> · OUT <span id="cabinetOutValue">${formatDb(s.cabinetIrOutGain || 0)}</span></label>
+          <input type="range" min="-24" max="24" step="0.1" value="${Number(s.cabinetIrInGain || 0)}" oninput="setCabinetInGain(this.value)">
+          <input type="range" min="0" max="1" step="0.01" value="${Number(s.cabinetIrMix ?? 1)}" oninput="setCabinetMix(this.value)">
+          <input type="range" min="-24" max="12" step="0.1" value="${Number(s.cabinetIrOutGain || 0)}" oninput="setCabinetOutGain(this.value)">
+          <label>EQ LOW <span id="cabinetEq0Value">${formatDb((s.cabinetIrEq || [])[0] || 0)}</span> · MID <span id="cabinetEq1Value">${formatDb((s.cabinetIrEq || [])[1] || 0)}</span> · HIGH <span id="cabinetEq2Value">${formatDb((s.cabinetIrEq || [])[2] || 0)}</span></label>
+          <input type="range" min="-12" max="12" step="0.1" value="${Number((s.cabinetIrEq || [])[0] || 0)}" oninput="setCabinetEq(0, this.value)">
+          <input type="range" min="-12" max="12" step="0.1" value="${Number((s.cabinetIrEq || [])[1] || 0)}" oninput="setCabinetEq(1, this.value)">
+          <input type="range" min="-12" max="12" step="0.1" value="${Number((s.cabinetIrEq || [])[2] || 0)}" oninput="setCabinetEq(2, this.value)">
+          <label>EQ 1.8k <span id="cabinetEq3Value">${formatDb((s.cabinetIrEq || [])[3] || 0)}</span> · 3.5k <span id="cabinetEq4Value">${formatDb((s.cabinetIrEq || [])[4] || 0)}</span> · AIR 8k <span id="cabinetEq5Value">${formatDb((s.cabinetIrEq || [])[5] || 0)}</span></label>
+          <button class="btn" onclick="setCabinetEqPosition(${s.cabinetIrEqPre ? 'false' : 'true'})">EQ ${s.cabinetIrEqPre ? 'PRE' : 'POST'}</button>
+          <input type="range" min="-12" max="12" step="0.1" value="${Number((s.cabinetIrEq || [])[3] || 0)}" oninput="setCabinetEq(3, this.value)">
+          <input type="range" min="-12" max="12" step="0.1" value="${Number((s.cabinetIrEq || [])[4] || 0)}" oninput="setCabinetEq(4, this.value)">
+          <input type="range" min="-12" max="12" step="0.1" value="${Number((s.cabinetIrEq || [])[5] || 0)}" oninput="setCabinetEq(5, this.value)">
+        </div>` : ''}
+      </article>
+    `;
+
+    const orderedBlocks = Array.isArray(s.signalChain) && s.signalChain.length
+      ? s.signalChain.map(block => {
+          if (block.type === 'CABINET_IR') return cabinet;
+          const nam = nams.find(item => Number(item.chainIndex) === Number(block.chainIndex));
+          return nam ? namCard(nam) : '';
+        }).join('')
+      : namCards + cabinet;
+    chain.innerHTML = gate + orderedBlocks + add + eq;
   }
 
   function render(s) {
@@ -864,10 +921,125 @@
     Tone3000Android.addNam();
   }
 
+  function addCabinetIr() {
+    setStatus('Selecting cabinet IR WAV…');
+    Tone3000Android.addCabinetIr();
+  }
+
+  function removeCabinetIr() {
+    Tone3000Android.removeCabinetIr();
+    refreshNow();
+  }
+
+  function setCabinetBypass() {
+    state.cabinetIrBypass = !state.cabinetIrBypass;
+    Tone3000Android.setCabinetBypass(state.cabinetIrBypass);
+    render(state);
+  }
+
+  function moveCabinet(direction) {
+    Tone3000Android.moveCabinet(direction);
+    refreshNow();
+  }
+
+  function setCabinetInGain(value) {
+    const db = Number(value);
+    $('cabinetInValue').textContent = formatDb(db);
+    Tone3000Android.setCabinetInGain(db);
+  }
+
+  function setCabinetOutGain(value) {
+    const db = Number(value);
+    $('cabinetOutValue').textContent = formatDb(db);
+    Tone3000Android.setCabinetOutGain(db);
+  }
+
+  function setCabinetMix(value) {
+    const mix = Number(value);
+    $('cabinetMixValue').textContent = `${Math.round(mix * 100)}%`;
+    Tone3000Android.setCabinetMix(mix);
+  }
+
+  function setCabinetEq(band, value) {
+    const db = Number(value);
+    const label = $(`cabinetEq${band}Value`);
+    if (label) label.textContent = formatDb(db);
+    Tone3000Android.setCabinetEq(band, db);
+  }
+
+  function setCabinetEqPosition(pre) {
+    Tone3000Android.setCabinetEqPosition(pre);
+    refreshNow();
+  }
+
+  function changeNam(chainIndex) {
+    setStatus(`Opening TONE3000 to change NAM ${chainIndex + 1} capture…`);
+    Tone3000Android.changeNam(chainIndex);
+  }
+
   function toggleNamBypass(chainIndex, enabled) {
     Tone3000Android.setNamBypass(chainIndex, enabled);
     setStatus(`NAM ${chainIndex + 1} ${enabled ? 'bypassed' : 'active'}`);
     setTimeout(refreshNow, 80);
+  }
+
+  function setNamGain(chainIndex, value) {
+    const db = Number(value);
+    const label = $(`namGainValue${chainIndex}`);
+    if (label) label.textContent = formatDb(db);
+    Tone3000Android.setNamGain(chainIndex, db);
+  }
+
+  function setNamInGain(chainIndex, value) {
+    const db = Number(value);
+    const label = $(`namInGainValue${chainIndex}`);
+    if (label) label.textContent = formatDb(db);
+    Tone3000Android.setNamInGain(chainIndex, db);
+  }
+
+  function setNamMix(chainIndex, value) {
+    const mix = Number(value);
+    const label = $(`namMixValue${chainIndex}`);
+    if (label) label.textContent = `${Math.round(mix * 100)}%`;
+    Tone3000Android.setNamMix(chainIndex, mix);
+  }
+
+  function setNamEq(chainIndex, band, value) {
+    const db = Number(value);
+    const ids = ['namLowValue', 'namMidValue', 'namHighValue', 'namBand3Value', 'namBand4Value', 'namBand5Value'];
+    const label = $(`${ids[band]}${chainIndex}`);
+    if (label) label.textContent = formatDb(db);
+    Tone3000Android.setNamEq(chainIndex, band, db);
+  }
+
+  function setNamEqPosition(chainIndex, pre) {
+    Tone3000Android.setNamEqPosition(chainIndex, pre);
+    setStatus(`NAM ${chainIndex + 1} EQ ${pre ? 'PRE' : 'POST'}`);
+    setTimeout(refreshNow, 120);
+  }
+
+  function setNamNormalize(chainIndex, enabled) {
+    Tone3000Android.setNamNormalize(chainIndex, enabled);
+    setStatus(`NAM ${chainIndex + 1} normalization ${enabled ? 'on' : 'off'}`);
+    setTimeout(refreshNow, 120);
+  }
+
+  function setNamQuality(chainIndex, full) {
+    Tone3000Android.setNamQuality(chainIndex, full);
+  }
+
+  function removeNam(chainIndex) {
+    setStatus(`Removing NAM ${chainIndex + 1}…`);
+    Tone3000Android.removeNam(chainIndex);
+    setTimeout(refreshNow, 500);
+  }
+
+  function moveNam(chainIndex, direction) {
+    const target = chainIndex + direction;
+    if (target < 0 || target >= Number(state?.namBlockCount || 0)) return;
+    setStatus(`Moving NAM ${chainIndex + 1}…`);
+    Tone3000Android.moveNam(chainIndex, direction);
+    setTimeout(refreshNow, 500);
   }
 
   function clearExtraNams() {

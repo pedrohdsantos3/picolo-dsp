@@ -65,6 +65,13 @@ file(
         "${NAM_CORE_DIR}/NAM/*.c"
 )
 
+file(
+        GLOB_RECURSE
+        AUDIO_DSP_SOURCES
+        CONFIGURE_DEPENDS
+        "${NAM_CORE_DIR}/Dependencies/AudioDSPTools/dsp/*.cpp"
+)
+
 
 #
 # OBJECT em vez de STATIC.
@@ -83,6 +90,7 @@ add_library(
         OBJECT
 
         ${NAM_SOURCES}
+        ${AUDIO_DSP_SOURCES}
 )
 
 
@@ -94,6 +102,8 @@ target_include_directories(
         "${NAM_CORE_DIR}"
         "${NAM_CORE_DIR}/Dependencies/eigen"
         "${NAM_CORE_DIR}/Dependencies/nlohmann"
+        "${NAM_CORE_DIR}/Dependencies/AudioDSPTools"
+        "${NAM_CORE_DIR}/Dependencies/AudioDSPTools/dsp"
 )
 
 
