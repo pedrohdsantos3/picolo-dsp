@@ -1802,7 +1802,8 @@ class MainActivity : AppCompatActivity() {
             nativeSetChainNamEqDb(index, 5, entry.eqBand5Db)
             nativeSetChainNamEqPre(index, entry.eqPre)
             nativeSetChainNamEqEnabled(index, entry.eqEnabled)
-            nativeSetChainNamNormalize(index, entry.normalize)
+            nativeSetChainNamNormalize(index, entry.normalize && entry.moduleType != "PEDAL")
+            if (entry.moduleType == "PEDAL") nativeSetChainNamEqEnabled(index, false)
             if (entry.a2Full) nativeSetChainNamQuality(index, true)
         }
 
@@ -1831,7 +1832,8 @@ class MainActivity : AppCompatActivity() {
             nativeSetChainNamEqDb(index, 5, entry.eqBand5Db)
             nativeSetChainNamEqPre(index, entry.eqPre)
             nativeSetChainNamEqEnabled(index, entry.eqEnabled)
-            nativeSetChainNamNormalize(index, entry.normalize)
+            nativeSetChainNamNormalize(index, entry.normalize && entry.moduleType != "PEDAL")
+            if (entry.moduleType == "PEDAL") nativeSetChainNamEqEnabled(index, false)
             if (entry.a2Full) nativeSetChainNamQuality(index, true)
         }
     }
@@ -6495,7 +6497,8 @@ class MainActivity : AppCompatActivity() {
                         nativeSetChainNamEqDb(addedChainIndex, band, 0.0f)
                     }
                     nativeSetChainNamEqPre(addedChainIndex, false)
-                    nativeSetChainNamNormalize(addedChainIndex, true)
+                    nativeSetChainNamNormalize(addedChainIndex, moduleType != "PEDAL")
+                    if (moduleType == "PEDAL") nativeSetChainNamEqEnabled(addedChainIndex, false)
                     nativeSetChainNamQuality(addedChainIndex, false)
 
 
