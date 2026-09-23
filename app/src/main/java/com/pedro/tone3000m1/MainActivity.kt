@@ -1621,7 +1621,9 @@ class MainActivity : AppCompatActivity() {
                         ?: File(firstPath).name,
                     size = prefs.getString(PREF_LAST_MODEL_SIZE, "unknown") ?: "unknown",
                     path = firstPath,
-                    bypass = prefs.getBoolean(PREF_NAM_BYPASS, bypass),
+                    // A missing preference means a fresh active block, never
+                    // the stale value left in the Activity from a previous chain.
+                    bypass = prefs.getBoolean(PREF_NAM_BYPASS, false),
                     gainDb = prefs.getFloat(PREF_NAM_GAIN_DB, 0.0f),
                     inGainDb = prefs.getFloat(PREF_NAM_IN_GAIN_DB, 0.0f),
                     mix = prefs.getFloat(PREF_NAM_MIX, 1.0f),
