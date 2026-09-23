@@ -544,15 +544,10 @@ class MainActivity : AppCompatActivity() {
 
         mainHandler.postDelayed(
             {
-                // The official WebView owns its own PKCE/session state. Its
-                // custom-scheme callback returns through Android, so put the
-                // query back into the WebView instead of leaving React's
-                // loading state waiting for a URL it can no longer see.
-                if (prefs.getString(PREF_STATE, null).isNullOrBlank()) {
-                    deliverOAuthCallbackToWebView(pending.data)
-                } else {
-                    handleOAuthIntent(pending)
-                }
+                // The official UI owns the PKCE/session state in WebView.
+                // Always return this callback to it; stale native PKCE
+                // preferences must not hijack the modern Select flow.
+                deliverOAuthCallbackToWebView(pending.data)
             },
             500
         )
@@ -5405,6 +5400,7 @@ class MainActivity : AppCompatActivity() {
         val query = uri?.encodedQuery.orEmpty()
         val target = "file:///android_asset/tone3000-official/index.html" +
                 if (query.isBlank()) "" else "?$query"
+        Log.i(API_TAG, "Delivering OAuth callback to official WebView")
         runOnUiThread {
             pluginWebView.loadUrl(target)
         }
