@@ -6067,14 +6067,16 @@ class MainActivity : AppCompatActivity() {
                     )
                     pendingFile = null
 
-                    entries[replacementIndex] = ExtraNamEntry(
+                    // Replacing a capture must not reset the block's mixer/EQ
+                    // state. Keep every per-block control and change only the
+                    // capture metadata and file path.
+                    entries[replacementIndex] = previous.copy(
                         toneId = toneId,
                         toneTitle = toneTitle,
                         modelId = model.id,
                         modelName = model.name,
                         size = model.size,
-                        path = committed.absolutePath,
-                        bypass = previous.bypass
+                        path = committed.absolutePath
                     )
 
                     val replaceResult = rebuildNativeNamChain(entries)
