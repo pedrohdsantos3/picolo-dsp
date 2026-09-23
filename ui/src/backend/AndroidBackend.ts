@@ -23,8 +23,13 @@ export function isNativeFunctionRegistered(name: string): boolean {
 
 function call(name: string, ...args: unknown[]): Promise<unknown> {
   try {
-    const fn = bridge()?.[name];
-    return fn ? Promise.resolve(fn(...args)) : Promise.resolve(undefined);
+    const android = bridge();
+    // WebView Java bridge methods must be invoked with the injected object as
+    // their receiver. Extracting the function and calling it detached makes
+    // Chromium reject it as a "non-injected object".
+    return android && typeof android[name] === 'function'
+      ? Promise.resolve(android[name](...args))
+      : Promise.resolve(undefined);
   } catch (error) {
     return Promise.reject(error);
   }

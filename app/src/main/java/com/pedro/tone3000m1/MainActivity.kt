@@ -1459,8 +1459,12 @@ class MainActivity : AppCompatActivity() {
                 )
 
 
-            val result =
-                mutableListOf<ExtraNamEntry>()
+            val result = mutableListOf<ExtraNamEntry>()
+            // The first NAM is stored separately in the legacy preferences.
+            // Older builds could also leave a copy of that same path in the
+            // extra-chain JSON, which made the UI render a phantom duplicate.
+            val firstPath = prefs.getString(PREF_LAST_MODEL_PATH, null)
+            val seenPaths = mutableSetOf<String>()
 
 
             for (
@@ -1482,7 +1486,9 @@ class MainActivity : AppCompatActivity() {
 
                 if (
                     path.isBlank() ||
-                    !File(path).exists()
+                    !File(path).exists() ||
+                    path == firstPath ||
+                    !seenPaths.add(path)
                 ) {
                     continue
                 }
@@ -1568,7 +1574,11 @@ class MainActivity : AppCompatActivity() {
             JSONArray()
 
 
-        entries.forEach { entry ->
+        val firstPath = prefs.getString(PREF_LAST_MODEL_PATH, null)
+        val seenPaths = mutableSetOf<String>()
+        entries.filter { entry ->
+            entry.path != firstPath && seenPaths.add(entry.path)
+        }.forEach { entry ->
 
             array.put(
                 JSONObject()
@@ -2153,8 +2163,10 @@ class MainActivity : AppCompatActivity() {
             JSONArray()
 
 
-        namChain.put(
-            JSONObject()
+        val firstModelPath = prefs.getString(PREF_LAST_MODEL_PATH, null)
+        if (firstModelPath != null && File(firstModelPath).exists()) {
+            namChain.put(
+                JSONObject()
                 .put(
                     "chainIndex",
                     0
@@ -2197,7 +2209,8 @@ class MainActivity : AppCompatActivity() {
                 .put("eqEnabled", prefs.getBoolean(PREF_NAM_EQ_ENABLED, true))
                 .put("normalize", prefs.getBoolean(PREF_NAM_NORMALIZE, true))
                 .put("a2Full", prefs.getBoolean(PREF_NAM_A2_FULL, false))
-        )
+            )
+        }
 
 
         readExtraNamChain()
