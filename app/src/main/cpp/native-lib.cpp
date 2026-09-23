@@ -5459,11 +5459,14 @@ namespace {
                 const float mix = mNamMix[slot].load(std::memory_order_relaxed);
                 const bool normalize = mNamNormalize[slot].load(std::memory_order_relaxed);
                 const float normalizeGain = mNamNormalizeGain[slot].load(std::memory_order_relaxed);
+                const bool eqActive = mNamEqEnabled[slot].load(std::memory_order_relaxed) &&
+                        (std::abs(lowDb) > 0.001f || std::abs(midDb) > 0.001f ||
+                         std::abs(highDb) > 0.001f || std::abs(band3Db) > 0.001f ||
+                         std::abs(band4Db) > 0.001f || std::abs(band5Db) > 0.001f);
                 float blockPeak = 0.0f;
                 for (unsigned int frame = 0; frame < frames; ++frame) {
                     float value = static_cast<float>(buffer[frame]);
-                    if (mNamEqEnabled[slot].load(std::memory_order_relaxed) &&
-                        !mNamEqPre[slot].load(std::memory_order_relaxed)) {
+                    if (eqActive && !mNamEqPre[slot].load(std::memory_order_relaxed)) {
                         value = namLowEq[slot].process(value);
                         value = namMidEq[slot].process(value);
                         value = namHighEq[slot].process(value);
@@ -5489,6 +5492,14 @@ namespace {
             auto processNamPreEq = [&](unsigned int slot, NAM_SAMPLE* buffer) {
                 if (!mNamEqEnabled[slot].load(std::memory_order_relaxed) ||
                     !mNamEqPre[slot].load(std::memory_order_relaxed)) return;
+                const bool eqActive =
+                        std::abs(mNamEqLowDb[slot].load(std::memory_order_relaxed)) > 0.001f ||
+                        std::abs(mNamEqMidDb[slot].load(std::memory_order_relaxed)) > 0.001f ||
+                        std::abs(mNamEqHighDb[slot].load(std::memory_order_relaxed)) > 0.001f ||
+                        std::abs(mNamEqBand3Db[slot].load(std::memory_order_relaxed)) > 0.001f ||
+                        std::abs(mNamEqBand4Db[slot].load(std::memory_order_relaxed)) > 0.001f ||
+                        std::abs(mNamEqBand5Db[slot].load(std::memory_order_relaxed)) > 0.001f;
+                if (!eqActive) return;
                 for (unsigned int frame = 0; frame < frames; ++frame) {
                     float value = static_cast<float>(buffer[frame]);
                     value = namLowEq[slot].process(value);
