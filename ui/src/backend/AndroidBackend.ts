@@ -229,7 +229,8 @@ export class AndroidBackend implements IAudioBackend {
     if (name === 'removeChainBlock') return async (blockId) => String(blockId) === 'cabinet-ir'
       ? call('removeCabinetIr')
       : call('removeNam', Number(String(blockId).replace('nam-', '')));
-    if (name === 'reorderChainBlocks') return async (ids) => { for (let i = 0; i < (ids as string[]).length; i++) { const target = Number(String((ids as string[])[i]).replace('nam-', '')); if (target !== i) await call('moveNam', target, i - target); } };
+    if (name === 'reorderChainBlocks') return async (ids) =>
+      call('reorderChain', JSON.stringify(ids ?? []));
     if (name === 'setStereoMode' || name === 'setInputMode' || name === 'setMultiCore') return async () => undefined;
     return (...args: unknown[]) => call(name, ...args);
   }

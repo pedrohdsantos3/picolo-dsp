@@ -2993,6 +2993,40 @@ class MainActivity : AppCompatActivity() {
             }.start()
         }
 
+        @JavascriptInterface
+        fun reorderChain(blockIdsJson: String): Boolean {
+            return try {
+                val requested = JSONArray(blockIdsJson)
+                    .let { array -> (0 until array.length()).map { array.optString(it) } }
+                val entries = readNamChainEntries()
+                val orderedIndices = requested
+                    .filter { it.startsWith("nam-") }
+                    .mapNotNull { it.removePrefix("nam-").toIntOrNull() }
+                    .filter { it in entries.indices }
+                    .distinct()
+                    .toMutableList()
+                entries.indices.forEach { if (it !in orderedIndices) orderedIndices.add(it) }
+                val reordered = orderedIndices.map { entries[it] }
+                val cabinetPosition = requested.indexOf("cabinet-ir")
+                    .takeIf { it >= 0 }
+                    ?.coerceIn(0, reordered.size)
+                    ?: prefs.getInt(PREF_CABINET_IR_POSITION, reordered.size).coerceIn(0, reordered.size)
+                Thread {
+                    val result = rebuildNativeNamChain(reordered)
+                    if (result.startsWith("NAM CHAIN READY")) {
+                        persistNamChainEntries(reordered)
+                        prefs.edit().putInt(PREF_CABINET_IR_POSITION, cabinetPosition).apply()
+                        nativeSetImpulseResponsePosition(cabinetPosition)
+                    }
+                    runOnUiThread { status.text = result }
+                }.start()
+                true
+            } catch (error: Exception) {
+                Log.e(API_TAG, "Chain reorder failed", error)
+                false
+            }
+        }
+
 
         @JavascriptInterface
         fun setNamBypass(
