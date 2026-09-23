@@ -17,6 +17,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebChromeClient
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -1360,7 +1361,7 @@ class MainActivity : AppCompatActivity() {
 
                 webViewClient =
                     object :
-                        WebViewClient() {
+                    WebViewClient() {
 
                         override fun shouldOverrideUrlLoading(
                             view: WebView?,
@@ -1404,6 +1405,8 @@ class MainActivity : AppCompatActivity() {
                             return true
                         }
                     }
+
+                pluginWebView.webChromeClient = WebChromeClient()
 
 
                 // The React frontend is the primary UI; the previous HTML
