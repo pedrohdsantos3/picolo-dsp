@@ -2186,7 +2186,8 @@ class MainActivity : AppCompatActivity() {
 
 
         val firstModelPath = prefs.getString(PREF_LAST_MODEL_PATH, null)
-        if (firstModelPath != null && File(firstModelPath).exists()) {
+        val hasFirstModel = firstModelPath != null && File(firstModelPath).exists()
+        if (hasFirstModel) {
             namChain.put(
                 JSONObject()
                 .put(
@@ -2243,8 +2244,7 @@ class MainActivity : AppCompatActivity() {
                     JSONObject()
                         .put(
                             "chainIndex",
-                            index +
-                                    1
+                            index + if (hasFirstModel) 1 else 0
                         )
                         .put(
                             "modelName",
