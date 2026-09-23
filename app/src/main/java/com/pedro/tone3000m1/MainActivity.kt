@@ -2882,12 +2882,23 @@ class MainActivity : AppCompatActivity() {
                 val toneId = tone.optString("id")
                 val title = tone.optString("title", "Tone $toneId")
                 val imageUrl = tone.optJSONArray("images")?.optString(0).orEmpty()
+                val format = tone.optString("format").uppercase()
                 val models = tone.optJSONArray("models") ?: JSONArray()
                 if (toneId.isBlank() || models.length() == 0) return false
                 val model = models.getJSONObject(0)
                 val modelUrl = model.optString("model_url", model.optString("modelUrl"))
                 if (modelUrl.isBlank()) return false
                 val token = prefs.getString(PREF_ACCESS_TOKEN, null) ?: return false
+                if (format == "IR" || format == "CABINET") {
+                    val onlineModel = OnlineModel(
+                        id = model.optLong("id", 0L),
+                        name = model.optString("name", "cabinet-${model.optLong("id", 0L)}"),
+                        size = model.optString("size", "custom"),
+                        modelUrl = modelUrl
+                    )
+                    Thread { downloadAndLoadCabinet(toneId, title, onlineModel, token) }.start()
+                    return true
+                }
                 val mode = if (targetInsertId.startsWith("nam-")) {
                     "replace:${targetInsertId.removePrefix("nam-").toIntOrNull() ?: 0}"
                 } else "add"
@@ -2906,6 +2917,37 @@ class MainActivity : AppCompatActivity() {
             } catch (error: Exception) {
                 Log.e(API_TAG, "React tone load failed", error)
                 false
+            }
+        }
+
+        private fun downloadAndLoadCabinet(
+            toneId: String,
+            toneTitle: String,
+            model: OnlineModel,
+            token: String
+        ) {
+            try {
+                val destination = File(filesDir, "cabinet-${model.id}.wav")
+                if (destination.exists()) destination.delete()
+                val downloaded = downloadModel(model, token, destination)
+                val result = nativeLoadImpulseResponse(downloaded.absolutePath)
+                if (!result.startsWith("IR LOADED")) throw RuntimeException(result)
+                val position = nativeGetNamBlockCount()
+                nativeSetImpulseResponsePosition(position)
+                prefs.edit()
+                    .putString(PREF_CABINET_IR_PATH, downloaded.absolutePath)
+                    .putInt(PREF_CABINET_IR_POSITION, position)
+                    .putBoolean(PREF_CABINET_IR_BYPASS, false)
+                    .putFloat(PREF_CABINET_IR_MIX, 1.0f)
+                    .apply()
+                val audio = nativeStart()
+                runOnUiThread {
+                    status.text = "CABINET IR READY\n\n$toneTitle\n${model.name}\n$audio"
+                    pluginWebView.postDelayed({ pluginWebView.reload() }, 150)
+                }
+            } catch (error: Exception) {
+                Log.e(API_TAG, "Cabinet IR download/load failed", error)
+                runOnUiThread { status.text = "CABINET IR LOAD FAILED\n\n${error.message}" }
             }
         }
 
