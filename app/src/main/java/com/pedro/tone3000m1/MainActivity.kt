@@ -2813,6 +2813,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        @JavascriptInterface
+        fun setSelectedAddType(type: String) {
+            val normalized = type.uppercase(Locale.US)
+            if (normalized == "AMP" || normalized == "PEDAL" || normalized == "IR") {
+                prefs.edit().putString(PREF_SELECTED_ADD_TYPE, normalized).apply()
+            }
+        }
+
 
         @JavascriptInterface
         fun addNam() {

@@ -122,6 +122,12 @@ export function useToneLoadFlow({
   const handleAddModel = useCallback(
     (side: ChainSide, insertBlockId: string) => {
       requireConnection(async () => {
+        const selected = window.prompt(
+          'Tipo do módulo: AMP, PEDAL ou IR',
+          'AMP'
+        )?.trim().toUpperCase();
+        if (selected !== 'AMP' && selected !== 'PEDAL' && selected !== 'IR') return;
+        window.Tone3000Android?.setSelectedAddType?.(selected);
         sessionStorage.removeItem(SWAP_STORAGE_KEY);
         sessionStorage.setItem(INSERT_TARGET_STORAGE_KEY, insertBlockId);
         if (stereoEnabled) await actions.setActiveSide(side);
