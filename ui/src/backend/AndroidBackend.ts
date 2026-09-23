@@ -150,6 +150,27 @@ export class AndroidBackend implements IAudioBackend {
   getPluginFunction(name: string): (...args: unknown[]) => Promise<unknown> {
     if (name === 'getChainState') return async () => chainState();
     if (name === 'getMeterLevels') return async () => meterState();
+    if (name === 'getPresetList') return async () => {
+      const presets = Array.isArray(stateSnapshot().presets) ? stateSnapshot().presets : [];
+      return {
+        presets: presets.map((preset: any) => ({
+          id: String(preset.slot),
+          name: String(preset.label || `Preset ${preset.slot}`),
+          saved: Boolean(preset.saved),
+        })),
+      };
+    };
+    if (name === 'loadPreset') return async (id) => {
+      const slot = Number(String(id).replace(/^slot-/, ''));
+      return Number.isFinite(slot) ? call('loadPreset', slot) : false;
+    };
+    if (name === 'savePreset') return async (nameArg) => {
+      const presets = Array.isArray(stateSnapshot().presets) ? stateSnapshot().presets : [];
+      const empty = presets.find((preset: any) => !preset.saved);
+      const slot = Number(empty?.slot || 1);
+      await call('savePreset', slot);
+      return { id: String(slot), name: String(nameArg || `Preset ${slot}`) };
+    };
     if (name === 'setBlockParam') return async (blockId, param, value) => {
       if (String(blockId) === 'cabinet-ir') {
         if (param === 'inputGain') return call('setCabinetInGain', db(value) * 48 - 24);
