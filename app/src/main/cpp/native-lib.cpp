@@ -1434,6 +1434,7 @@ namespace {
                 mNamEqBand3Db[slot].store(0.0f);
                 mNamEqBand4Db[slot].store(0.0f);
                 mNamEqBand5Db[slot].store(0.0f);
+                mNamEqEnabled[slot].store(true);
             }
         }
 
@@ -2485,6 +2486,16 @@ namespace {
             if (chainIndex >= 0 && chainIndex < static_cast<int>(MAX_NAM_BLOCKS)) {
                 mNamEqPre[static_cast<unsigned int>(chainIndex)].store(pre, std::memory_order_relaxed);
             }
+        }
+
+        void setChainNamEqEnabled(int chainIndex, bool enabled) {
+            if (chainIndex >= 0 && chainIndex < static_cast<int>(MAX_NAM_BLOCKS)) {
+                mNamEqEnabled[static_cast<unsigned int>(chainIndex)].store(enabled, std::memory_order_relaxed);
+            }
+        }
+
+        void setImpulseResponseEqEnabled(bool enabled) {
+            mOutputIrEqEnabled.store(enabled, std::memory_order_relaxed);
         }
 
 
@@ -5451,7 +5462,8 @@ namespace {
                 float blockPeak = 0.0f;
                 for (unsigned int frame = 0; frame < frames; ++frame) {
                     float value = static_cast<float>(buffer[frame]);
-                    if (!mNamEqPre[slot].load(std::memory_order_relaxed)) {
+                    if (mNamEqEnabled[slot].load(std::memory_order_relaxed) &&
+                        !mNamEqPre[slot].load(std::memory_order_relaxed)) {
                         value = namLowEq[slot].process(value);
                         value = namMidEq[slot].process(value);
                         value = namHighEq[slot].process(value);
@@ -5475,7 +5487,8 @@ namespace {
             };
 
             auto processNamPreEq = [&](unsigned int slot, NAM_SAMPLE* buffer) {
-                if (!mNamEqPre[slot].load(std::memory_order_relaxed)) return;
+                if (!mNamEqEnabled[slot].load(std::memory_order_relaxed) ||
+                    !mNamEqPre[slot].load(std::memory_order_relaxed)) return;
                 for (unsigned int frame = 0; frame < frames; ++frame) {
                     float value = static_cast<float>(buffer[frame]);
                     value = namLowEq[slot].process(value);
@@ -5508,10 +5521,11 @@ namespace {
                 if (eqValues[4] != currentIrEqDb[4]) { irEq[4].setPeaking(TARGET_RATE, 3500.0, 0.8, eqValues[4]); currentIrEqDb[4] = eqValues[4]; }
                 if (eqValues[5] != currentIrEqDb[5]) { irEq[5].setHighShelf(TARGET_RATE, 8000.0, eqValues[5]); currentIrEqDb[5] = eqValues[5]; }
                 const bool eqPre = mOutputIrEqPre.load(std::memory_order_relaxed);
+                const bool eqEnabled = mOutputIrEqEnabled.load(std::memory_order_relaxed);
                 for (unsigned int frame = 0; frame < frames; ++frame) {
                     irDry[frame] = static_cast<float>(buffer[frame]);
                     float value = irDry[frame] * inGain;
-                    if (eqPre) {
+                    if (eqEnabled && eqPre) {
                         for (auto& filter : irEq) value = filter.process(value);
                     }
                     irInput[frame] = static_cast<double>(value);
@@ -5520,7 +5534,7 @@ namespace {
                 for (unsigned int frame = 0; frame < frames; ++frame) {
                     const float wet = static_cast<float>(irOutput[0][frame]) * outGain;
                     float wetValue = wet;
-                    if (!eqPre) {
+                    if (eqEnabled && !eqPre) {
                         for (auto& filter : irEq) wetValue = filter.process(wetValue);
                     }
                     buffer[frame] = static_cast<NAM_SAMPLE>(irDry[frame] * (1.0f - mix) + wetValue * mix);
@@ -6428,6 +6442,8 @@ namespace {
         std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamEqBand4Db{};
         std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamEqBand5Db{};
         std::array<std::atomic<bool>, MAX_NAM_BLOCKS> mNamEqPre{};
+        std::array<std::atomic<bool>, MAX_NAM_BLOCKS> mNamEqEnabled{};
+        std::atomic<bool> mOutputIrEqEnabled{true};
 
         std::mutex mModelSwapMutex;
 
@@ -6872,6 +6888,14 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseEqPre(
     gEngine.setImpulseResponseEqPre(pre == JNI_TRUE);
 }
 
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseEqEnabled(
+        JNIEnv*, jobject, jboolean enabled
+) {
+    gEngine.setImpulseResponseEqEnabled(enabled == JNI_TRUE);
+}
+
 
 extern "C"
 JNIEXPORT jstring JNICALL
@@ -7004,6 +7028,14 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamEqPre(
         JNIEnv*, jobject, jint chainIndex, jboolean pre
 ) {
     gEngine.setChainNamEqPre(static_cast<int>(chainIndex), pre == JNI_TRUE);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamEqEnabled(
+        JNIEnv*, jobject, jint chainIndex, jboolean enabled
+) {
+    gEngine.setChainNamEqEnabled(static_cast<int>(chainIndex), enabled == JNI_TRUE);
 }
 
 

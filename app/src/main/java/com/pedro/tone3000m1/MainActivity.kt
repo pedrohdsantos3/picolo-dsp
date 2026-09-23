@@ -155,6 +155,8 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_NAM_EQ_BAND5_DB = "nam_eq_band5_db"
         private const val PREF_NAM_BYPASS = "nam_bypass"
         private const val PREF_NAM_EQ_PRE = "nam_eq_pre"
+        private const val PREF_NAM_EQ_ENABLED = "nam_eq_enabled"
+        private const val PREF_CABINET_IR_EQ_ENABLED = "cabinet_ir_eq_enabled"
         private const val PREF_NAM_NORMALIZE = "nam_normalize"
         private const val PREF_NAM_A2_FULL = "nam_a2_full"
 
@@ -263,6 +265,7 @@ class MainActivity : AppCompatActivity() {
     external fun nativeSetImpulseResponseMix(mix: Float)
     external fun nativeSetImpulseResponseEqDb(band: Int, db: Float)
     external fun nativeSetImpulseResponseEqPre(pre: Boolean)
+    external fun nativeSetImpulseResponseEqEnabled(enabled: Boolean)
 
     external fun nativeAddChainModel(
         path: String
@@ -286,6 +289,7 @@ class MainActivity : AppCompatActivity() {
 
     external fun nativeSetChainNamEqDb(chainIndex: Int, band: Int, db: Float)
     external fun nativeSetChainNamEqPre(chainIndex: Int, pre: Boolean)
+    external fun nativeSetChainNamEqEnabled(chainIndex: Int, enabled: Boolean)
 
     external fun nativeGetNamBlockCount(): Int
 
@@ -1430,6 +1434,7 @@ class MainActivity : AppCompatActivity() {
         val eqBand4Db: Float = 0.0f,
         val eqBand5Db: Float = 0.0f,
         val eqPre: Boolean = false,
+        val eqEnabled: Boolean = true,
         val normalize: Boolean = true,
         val a2Full: Boolean = false
     )
@@ -1530,6 +1535,7 @@ class MainActivity : AppCompatActivity() {
                         ,eqBand4Db = item.optDouble("eqBand4Db", 0.0).toFloat()
                         ,eqBand5Db = item.optDouble("eqBand5Db", 0.0).toFloat()
                         ,eqPre = item.optBoolean("eqPre", false)
+                        ,eqEnabled = item.optBoolean("eqEnabled", true)
                         ,normalize = item.optBoolean("normalize", true)
                         ,a2Full = item.optBoolean("a2Full", false)
                     )
@@ -1604,6 +1610,7 @@ class MainActivity : AppCompatActivity() {
                     .put("eqBand4Db", entry.eqBand4Db)
                     .put("eqBand5Db", entry.eqBand5Db)
                     .put("eqPre", entry.eqPre)
+                    .put("eqEnabled", entry.eqEnabled)
                     .put("normalize", entry.normalize)
                     .put("a2Full", entry.a2Full)
             )
@@ -1647,6 +1654,7 @@ class MainActivity : AppCompatActivity() {
                     ,eqBand4Db = prefs.getFloat(PREF_NAM_EQ_BAND4_DB, 0.0f)
                     ,eqBand5Db = prefs.getFloat(PREF_NAM_EQ_BAND5_DB, 0.0f)
                     ,eqPre = prefs.getBoolean(PREF_NAM_EQ_PRE, false)
+                    ,eqEnabled = prefs.getBoolean(PREF_NAM_EQ_ENABLED, true)
                     ,normalize = prefs.getBoolean(PREF_NAM_NORMALIZE, true)
                     ,a2Full = prefs.getBoolean(PREF_NAM_A2_FULL, false)
                 )
@@ -1701,6 +1709,7 @@ class MainActivity : AppCompatActivity() {
             .putFloat(PREF_NAM_EQ_BAND5_DB, first.eqBand5Db)
             .putBoolean(PREF_NAM_BYPASS, first.bypass)
             .putBoolean(PREF_NAM_EQ_PRE, first.eqPre)
+            .putBoolean(PREF_NAM_EQ_ENABLED, first.eqEnabled)
             .putBoolean(PREF_NAM_NORMALIZE, first.normalize)
             .putBoolean(PREF_NAM_A2_FULL, first.a2Full)
             .apply()
@@ -1746,6 +1755,7 @@ class MainActivity : AppCompatActivity() {
             nativeSetChainNamEqDb(index, 4, entry.eqBand4Db)
             nativeSetChainNamEqDb(index, 5, entry.eqBand5Db)
             nativeSetChainNamEqPre(index, entry.eqPre)
+            nativeSetChainNamEqEnabled(index, entry.eqEnabled)
             nativeSetChainNamNormalize(index, entry.normalize)
             if (entry.a2Full) nativeSetChainNamQuality(index, true)
         }
@@ -1774,6 +1784,7 @@ class MainActivity : AppCompatActivity() {
             nativeSetChainNamEqDb(index, 4, entry.eqBand4Db)
             nativeSetChainNamEqDb(index, 5, entry.eqBand5Db)
             nativeSetChainNamEqPre(index, entry.eqPre)
+            nativeSetChainNamEqEnabled(index, entry.eqEnabled)
             nativeSetChainNamNormalize(index, entry.normalize)
             if (entry.a2Full) nativeSetChainNamQuality(index, true)
         }
@@ -2045,6 +2056,7 @@ class MainActivity : AppCompatActivity() {
         result.put("cabinetIrOutGain", prefs.getFloat(PREF_CABINET_IR_OUT_GAIN, 0.0f).toDouble())
         result.put("cabinetIrMix", prefs.getFloat(PREF_CABINET_IR_MIX, 1.0f).toDouble())
         result.put("cabinetIrEqPre", prefs.getBoolean(PREF_CABINET_IR_EQ_PRE, false))
+        result.put("cabinetIrEqEnabled", prefs.getBoolean(PREF_CABINET_IR_EQ_ENABLED, true))
         val cabinetEq = JSONArray()
         for (band in 0 until 6) cabinetEq.put(prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + band, 0.0f).toDouble())
         result.put("cabinetIrEq", cabinetEq)
@@ -2182,6 +2194,7 @@ class MainActivity : AppCompatActivity() {
                 .put("eqBand4Db", prefs.getFloat(PREF_NAM_EQ_BAND4_DB, 0.0f))
                 .put("eqBand5Db", prefs.getFloat(PREF_NAM_EQ_BAND5_DB, 0.0f))
                 .put("eqPre", prefs.getBoolean(PREF_NAM_EQ_PRE, false))
+                .put("eqEnabled", prefs.getBoolean(PREF_NAM_EQ_ENABLED, true))
                 .put("normalize", prefs.getBoolean(PREF_NAM_NORMALIZE, true))
                 .put("a2Full", prefs.getBoolean(PREF_NAM_A2_FULL, false))
         )
@@ -2223,6 +2236,7 @@ class MainActivity : AppCompatActivity() {
                         .put("eqBand4Db", entry.eqBand4Db)
                         .put("eqBand5Db", entry.eqBand5Db)
                         .put("eqPre", entry.eqPre)
+                        .put("eqEnabled", entry.eqEnabled)
                         .put("normalize", entry.normalize)
                         .put("a2Full", entry.a2Full)
                 )
@@ -2772,6 +2786,7 @@ class MainActivity : AppCompatActivity() {
             nativeSetImpulseResponseOutGainDb(0.0f)
             nativeSetImpulseResponseMix(1.0f)
             nativeSetImpulseResponseEqPre(false)
+            nativeSetImpulseResponseEqEnabled(true)
             for (band in 0 until 6) nativeSetImpulseResponseEqDb(band, 0.0f)
             prefs.getString(PREF_CABINET_IR_PATH, null)?.let { path ->
                 try { File(path).delete() } catch (_: Exception) { }
@@ -2839,6 +2854,12 @@ class MainActivity : AppCompatActivity() {
         fun setCabinetEqPosition(pre: Boolean) {
             nativeSetImpulseResponseEqPre(pre)
             prefs.edit().putBoolean(PREF_CABINET_IR_EQ_PRE, pre).apply()
+        }
+
+        @JavascriptInterface
+        fun setCabinetEqEnabled(enabled: Boolean) {
+            nativeSetImpulseResponseEqEnabled(enabled)
+            prefs.edit().putBoolean(PREF_CABINET_IR_EQ_ENABLED, enabled).apply()
         }
 
 
@@ -2995,6 +3016,21 @@ class MainActivity : AppCompatActivity() {
             all[chainIndex] = all[chainIndex].copy(eqPre = pre)
             persistNamChainEntries(all)
             nativeSetChainNamEqPre(chainIndex, pre)
+        }
+
+        @JavascriptInterface
+        fun setNamEqEnabled(chainIndex: Int, enabled: Boolean) {
+            if (chainIndex == 0) {
+                prefs.edit().putBoolean(PREF_NAM_EQ_ENABLED, enabled).apply()
+            } else {
+                val entries = readNamChainEntries()
+                val extraIndex = chainIndex - 1
+                if (extraIndex !in entries.indices) return
+                val all = entries.toMutableList()
+                all[extraIndex] = all[extraIndex].copy(eqEnabled = enabled)
+                persistNamChainEntries(all)
+            }
+            nativeSetChainNamEqEnabled(chainIndex, enabled)
         }
 
         @JavascriptInterface
@@ -4623,6 +4659,7 @@ class MainActivity : AppCompatActivity() {
                         nativeSetImpulseResponseOutGainDb(prefs.getFloat(PREF_CABINET_IR_OUT_GAIN, 0.0f))
                         nativeSetImpulseResponseMix(prefs.getFloat(PREF_CABINET_IR_MIX, 1.0f))
                         nativeSetImpulseResponseEqPre(prefs.getBoolean(PREF_CABINET_IR_EQ_PRE, false))
+                        nativeSetImpulseResponseEqEnabled(prefs.getBoolean(PREF_CABINET_IR_EQ_ENABLED, true))
                         for (band in 0 until 6) nativeSetImpulseResponseEqDb(band, prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + band, 0.0f))
                     }
                     restored

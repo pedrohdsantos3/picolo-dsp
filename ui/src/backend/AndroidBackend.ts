@@ -197,7 +197,10 @@ export class AndroidBackend implements IAudioBackend {
       if (String(blockId) === 'cabinet-ir') return call('setCabinetEqPosition', pre);
       return call('setNamEqPosition', Number(String(blockId).replace('nam-', '')), pre);
     };
-    if (name === 'setBlockEqEnabled') return async () => undefined;
+    if (name === 'setBlockEqEnabled') return async (blockId, enabled) =>
+      String(blockId) === 'cabinet-ir'
+        ? call('setCabinetEqEnabled', Boolean(enabled))
+        : call('setNamEqEnabled', Number(String(blockId).replace('nam-', '')), Boolean(enabled));
     if (name === 'resetBlockEq') return async (blockId) => {
       const id = String(blockId);
       for (let band = 0; band < 6; band++) {
