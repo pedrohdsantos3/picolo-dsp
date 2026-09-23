@@ -3272,6 +3272,27 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        @JavascriptInterface
+        fun renamePreset(slot: Int, name: String): Boolean {
+            if (slot !in 1..PRESET_COUNT) return false
+            prefs.edit().putString(presetKey(slot, "custom_label"), name.trim()).apply()
+            return true
+        }
+
+        @JavascriptInterface
+        fun deletePreset(slot: Int): Boolean {
+            if (slot !in 1..PRESET_COUNT) return false
+            val prefix = "preset_${slot}_"
+            prefs.edit().apply {
+                prefs.all.keys.filter { it.startsWith(prefix) }.forEach { remove(it) }
+            }.apply()
+            listOf(
+                presetFile(slot),
+                File(filesDir, "preset-$slot-cabinet.wav")
+            ).forEach { file -> if (file.exists()) file.delete() }
+            return true
+        }
+
 
         @JavascriptInterface
         fun scanUsbAudio(): String {
@@ -3783,6 +3804,10 @@ class MainActivity : AppCompatActivity() {
     private fun presetLabel(
         slot: Int
     ): String {
+
+        prefs.getString(presetKey(slot, "custom_label"), null)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return it }
 
         val preset =
             readPreset(

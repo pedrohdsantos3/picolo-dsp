@@ -169,8 +169,13 @@ export class AndroidBackend implements IAudioBackend {
       const empty = presets.find((preset: any) => !preset.saved);
       const slot = Number(empty?.slot || 1);
       await call('savePreset', slot);
+      await call('renamePreset', slot, String(nameArg || `Preset ${slot}`));
       return { id: String(slot), name: String(nameArg || `Preset ${slot}`) };
     };
+    if (name === 'renamePreset') return async (id, newName) =>
+      call('renamePreset', Number(String(id).replace(/^slot-/, '')), String(newName ?? ''));
+    if (name === 'deletePreset') return async (id) =>
+      call('deletePreset', Number(String(id).replace(/^slot-/, '')));
     if (name === 'loadLocalTone') return async (title, files, targetBlockId) => {
       const response = await call('loadLocalTone', String(title), JSON.stringify(files ?? []), String(targetBlockId ?? ''));
       if (typeof response !== 'string') return response;
