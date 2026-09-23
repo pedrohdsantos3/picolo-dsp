@@ -46,7 +46,7 @@ function meterState(): any {
   const stats = typeof raw === 'string' ? raw : '';
   const input = statDb(stats, 'capturePeak');
   const output = statDb(stats, 'postEqPeak');
-  const cpuMatch = stats.match(/CPU budget used\(avg\)=(-?\\d+(?:\\.\\d+)?)%/);
+  const cpuMatch = stats.match(/CPU budget used\(avg\)=(-?\d+(?:\.\d+)?)%/);
   const cpu = cpuMatch ? Math.max(0, Number(cpuMatch[1])) : 0;
   return { input: [input, input], output: [output, output], blocks: {}, cpu, correlation: 1 };
 }
