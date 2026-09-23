@@ -5979,12 +5979,16 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     val addedChainIndex = nativeGetNamBlockCount() - 1
+                    nativeSetChainNamBypass(addedChainIndex, false)
                     nativeSetChainNamInGainDb(addedChainIndex, 0.0f)
                     nativeSetChainNamMix(addedChainIndex, 1.0f)
                     nativeSetChainNamGainDb(addedChainIndex, 0.0f)
-                    nativeSetChainNamEqDb(addedChainIndex, 0, 0.0f)
-                    nativeSetChainNamEqDb(addedChainIndex, 1, 0.0f)
-                    nativeSetChainNamEqDb(addedChainIndex, 2, 0.0f)
+                    for (band in 0 until 6) {
+                        nativeSetChainNamEqDb(addedChainIndex, band, 0.0f)
+                    }
+                    nativeSetChainNamEqPre(addedChainIndex, false)
+                    nativeSetChainNamNormalize(addedChainIndex, true)
+                    nativeSetChainNamQuality(addedChainIndex, false)
 
 
                     val entries =
