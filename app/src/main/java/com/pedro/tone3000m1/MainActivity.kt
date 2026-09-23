@@ -6385,6 +6385,7 @@ class MainActivity : AppCompatActivity() {
                                     "Capture: ${model.name}\n" +
                                     "Size: ${model.size.uppercase()}\n\n" +
                                     addResult
+                        pluginWebView.postDelayed({ pluginWebView.reload() }, 150)
                     }
 
 
@@ -6439,6 +6440,7 @@ class MainActivity : AppCompatActivity() {
                                 "Capture: ${model.name}\n" +
                                 "Size: ${model.size.uppercase()}\n\n" +
                                 replaceResult
+                        pluginWebView.postDelayed({ pluginWebView.reload() }, 150)
                     }
 
                     return@Thread
@@ -6536,6 +6538,7 @@ class MainActivity : AppCompatActivity() {
                     status.text =
                         "TONE3000 CAPTURE READY\n\n" +
                                 loadResult
+                    pluginWebView.postDelayed({ pluginWebView.reload() }, 150)
                 }
 
 
