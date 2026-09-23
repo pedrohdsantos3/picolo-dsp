@@ -1645,6 +1645,7 @@ class MainActivity : AppCompatActivity() {
                 .remove(PREF_NAM_NORMALIZE)
                 .remove(PREF_NAM_A2_FULL)
                 .apply()
+            nativeSetImpulseResponsePosition(0)
             return
         }
 
@@ -1670,6 +1671,10 @@ class MainActivity : AppCompatActivity() {
 
         persistExtraNamChain(entries.drop(1))
         bypass = first.bypass
+        val cabinetPosition = prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS)
+            .coerceIn(0, entries.size)
+        prefs.edit().putInt(PREF_CABINET_IR_POSITION, cabinetPosition).apply()
+        nativeSetImpulseResponsePosition(cabinetPosition)
     }
 
 
