@@ -1,0 +1,6 @@
+id=tone3000_root_companion
+name=Tone3000 Root Companion
+version=0.1.0
+versionCode=1
+author=Tone3000
+description=Prepares EVO4 TinyALSA access and applies SCHED_FIFO to Tone3000Audio.
