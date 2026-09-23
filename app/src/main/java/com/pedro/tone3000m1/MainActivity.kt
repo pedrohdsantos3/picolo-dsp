@@ -1406,7 +1406,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                pluginWebView.webChromeClient = WebChromeClient()
+                webChromeClient = WebChromeClient()
 
 
                 // The React frontend is the primary UI; the previous HTML
