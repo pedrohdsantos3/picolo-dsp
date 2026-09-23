@@ -39,7 +39,7 @@ import {
 } from './chainLayout';
 import { formatCount } from '../t3k/formatCount';
 import { timeAgoShort } from '../t3k/timeAgoShort';
-import { formatLabel, gearLabel } from '../t3k/labels';
+import { gearLabel } from '../t3k/labels';
 import { AvatarImage } from './AvatarFallback';
 import { FormatBadge } from './FormatBadge';
 import { HELP, helpProps } from './helpText';
@@ -514,7 +514,8 @@ export const ChainBlock: React.FC<ChainBlockProps> = ({
   // loading affordances key off `modelLoading`, not `loaded`.
   const modelBusy = block.modelLoading || (!block.loaded && !block.loadFailed);
 
-  const isNam = tone.format?.toLowerCase() === 'nam';
+  const moduleType = String((tone as any).moduleType || tone.format || 'AMP').toUpperCase();
+  const isNam = moduleType !== 'IR';
 
   // Calibration state (the gauge indicator + the normalize override). Only
   // meaningful while the user's input calibration setting is on: the gauge
@@ -535,7 +536,7 @@ export const ChainBlock: React.FC<ChainBlockProps> = ({
   const defaultMix = block.irLong ? 0.5 : 1;
   // Every NAM block in the chain is A2 (the browser filters the catalog and
   // local drops are validated), so NAM badges always carry the A2 mark.
-  const formatBadge = formatLabel(tone.format);
+  const formatBadge = moduleType;
 
   // Picker "n/N" and the folder stat: A2 for NAM, models_count for IR.
   const modelsTotal = catalogModelCount(tone);

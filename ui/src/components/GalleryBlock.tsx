@@ -325,6 +325,23 @@ const TileSurface: React.FC<{
               iconSize={64}
               draggable={false}
             />
+            <div
+              style={{
+                position: 'absolute',
+                top: '8rem',
+                left: '8rem',
+                padding: '3rem 7rem',
+                borderRadius: '4rem',
+                background: 'rgba(0,0,0,0.78)',
+                color: '#fff',
+                fontSize: '10rem',
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                pointerEvents: 'none',
+              }}
+            >
+              {String((tone as any).moduleType || tone.format || 'AMP').toUpperCase()}
+            </div>
           </div>
         )}
 
