@@ -1633,6 +1633,18 @@ class MainActivity : AppCompatActivity() {
             clearPersistedModel()
             persistExtraNamChain(emptyList())
             bypass = false
+            prefs.edit()
+                .remove(PREF_NAM_BYPASS)
+                .remove(PREF_NAM_GAIN_DB)
+                .remove(PREF_NAM_IN_GAIN_DB)
+                .remove(PREF_NAM_MIX)
+                .remove(PREF_NAM_EQ_LOW_DB)
+                .remove(PREF_NAM_EQ_MID_DB)
+                .remove(PREF_NAM_EQ_HIGH_DB)
+                .remove(PREF_NAM_EQ_PRE)
+                .remove(PREF_NAM_NORMALIZE)
+                .remove(PREF_NAM_A2_FULL)
+                .apply()
             return
         }
 
