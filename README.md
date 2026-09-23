@@ -89,6 +89,27 @@ restaurar o firmware.
 
 ## Build
 
+### Frontend oficial adaptado
+
+A pasta `ui/` contém a árvore React/TypeScript do frontend oficial do
+TONE3000, mantida sob MIT (`ui/TONE3000-PLUGIN-LICENSE`). O bridge JUCE foi
+substituído por `ui/src/backend/AndroidBackend.ts`, que traduz o estado e os
+controles da cadeia para `Tone3000Android`; o backend de áudio continua sendo o
+TinyALSA/NAM deste aplicativo. A UI legada permanece como fallback enquanto a
+adaptação dos recursos JUCE sem equivalente Android (OAuth, MIDI e stereo) é
+concluída.
+
+Para validar o bundle sem alterar o APK:
+
+```bash
+cd ui
+npm install --no-audit --no-fund
+npm run build
+```
+
+As dependências e o código importados continuam sujeitos às licenças próprias;
+o aviso MIT do frontend oficial deve acompanhar qualquer distribuição.
+
 ## Arquitetura da cadeia de sinal
 
 O estado exposto pela interface contém `signalChain`, uma lista ordenada de

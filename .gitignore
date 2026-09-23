@@ -13,3 +13,5 @@
 .externalNativeBuild
 .cxx
 local.properties
+ui/node_modules/
+plugin/webview/
