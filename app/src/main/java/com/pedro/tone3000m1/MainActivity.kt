@@ -512,12 +512,16 @@ class MainActivity : AppCompatActivity() {
 
             Log.i(
                 API_TAG,
-                "OAuth callback received; waiting for onResume"
+                "OAuth callback received"
             )
 
             status.text =
                 "OAuth callback received...\n" +
                         "Waiting for app network..."
+
+            // singleTask activities can receive onNewIntent while already
+            // resumed; in that case Android does not call onResume again.
+            processPendingOAuthIntent()
         }
     }
 
@@ -525,6 +529,11 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
 
         super.onResume()
+
+        processPendingOAuthIntent()
+    }
+
+    private fun processPendingOAuthIntent() {
 
         val pending =
             pendingOAuthIntent
