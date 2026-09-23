@@ -104,6 +104,9 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_LAST_TONE_IMAGE =
             "last_tone_image"
 
+        private const val PREF_LAST_MODEL_TYPE =
+            "last_model_type"
+
         private const val PREF_CABINET_IR_PATH =
             "cabinet_ir_path"
 
@@ -2244,7 +2247,7 @@ class MainActivity : AppCompatActivity() {
                 .put("eqEnabled", prefs.getBoolean(PREF_NAM_EQ_ENABLED, true))
                 .put("normalize", prefs.getBoolean(PREF_NAM_NORMALIZE, true))
                 .put("a2Full", prefs.getBoolean(PREF_NAM_A2_FULL, false))
-                .put("moduleType", "AMP")
+                .put("moduleType", prefs.getString(PREF_LAST_MODEL_TYPE, "AMP"))
                 .put("images", JSONArray().put(prefs.getString(PREF_LAST_TONE_IMAGE, "")))
             )
         }
@@ -6669,6 +6672,8 @@ class MainActivity : AppCompatActivity() {
                     model =
                         model,
 
+                    moduleType = moduleType,
+
                     file =
                         committedFile
                 )
@@ -7113,6 +7118,7 @@ class MainActivity : AppCompatActivity() {
         toneId: String,
         toneTitle: String,
         model: OnlineModel,
+        moduleType: String,
         file: File
     ) {
 
@@ -7132,6 +7138,11 @@ class MainActivity : AppCompatActivity() {
             .putString(
                 PREF_LAST_MODEL_SIZE,
                 model.size
+            )
+
+            .putString(
+                PREF_LAST_MODEL_TYPE,
+                moduleType
             )
 
             .putString(
