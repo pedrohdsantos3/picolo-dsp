@@ -2751,6 +2751,12 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun removeCabinetIr() {
             nativeClearImpulseResponse()
+            nativeSetImpulseResponseBypass(false)
+            nativeSetImpulseResponseInGainDb(0.0f)
+            nativeSetImpulseResponseOutGainDb(0.0f)
+            nativeSetImpulseResponseMix(1.0f)
+            nativeSetImpulseResponseEqPre(false)
+            for (band in 0 until 6) nativeSetImpulseResponseEqDb(band, 0.0f)
             prefs.getString(PREF_CABINET_IR_PATH, null)?.let { path ->
                 try { File(path).delete() } catch (_: Exception) { }
             }
@@ -2758,6 +2764,13 @@ class MainActivity : AppCompatActivity() {
                 .remove(PREF_CABINET_IR_PATH)
                 .remove(PREF_CABINET_IR_BYPASS)
                 .remove(PREF_CABINET_IR_POSITION)
+                .remove(PREF_CABINET_IR_IN_GAIN)
+                .remove(PREF_CABINET_IR_OUT_GAIN)
+                .remove(PREF_CABINET_IR_MIX)
+                .remove(PREF_CABINET_IR_EQ_PRE)
+                .apply {
+                    for (band in 0 until 6) remove(PREF_CABINET_IR_EQ_PREFIX + band)
+                }
                 .apply()
             runOnUiThread { status.text = "CABINET IR REMOVED" }
         }
