@@ -3285,7 +3285,8 @@ namespace {
             return out.str();
         }
 
-        std::string stats() const {
+        std::string stats() {
+            refreshAudioThreadSchedulerStats();
             const uint64_t blocks =
                     mBlocks.load();
 
@@ -3683,6 +3684,16 @@ namespace {
                     << deviceInfo();
 
             return out.str();
+        }
+
+        void refreshAudioThreadSchedulerStats() {
+            if (!mThread.joinable()) return;
+            int policy = SCHED_OTHER;
+            sched_param parameters{};
+            if (pthread_getschedparam(mThread.native_handle(), &policy, &parameters) == 0) {
+                mAudioThreadPolicy.store(policy, std::memory_order_relaxed);
+                mAudioThreadPriority.store(parameters.sched_priority, std::memory_order_relaxed);
+            }
         }
 
     private:
