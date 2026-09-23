@@ -2641,6 +2641,10 @@ namespace {
 
             closePcm();
 
+            // A stopped/reconfigured chain must not inherit the previous
+            // chain's accumulated CPU average in the diagnostics monitor.
+            resetStats();
+
 
             std::unique_ptr<nam::DSP> pendingCleanup;
             std::unique_ptr<nam::DSP> crossfadeCleanup;
