@@ -180,6 +180,14 @@ export class AndroidBackend implements IAudioBackend {
       call('loadTone', String(toneJson), String(targetInsertId ?? ''));
     if (name === 'swapTone') return async (blockId, toneJson) =>
       Boolean(await call('loadTone', String(toneJson), String(blockId)));
+    if (name === 'switchModel') return async (blockId, modelId, modelJson) => {
+      const block = chainState().chain?.find((item: any) => item.blockId === String(blockId));
+      let model: any;
+      try { model = typeof modelJson === 'string' ? JSON.parse(modelJson) : modelJson; } catch { return false; }
+      const tone = block?.tone ?? { id: modelId, title: 'NAM' };
+      const payload = JSON.stringify({ id: tone.id, title: tone.title, models: [{ ...model, id: modelId }] });
+      return Boolean(await call('loadTone', payload, String(blockId)));
+    };
     if (name === 'setBlockParam') return async (blockId, param, value) => {
       if (String(blockId) === 'cabinet-ir') {
         if (param === 'inputGain') return call('setCabinetInGain', db(value) * 48 - 24);
