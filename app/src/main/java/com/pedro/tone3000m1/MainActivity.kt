@@ -180,6 +180,9 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_PENDING_TONE_TYPE =
             "pending_tone_type"
 
+        private const val PREF_SELECTED_ADD_TYPE =
+            "selected_add_type"
+
         private const val MAX_NAM_BLOCKS =
             4
 
@@ -2901,14 +2904,14 @@ class MainActivity : AppCompatActivity() {
                 val toneId = tone.optString("id")
                 val title = tone.optString("title", "Tone $toneId")
                 val imageUrl = tone.optJSONArray("images")?.optString(0).orEmpty()
-                val format = tone.optString("format").uppercase()
+                val selectedType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
                 val models = tone.optJSONArray("models") ?: JSONArray()
                 if (toneId.isBlank() || models.length() == 0) return false
                 val model = models.getJSONObject(0)
                 val modelUrl = model.optString("model_url", model.optString("modelUrl"))
                 if (modelUrl.isBlank()) return false
                 val token = prefs.getString(PREF_ACCESS_TOKEN, null) ?: return false
-                if (format == "IR" || format == "CABINET") {
+                if (selectedType == "IR") {
                     val onlineModel = OnlineModel(
                         id = model.optLong("id", 0L),
                         name = model.optString("name", "cabinet-${model.optLong("id", 0L)}"),
@@ -2924,7 +2927,7 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit()
                     .putString(PREF_PENDING_IMPORT_MODE, mode)
                     .putString(PREF_PENDING_TONE_IMAGE, imageUrl)
-                    .putString(PREF_PENDING_TONE_TYPE, if (format == "PEDAL" || format == "PEDALS") "PEDAL" else "AMP")
+                    .putString(PREF_PENDING_TONE_TYPE, selectedType)
                     .apply()
                 val onlineModel = OnlineModel(
                     id = model.optLong("id", 0L),
@@ -5169,6 +5172,20 @@ class MainActivity : AppCompatActivity() {
     // ========================================================
 
     private fun startTone3000SelectFlow(
+        importMode: String = "replace"
+    ) {
+        val labels = arrayOf("PEDAL (NAM ultraleve)", "AMP (NAM A2-Lite)", "IR (somente cabinet)")
+        AlertDialog.Builder(this)
+            .setTitle("Adicionar módulo")
+            .setItems(labels) { _, which ->
+                val type = when (which) { 0 -> "PEDAL"; 1 -> "AMP"; else -> "IR" }
+                prefs.edit().putString(PREF_SELECTED_ADD_TYPE, type).apply()
+                openTone3000SelectFlow(importMode)
+            }
+            .show()
+    }
+
+    private fun openTone3000SelectFlow(
         importMode: String =
             "replace"
     ) {
