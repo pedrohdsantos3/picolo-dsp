@@ -4688,6 +4688,9 @@ namespace {
             uint64_t maxFreqKhz =
                     0;
 
+            uint64_t performanceMask =
+                    0;
+
             int fastestCpu =
                     -1;
 
@@ -4743,33 +4746,23 @@ namespace {
                 }
 
 
-                /*
-                 * Select exactly ONE fastest allowed CPU.
-                 *
-                 * The NAM chain is serial inside one realtime thread, so
-                 * giving the thread multiple CPUs does not make one block
-                 * execute in parallel. It only permits migration.
-                 *
-                 * On equal-frequency CPUs, prefer the higher CPU index.
-                 * On the Snapdragon 865 performance cluster this is a useful
-                 * deterministic tie-break and eliminates inter-core migration
-                 * and the associated cache/scheduler jitter.
-                 */
+                /* Find the highest-frequency allowed cluster. */
                 if (
                         frequency >
                         maxFreqKhz ||
-                        (
-                                frequency ==
-                                maxFreqKhz &&
-                                cpu >
-                                fastestCpu
-                        )
+                        (frequency == maxFreqKhz && maxFreqKhz == 0)
                         ) {
                     maxFreqKhz =
                             frequency;
 
                     fastestCpu =
                             cpu;
+
+                    performanceMask =
+                            1ULL << cpu;
+                } else if (frequency == maxFreqKhz && frequency > 0) {
+                    performanceMask |=
+                            1ULL << cpu;
                 }
             }
 
@@ -4832,28 +4825,30 @@ namespace {
             }
 
 
+            if (performanceMask == 0) {
+                performanceMask = allowedMask;
+            }
+
             cpu_set_t selectedSet;
 
             CPU_ZERO(
                     &selectedSet
             );
 
-            CPU_SET(
-                    fastestCpu,
-                    &selectedSet
-            );
+            for (int cpu = 0; cpu < CPU_SETSIZE && cpu < 64; ++cpu) {
+                if (performanceMask & (1ULL << cpu)) {
+                    CPU_SET(cpu, &selectedSet);
+                }
+            }
 
 
-            const uint64_t selectedMask =
-                    (
-                            1ULL <<
-                                 fastestCpu
-                    );
+            const uint64_t selectedMask = performanceMask;
 
 
             /*
-             * One fixed performance CPU for the serial DSP chain.
-             * No syscall is made from the per-block hot path.
+             * The chain remains serial, but can migrate within the fastest
+             * allowed cluster so thermal/governor changes do not pin it to a
+             * single throttled core.
              */
             const int setAffinityResult =
                     sched_setaffinity(
