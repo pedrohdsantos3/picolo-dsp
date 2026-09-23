@@ -2209,6 +2209,9 @@ class MainActivity : AppCompatActivity() {
                         .put("eqBand3Db", entry.eqBand3Db)
                         .put("eqBand4Db", entry.eqBand4Db)
                         .put("eqBand5Db", entry.eqBand5Db)
+                        .put("eqPre", entry.eqPre)
+                        .put("normalize", entry.normalize)
+                        .put("a2Full", entry.a2Full)
                 )
             }
 
