@@ -23,6 +23,7 @@
 
     html, body {
       margin: 0;
+      height: 100%;
       min-height: 100%;
       overflow-x: hidden;
       overflow-y: auto;
@@ -33,6 +34,7 @@
     }
 
     body {
+      overflow-y: scroll;
       padding:
         max(14px, env(safe-area-inset-top))
         14px
@@ -49,6 +51,8 @@
 
     .app {
       max-width: 980px;
+      min-height: 100%;
+      padding-bottom: 32px;
       margin: 0 auto;
       display: grid;
       gap: 12px;
