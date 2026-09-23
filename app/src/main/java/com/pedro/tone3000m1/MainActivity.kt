@@ -3293,6 +3293,38 @@ class MainActivity : AppCompatActivity() {
             return true
         }
 
+        @JavascriptInterface
+        fun movePreset(slot: Int, delta: Int): Boolean {
+            val target = slot + delta.coerceIn(-1, 1)
+            if (slot !in 1..PRESET_COUNT || target !in 1..PRESET_COUNT || slot == target) return false
+            val firstPrefix = "preset_${slot}_"
+            val secondPrefix = "preset_${target}_"
+            val first = prefs.all.filterKeys { it.startsWith(firstPrefix) }
+                .mapKeys { it.key.removePrefix(firstPrefix) }
+            val second = prefs.all.filterKeys { it.startsWith(secondPrefix) }
+                .mapKeys { it.key.removePrefix(secondPrefix) }
+            prefs.edit().apply {
+                (first.keys + second.keys).forEach { field ->
+                    remove(presetKey(slot, field))
+                    remove(presetKey(target, field))
+                }
+                first.forEach { (field, value) -> putPresetValue(presetKey(target, field), value) }
+                second.forEach { (field, value) -> putPresetValue(presetKey(slot, field), value) }
+            }.apply()
+            return true
+        }
+
+        private fun android.content.SharedPreferences.Editor.putPresetValue(key: String, value: Any?) {
+            when (value) {
+                is String -> putString(key, value)
+                is Boolean -> putBoolean(key, value)
+                is Int -> putInt(key, value)
+                is Long -> putLong(key, value)
+                is Float -> putFloat(key, value)
+                is Set<*> -> putStringSet(key, value.filterIsInstance<String>().toSet())
+            }
+        }
+
 
         @JavascriptInterface
         fun scanUsbAudio(): String {
