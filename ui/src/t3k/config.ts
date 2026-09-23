@@ -48,5 +48,12 @@ export const PREVIEW_PLAYERS_ENABLED =
 export const T3K_ARCHITECTURE: number | undefined = 2;
 
 export function getRedirectUri(): string {
+  // Android serves the bundled UI from file://, which has no host and is
+  // rejected by the TONE3000 OAuth endpoint. The native activity already
+  // owns this registered callback and resumes the app through its intent
+  // filter, so use it whenever the Android bridge is present.
+  if (typeof window !== 'undefined' && window.Tone3000Android) {
+    return 'tone3000m1://callback';
+  }
   return window.location.origin + window.location.pathname;
 }
