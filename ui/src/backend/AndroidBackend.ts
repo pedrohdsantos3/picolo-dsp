@@ -200,6 +200,9 @@ export class AndroidBackend implements IAudioBackend {
     };
     if (name === 'restartAudioDevice') return async () => call('restartAudioDevice');
     if (name === 'getAudioInputLevels') return async () => meterState();
+    if (name === 'getPluginVersion') return async () => 'Android TinyALSA 1.0';
+    if (name === 'getUniqueDeviceID') return async () => 'android-tinyalsa';
+    if (name === 'getMidiMapState') return async () => ({ mappings: [], enabled: false });
     if (name === 'setBlockParam') return async (blockId, param, value) => {
       if (String(blockId) === 'cabinet-ir') {
         if (param === 'inputGain') return call('setCabinetInGain', db(value) * 48 - 24);
