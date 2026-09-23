@@ -4744,6 +4744,9 @@ class MainActivity : AppCompatActivity() {
                         false
                     )
 
+                    val audioResult = nativeStart()
+                    status.text = status.text.toString() + "\n\n" + audioResult
+
                     updateBypassButton()
 
 
@@ -4854,6 +4857,19 @@ class MainActivity : AppCompatActivity() {
             )
 
         if (path == null) {
+
+            val extraEntries = readExtraNamChain()
+            if (extraEntries.isNotEmpty()) {
+                Thread {
+                    val restored = rebuildNativeNamChain(extraEntries)
+                    val audio = if (restored.startsWith("NAM CHAIN READY")) nativeStart() else restored
+                    runOnUiThread {
+                        startButton.isEnabled = restored.startsWith("NAM CHAIN READY")
+                        status.text = restored + "\n" + audio
+                    }
+                }.start()
+                return
+            }
 
             status.text =
                 "Ready.\n\nNo saved model."
@@ -6334,6 +6350,8 @@ class MainActivity : AppCompatActivity() {
                         )
                     }
 
+                    val audioResult = nativeStart()
+
                     val addedChainIndex = nativeGetNamBlockCount() - 1
                     nativeSetChainNamBypass(addedChainIndex, false)
                     nativeSetChainNamInGainDb(addedChainIndex, 0.0f)
@@ -6405,7 +6423,7 @@ class MainActivity : AppCompatActivity() {
                                     "Tone: $toneTitle\n" +
                                     "Capture: ${model.name}\n" +
                                     "Size: ${model.size.uppercase()}\n\n" +
-                                    addResult
+                                    addResult + "\n" + audioResult
                         pluginWebView.postDelayed({ pluginWebView.reload() }, 150)
                     }
 
@@ -6448,6 +6466,8 @@ class MainActivity : AppCompatActivity() {
                         throw RuntimeException(replaceResult)
                     }
 
+                    val audioResult = nativeStart()
+
                     persistNamChainEntries(entries)
                     if (previous.path != committed.absolutePath) {
                         File(previous.path).delete()
@@ -6461,7 +6481,7 @@ class MainActivity : AppCompatActivity() {
                                 "Tone: $toneTitle\n" +
                                 "Capture: ${model.name}\n" +
                                 "Size: ${model.size.uppercase()}\n\n" +
-                                replaceResult
+                                replaceResult + "\n" + audioResult
                         pluginWebView.postDelayed({ pluginWebView.reload() }, 150)
                     }
 
@@ -6491,6 +6511,8 @@ class MainActivity : AppCompatActivity() {
                                 loadResult
                     )
                 }
+
+                val audioResult = nativeStart()
 
 
                 /*
@@ -6559,7 +6581,7 @@ class MainActivity : AppCompatActivity() {
 
                     status.text =
                         "TONE3000 CAPTURE READY\n\n" +
-                                loadResult
+                                loadResult + "\n" + audioResult
                     pluginWebView.postDelayed({ pluginWebView.reload() }, 150)
                 }
 
