@@ -2727,6 +2727,20 @@ class MainActivity : AppCompatActivity() {
             return "STOPPED"
         }
 
+        @JavascriptInterface
+        fun setAccessToken(token: String): Boolean {
+            val value = token.trim()
+            if (value.isBlank()) {
+                prefs.edit()
+                    .remove(PREF_ACCESS_TOKEN)
+                    .remove(PREF_REFRESH_TOKEN)
+                    .apply()
+                return false
+            }
+            prefs.edit().putString(PREF_ACCESS_TOKEN, value).apply()
+            return true
+        }
+
 
         @JavascriptInterface
         fun toggleBypass(): Boolean {
