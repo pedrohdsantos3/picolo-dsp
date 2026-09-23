@@ -3286,6 +3286,33 @@ class MainActivity : AppCompatActivity() {
             return nativeGetStats()
         }
 
+        @JavascriptInterface
+        fun getAudioDeviceState(): String {
+            return JSONObject()
+                .put("running", nativeIsRunning())
+                .put("standalone", true)
+                .put("deviceType", "TinyALSA")
+                .put("deviceName", nativeGetAudioDeviceInfo())
+                .put("sampleRate", 48000)
+                .put("bufferSize", 128)
+                .put("inputChannels", 2)
+                .put("outputChannels", 2)
+                .put("supportsInput", true)
+                .put("supportsOutput", true)
+                .toString()
+        }
+
+        @JavascriptInterface
+        fun restartAudioDevice(): String {
+            nativeStop()
+            return nativeStart()
+        }
+
+        @JavascriptInterface
+        fun getAudioInputLevels(): String {
+            return nativeGetStats()
+        }
+
 
         @JavascriptInterface
         fun showDebugUi() {

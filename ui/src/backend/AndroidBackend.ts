@@ -189,6 +189,12 @@ export class AndroidBackend implements IAudioBackend {
       return Boolean(await call('loadTone', payload, String(blockId)));
     };
     if (name === 'resetToDefault') return async () => call('resetToDefault');
+    if (name === 'getAudioDeviceState') return async () => {
+      const raw = await call('getAudioDeviceState');
+      try { return typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return null; }
+    };
+    if (name === 'restartAudioDevice') return async () => call('restartAudioDevice');
+    if (name === 'getAudioInputLevels') return async () => meterState();
     if (name === 'setBlockParam') return async (blockId, param, value) => {
       if (String(blockId) === 'cabinet-ir') {
         if (param === 'inputGain') return call('setCabinetInGain', db(value) * 48 - 24);
