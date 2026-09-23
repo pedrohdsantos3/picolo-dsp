@@ -6,7 +6,7 @@ import { IconButton } from './IconButton';
 import { PresetBar } from './PresetBar';
 import { StereoModeToggle } from './StereoModeToggle';
 import { HELP } from './helpText';
-import { BORDER } from './theme';
+import { BORDER, FONT_MONO, WHITE } from './theme';
 import type { usePresets } from '../hooks/usePresets';
 import type { ActivePreset } from '../types/chain';
 import type { User } from '../types/tone';
@@ -78,13 +78,13 @@ export const PluginHeader = React.memo(function PluginHeader({
     <div
       style={{
         width: '100%',
-        height: '64rem',
+        height: '52rem',
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         backgroundColor: '#000000',
-        padding: '0 24rem',
+        padding: '0 20rem',
         boxSizing: 'border-box',
         borderBottom: BORDER,
       }}
@@ -95,10 +95,21 @@ export const PluginHeader = React.memo(function PluginHeader({
         rel="noopener noreferrer"
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16rem' }}
       >
-        <img src="./t3k.svg" alt="T3K" style={{ width: '160rem' }} />
+        <img src="./t3k.svg" alt="T3K" style={{ width: '128rem' }} />
+        <span
+          style={{
+            color: WHITE,
+            fontFamily: FONT_MONO,
+            fontSize: '15rem',
+            fontWeight: 700,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          PicoloDSP
+        </span>
       </a>
-      {/* 40px between header items; tight pairs (undo/redo) group inside. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '40rem' }}>
+      {/* Tighter spacing keeps the compact header from crowding its logo. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '20rem' }}>
         <PresetBar
           active={activePreset}
           presets={presetStore.presets}

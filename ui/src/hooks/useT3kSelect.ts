@@ -143,10 +143,10 @@ export const useT3kSelect = ({
       // Only NAM tones use `architecture=2` on list models (v2 weights the plugin
       // loads). IR and other formats are not NAM architectures; never pass it there.
       const isNamFormat = tone.format?.toLowerCase() === 'nam';
-      // Just the first model: native only stores/loads the active model; the
-      // detail card's picker pages the full catalog from the API separately.
+      // Pass the full compatible capture list to native. It owns the capture
+      // picker so the user can choose among multiple models in one package.
       const modelsRes = await client.listModels(toneId, {
-        pageSize: 1,
+        pageSize: 300,
         ...(isNamFormat && T3K_ARCHITECTURE !== undefined
           ? { architecture: T3K_ARCHITECTURE }
           : {}),
@@ -258,7 +258,7 @@ export const useT3kSelect = ({
    * picks a tone, TONE3000 redirects back here and the effect above resolves
    * the rest.
    */
-  const startSelectFlow = useCallback(() => {
+  const startSelectFlow = useCallback((options?: { format?: string; gears?: string }) => {
     if (!requireKey()) return;
     setOauthError(null);
     sessionStorage.setItem(LAST_FLOW_KEY, 'select');
@@ -269,7 +269,9 @@ export const useT3kSelect = ({
     setOauthPhase('leaving');
     startSelectFlowRedirect(PUBLISHABLE_KEY, getRedirectUri(), {
       menubar: true,
-      architecture: T3K_ARCHITECTURE,
+      gears: options?.gears,
+      format: options?.format,
+      architecture: options?.format === 'ir' ? undefined : T3K_ARCHITECTURE,
       preview: PREVIEW_PLAYERS_ENABLED,
     }).catch((err) => {
       console.error('Failed to start TONE3000 select flow', err);

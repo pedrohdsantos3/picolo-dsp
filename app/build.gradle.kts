@@ -1,5 +1,17 @@
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.compose.compiler)
+}
+
+// The authenticated TONE3000 catalog used by the Compose import flow is
+// bundled from the same React build as the JUCE plugin.
+val syncReactUiAssets by tasks.registering(Copy::class) {
+    from(rootProject.layout.projectDirectory.dir("plugin/webview"))
+    into(layout.projectDirectory.dir("src/main/assets/tone3000-official"))
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(syncReactUiAssets)
 }
 
 android {
@@ -60,10 +72,19 @@ android {
 
     buildFeatures {
         viewBinding = true
+        compose = true
     }
 }
 
 dependencies {
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.ktx)
+
     implementation(
         libs.androidx.appcompat
     )

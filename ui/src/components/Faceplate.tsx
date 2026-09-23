@@ -475,6 +475,11 @@ export const Faceplate = React.memo(function Faceplate({
             defaultValue={toneScale.fromDisplay(5)}
             help={HELP.toneTreble}
             onDragStateChange={onTrebleDrag}
+            // The EQ power button follows this knob in DOM order. On narrow
+            // touch layouts its 44px hit target can overlap Treble's enlarged
+            // hit target, so keep the knob above that sibling for pointer hit
+            // testing.
+            style={{ position: 'relative', zIndex: 2 }}
           />
         </div>
         <PowerButton

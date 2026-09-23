@@ -260,10 +260,10 @@ export const Plugin: React.FC = () => {
     () => requireConnection(() => startLoginFlow({ openBrowser: true })),
     [requireConnection, startLoginFlow]
   );
-  // Browse on TONE3000 leaves for the Select OAuth catalog, so it takes the
-  // same gate as login.
+  // Browse on TONE3000 leaves for the Select OAuth catalog. Use the same
+  // gear-only search for every module type; FX must browse exactly like IR/Cab.
   const handleBrowseTone3000 = useCallback(
-    () => requireConnection(() => startSelectFlow()),
+    (gear?: string) => requireConnection(() => startSelectFlow(gear ? { gears: gear } : undefined)),
     [requireConnection, startSelectFlow]
   );
 

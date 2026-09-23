@@ -515,7 +515,7 @@ export const ChainBlock: React.FC<ChainBlockProps> = ({
   const modelBusy = block.modelLoading || (!block.loaded && !block.loadFailed);
 
   const moduleType = String((tone as any).moduleType || tone.format || 'AMP').toUpperCase();
-  const isNam = moduleType !== 'IR';
+  const isNam = moduleType === 'AMP' || moduleType === 'PEDAL';
 
   // Calibration state (the gauge indicator + the normalize override). Only
   // meaningful while the user's input calibration setting is on: the gauge

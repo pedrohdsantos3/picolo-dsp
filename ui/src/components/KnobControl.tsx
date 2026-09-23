@@ -66,6 +66,8 @@ interface KnobControlProps {
       can pause external syncs mid-drag (a stale poll must not fight the
       pointer). */
   onDragStateChange?: (dragging: boolean) => void;
+  /** Optional stacking style when enlarged touch hit areas overlap neighbors. */
+  style?: React.CSSProperties;
 }
 
 /** Every knob label is 14px; faceplate chrome lift and secondary-knob
@@ -116,6 +118,7 @@ export const KnobControl: React.FC<KnobControlProps> = ({
   labelBright = false,
   onReset,
   onDragStateChange,
+  style,
 }) => {
   const knobRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -473,6 +476,7 @@ export const KnobControl: React.FC<KnobControlProps> = ({
         justifyContent: 'center',
         alignItems: 'center',
         gap: `${KNOB_LABEL_GAP}rem`,
+        ...style,
       }}
     >
       <KnobHeadless

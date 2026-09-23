@@ -443,6 +443,26 @@ export class T3KClient {
     return res.json();
   }
 
+  /** Search the full catalog with format/gear filters; used by FX to browse
+      the complete IR library instead of filtering a small top-ten stream. */
+  async searchTones(options?: {
+    page?: number;
+    pageSize?: number;
+    format?: string;
+    gears?: string;
+  }): Promise<PaginatedResponse<Tone>> {
+    const qs = new URLSearchParams({
+      page: String(options?.page ?? 1),
+      page_size: String(options?.pageSize ?? 12),
+      sort: 'tones',
+    });
+    if (options?.format) qs.set('format', options.format);
+    if (options?.gears) qs.set('gears', options.gears);
+    const res = await this.fetch(`/api/v1/tones/search?${qs.toString()}`);
+    if (!res.ok) throw new Error(`searchTones failed: ${res.status}`);
+    return res.json();
+  }
+
   /** 10 most recently published tones (homepage feed; not paginated). */
   async listLatestTones(): Promise<{ data: Tone[] }> {
     const res = await this.fetch('/api/v1/tones/latest');

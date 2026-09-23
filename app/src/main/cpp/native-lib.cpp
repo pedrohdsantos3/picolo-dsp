@@ -65,6 +65,7 @@ namespace {
 
     /* All NAM slots are peers in one serial signal chain. */
     constexpr unsigned int MAX_NAM_BLOCKS = 4;
+    constexpr unsigned int MAX_FX_IR_BLOCKS = 8;
 
     /*
      * A2 / SlimmableContainer quality.
@@ -1423,7 +1424,7 @@ namespace {
 
         AudioEngine() {
             for (unsigned int slot = 0; slot < MAX_NAM_BLOCKS; ++slot) {
-                mNamGainDb[slot].store(0.0f);
+                mNamGainDb[slot].store(-15.0f);
                 mNamInGainDb[slot].store(0.0f);
                 mNamMix[slot].store(1.0f);
                 mNamNormalize[slot].store(true);
@@ -1689,6 +1690,40 @@ namespace {
 
         void setImpulseResponseEqPre(bool pre) {
             mOutputIrEqPre.store(pre, std::memory_order_relaxed);
+        }
+
+        std::string loadFxImpulseResponse(int slot, const std::string& path) {
+            if (slot < 0 || slot >= static_cast<int>(MAX_FX_IR_BLOCKS)) return "FX LOAD FAILED\nInvalid FX slot";
+            stop();
+            auto candidate = std::make_unique<dsp::ImpulseResponse>(path.c_str(), TARGET_RATE, 512);
+            if (candidate->GetWavState() != dsp::wav::LoadReturnCode::SUCCESS) return "FX LOAD FAILED\nInvalid or unsupported WAV file";
+            mFxIrs[static_cast<size_t>(slot)] = std::move(candidate);
+            mFxIrBypass[static_cast<size_t>(slot)].store(false, std::memory_order_relaxed);
+            mFxIrMix[static_cast<size_t>(slot)].store(0.5f, std::memory_order_relaxed);
+            mFxIrPosition[static_cast<size_t>(slot)].store(static_cast<int>(MAX_NAM_BLOCKS), std::memory_order_relaxed);
+            return "FX LOADED";
+        }
+
+        void clearFxImpulseResponse(int slot) {
+            if (slot < 0 || slot >= static_cast<int>(MAX_FX_IR_BLOCKS)) return;
+            stop();
+            mFxIrs[static_cast<size_t>(slot)].reset();
+            mFxIrBypass[static_cast<size_t>(slot)].store(false, std::memory_order_relaxed);
+            mFxIrMix[static_cast<size_t>(slot)].store(0.5f, std::memory_order_relaxed);
+        }
+
+        void setFxImpulseResponseBypass(int slot, bool bypass) {
+            if (slot >= 0 && slot < static_cast<int>(MAX_FX_IR_BLOCKS)) mFxIrBypass[static_cast<size_t>(slot)].store(bypass, std::memory_order_relaxed);
+        }
+
+        void setFxImpulseResponseMix(int slot, float mix) {
+            if (slot >= 0 && slot < static_cast<int>(MAX_FX_IR_BLOCKS)) mFxIrMix[static_cast<size_t>(slot)].store(std::clamp(mix, 0.0f, 1.0f), std::memory_order_relaxed);
+        }
+
+        void setFxImpulseResponsePosition(int slot, int namBlocksBefore) {
+            if (slot >= 0 && slot < static_cast<int>(MAX_FX_IR_BLOCKS)) {
+                mFxIrPosition[static_cast<size_t>(slot)].store(std::clamp(namBlocksBefore, 0, static_cast<int>(MAX_NAM_BLOCKS)), std::memory_order_relaxed);
+            }
         }
 
         std::string switchPresetGapless(
@@ -2515,10 +2550,11 @@ namespace {
         std::string start() {
             stop();
 
-            if (namBlockCount() == 0) {
+            const bool hasFx = std::any_of(mFxIrs.begin(), mFxIrs.end(), [](const auto& ir) { return ir != nullptr; });
+            if (namBlockCount() == 0 && !mOutputIr && !hasFx) {
                 return
                         "AUDIO START FAILED\n"
-                        "No NAM model loaded";
+                        "No processing module loaded";
             }
 
             std::string openError;
@@ -2745,6 +2781,10 @@ namespace {
             mGateEnabled.store(
                     enabled
             );
+        }
+
+        void setEqEnabled(bool enabled) {
+            mEqEnabled.store(enabled, std::memory_order_relaxed);
         }
 
 
@@ -3365,6 +3405,9 @@ namespace {
                     << "NAM PERFORMANCE\n\n"
                     << "blocks="
                     << blocks
+                    << "\n"
+                    << "totalProcessNs="
+                    << totalNs
                     << "\n"
                     << "avgProcess="
                     << averageUs
@@ -5551,6 +5594,23 @@ namespace {
                 }
             };
 
+            auto processFxIrs = [&](int position, NAM_SAMPLE* buffer) {
+                for (unsigned int slot = 0; slot < MAX_FX_IR_BLOCKS; ++slot) {
+                    auto* fxIr = mFxIrs[slot].get();
+                    if (!fxIr || mFxIrPosition[slot].load(std::memory_order_relaxed) != position ||
+                        mFxIrBypass[slot].load(std::memory_order_relaxed)) continue;
+                    const float mix = mFxIrMix[slot].load(std::memory_order_relaxed);
+                    for (unsigned int frame = 0; frame < frames; ++frame) {
+                        irDry[frame] = static_cast<float>(buffer[frame]);
+                        irInput[frame] = static_cast<double>(irDry[frame]);
+                    }
+                    double** fxOutput = fxIr->Process(irInputPointers, 1, frames);
+                    for (unsigned int frame = 0; frame < frames; ++frame) {
+                        buffer[frame] = static_cast<NAM_SAMPLE>(irDry[frame] * (1.0f - mix) + static_cast<float>(fxOutput[0][frame]) * mix);
+                    }
+                }
+            };
+
 
             float currentLowDb =
                     999.0f;
@@ -5960,7 +6020,7 @@ namespace {
 
 
                 /* Slot 0 uses the same block-local bypass as every slot. */
-                const bool firstSlotBypassed =
+            const bool firstSlotBypassed = !mNamModels[0] ||
                         mNamBypass[0].load(
                                 std::memory_order_relaxed
                         );
@@ -5997,6 +6057,7 @@ namespace {
                 if (mOutputIrPosition.load(std::memory_order_relaxed) == 0) {
                     processOutputIr(namInput.data());
                 }
+                processFxIrs(0, namInput.data());
 
 
                 const auto start =
@@ -6031,13 +6092,15 @@ namespace {
                     }
 
 
-                    mNamModels[0]->process(
-                            &namInputPtr,
-                            &namOutputPtr,
-                            static_cast<int>(
-                                    frames
-                            )
-                    );
+                    if (mNamModels[0]) {
+                        mNamModels[0]->process(
+                                &namInputPtr,
+                                &namOutputPtr,
+                                static_cast<int>(frames)
+                        );
+                    } else {
+                        std::copy(namInput.begin(), namInput.end(), namOutput.begin());
+                    }
 
 
                     /*
@@ -6108,6 +6171,7 @@ namespace {
                 if (mOutputIrPosition.load(std::memory_order_relaxed) == 1) {
                     processOutputIr(namChainA.data());
                 }
+                processFxIrs(1, namChainA.data());
 
 
                 NAM_SAMPLE* chainCurrentPtr =
@@ -6163,6 +6227,7 @@ namespace {
                     if (mOutputIrPosition.load(std::memory_order_relaxed) == static_cast<int>(slot + 1)) {
                         processOutputIr(chainCurrentPtr);
                     }
+                    if (slot + 1 < MAX_NAM_BLOCKS) processFxIrs(static_cast<int>(slot + 1), chainCurrentPtr);
                 }
 
 
@@ -6246,6 +6311,10 @@ namespace {
                                     postEq
                             );
 
+                    if (!mEqEnabled.load(std::memory_order_relaxed)) {
+                        postEq = rawNamOutput;
+                    }
+
 
                     postEqBlockPeak =
                             std::max(
@@ -6262,6 +6331,7 @@ namespace {
                 if (mOutputIrPosition.load(std::memory_order_relaxed) == static_cast<int>(MAX_NAM_BLOCKS)) {
                     processOutputIr(reinterpret_cast<NAM_SAMPLE*>(postEqBuffer.data()));
                 }
+                processFxIrs(static_cast<int>(MAX_NAM_BLOCKS), reinterpret_cast<NAM_SAMPLE*>(postEqBuffer.data()));
 
                 for (unsigned int frame = 0; frame < frames; ++frame) {
                     const float output = postEqBuffer[frame] * outputGain;
@@ -6438,6 +6508,10 @@ namespace {
         std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamNormalizeGain{};
 
         std::unique_ptr<dsp::ImpulseResponse> mOutputIr;
+        std::array<std::unique_ptr<dsp::ImpulseResponse>, MAX_FX_IR_BLOCKS> mFxIrs;
+        std::array<std::atomic<bool>, MAX_FX_IR_BLOCKS> mFxIrBypass{};
+        std::array<std::atomic<float>, MAX_FX_IR_BLOCKS> mFxIrMix{};
+        std::array<std::atomic<int>, MAX_FX_IR_BLOCKS> mFxIrPosition{};
         std::atomic<bool> mOutputIrBypass{false};
         std::atomic<int> mOutputIrPosition{static_cast<int>(MAX_NAM_BLOCKS)};
         std::atomic<float> mOutputIrInGainDb{0.0f};
@@ -6736,6 +6810,8 @@ namespace {
                 0.0f
         };
 
+        std::atomic<bool> mEqEnabled{true};
+
         std::atomic<float> mEqMidDb{
                 0.0f
         };
@@ -6832,6 +6908,49 @@ Java_com_pedro_tone3000m1_MainActivity_nativeLoadImpulseResponse(
     const std::string result = gEngine.loadImpulseResponse(chars);
     env->ReleaseStringUTFChars(path, chars);
     return makeJString(env, result);
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeLoadFxImpulseResponse(
+        JNIEnv* env, jobject, jint slot, jstring path
+) {
+    const char* chars = env->GetStringUTFChars(path, nullptr);
+    const std::string result = gEngine.loadFxImpulseResponse(static_cast<int>(slot), chars);
+    env->ReleaseStringUTFChars(path, chars);
+    return makeJString(env, result);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeClearFxImpulseResponse(
+        JNIEnv*, jobject, jint slot
+) {
+    gEngine.clearFxImpulseResponse(static_cast<int>(slot));
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetFxImpulseResponseBypass(
+        JNIEnv*, jobject, jint slot, jboolean bypass
+) {
+    gEngine.setFxImpulseResponseBypass(static_cast<int>(slot), bypass == JNI_TRUE);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetFxImpulseResponseMix(
+        JNIEnv*, jobject, jint slot, jfloat mix
+) {
+    gEngine.setFxImpulseResponseMix(static_cast<int>(slot), mix);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetFxImpulseResponsePosition(
+        JNIEnv*, jobject, jint slot, jint namBlocksBefore
+) {
+    gEngine.setFxImpulseResponsePosition(static_cast<int>(slot), static_cast<int>(namBlocksBefore));
 }
 
 extern "C"
@@ -7254,6 +7373,17 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetEqHighDb(
     gEngine.setEqHighDb(
             db
     );
+}
+
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetEqEnabled(
+        JNIEnv*,
+        jobject,
+        jboolean enabled
+) {
+    gEngine.setEqEnabled(enabled == JNI_TRUE);
 }
 
 

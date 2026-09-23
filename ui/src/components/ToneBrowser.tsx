@@ -57,9 +57,10 @@ import {
  * involved for the final load (access token + model download).
  */
 
-type StreamKind = 'trending' | 'downloaded' | 'favorited' | 'created';
+type StreamKind = 'all' | 'trending' | 'downloaded' | 'favorited' | 'created';
 
 const TABS: { id: StreamKind; label: string; icon?: React.ComponentType<{ size?: number }> }[] = [
+  { id: 'all', label: 'All tones' },
   { id: 'trending', label: 'Trending' },
   { id: 'downloaded', label: 'Recently used' },
   { id: 'favorited', label: 'Favorites', icon: Bookmark },
@@ -67,9 +68,10 @@ const TABS: { id: StreamKind; label: string; icon?: React.ComponentType<{ size?:
 ];
 
 /** Streams that require a signed-in TONE3000 session; Trending is public. */
-const GATED_STREAMS = new Set<StreamKind>(['downloaded', 'favorited', 'created']);
+const GATED_STREAMS = new Set<StreamKind>(['all', 'downloaded', 'favorited', 'created']);
 
 const EMPTY_COPY: Record<StreamKind, string> = {
+  all: 'No tones found in the catalog.',
   trending: 'No trending tones right now. Check back soon.',
   downloaded: 'Tones you download on TONE3000 will show up here.',
   favorited: 'Tones you favorite on TONE3000 will show up here.',
@@ -80,9 +82,6 @@ const SIGN_IN_HEADING = 'Sign in to see your tones and discover zillions more.';
 const DISCOVER_MORE_HEADING = 'Discover zillions more tones.';
 
 const PAGE_SIZE = 12;
-
-/** Remembers the last-viewed stream so the next browse lands on it. */
-const STREAM_STORAGE_KEY = 't3k_browser_stream';
 
 /** Content column, same width as the expanded-block card so the browser
     frame lines up with BLOCK visually. Header / tabs / grid / filter pills
@@ -526,7 +525,7 @@ interface ToneBrowserProps {
   /** Resolve + load a picked tone; the parent closes the browser on success. */
   onPickTone: (toneId: number) => Promise<void>;
   /** Launch the full-catalog Select flow (prompt=select_tone). */
-  onBrowseTone3000: () => void;
+  onBrowseTone3000: (gear?: string) => void;
   /** Run the no-prompt login flow without leaving the browser; fired from
       any sign-in CTA (a gated stream's prompt, or Trending's discovery
       footer). Never fired from Browse, which always runs Select instead. */
@@ -550,13 +549,9 @@ export const ToneBrowser: React.FC<ToneBrowserProps> = ({
   onSignIn,
   onClose,
 }) => {
-  // Land on the stream the user was on last time they browsed; default to
-  // the public Trending feed rather than a gated stream that might now be
-  // unreachable (signed out on a fresh session).
-  const [stream, setStream] = useState<StreamKind>(() => {
-    const saved = localStorage.getItem(STREAM_STORAGE_KEY);
-    return TABS.some((s) => s.id === saved) ? (saved as StreamKind) : 'trending';
-  });
+  // Keep the stream scoped to this picker instance. A selection in Trending
+  // must not pin later module additions to the same small, top-ten feed.
+  const [stream, setStream] = useState<StreamKind>(authenticated ? 'all' : 'trending');
   const [gearFilter, setGearFilter] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [result, setResult] = useState<StreamResult | null>(null);
@@ -597,7 +592,11 @@ export const ToneBrowser: React.FC<ToneBrowserProps> = ({
 
     (async () => {
       try {
-        if (stream === 'trending') {
+        if (stream === 'all') {
+          const res = await client.searchTones({ page, pageSize: PAGE_SIZE, gears: gearFilter ?? undefined });
+          if (!cancelled)
+            setResult({ data: res.data, page: res.page, totalPages: res.total_pages });
+        } else if (stream === 'trending') {
           const res = await client.listTrendingTones(gearFilter ?? undefined);
           if (!cancelled) setResult({ data: res.data });
         } else {
@@ -642,7 +641,6 @@ export const ToneBrowser: React.FC<ToneBrowserProps> = ({
   const switchStream = (next: StreamKind) => {
     if (next === stream) return;
     setStream(next);
-    localStorage.setItem(STREAM_STORAGE_KEY, next);
     setPage(1);
   };
 
@@ -720,7 +718,7 @@ export const ToneBrowser: React.FC<ToneBrowserProps> = ({
             // (fetching its models + a download token) still needs a
             // session, so route the click through sign-in instead of a picker
             // request that would just fail as not_authenticated.
-            const needsSignIn = stream === 'trending' && !authenticated;
+            const needsSignIn = !authenticated && stream === 'trending';
             return (
               <ToneCard
                 key={tone.id}
@@ -838,7 +836,7 @@ export const ToneBrowser: React.FC<ToneBrowserProps> = ({
               </span>
             </button>
             <div style={{ flex: 1 }} />
-            <BrowseButton onClick={onBrowseTone3000} />
+            <BrowseButton onClick={() => onBrowseTone3000(gearFilter ?? undefined)} />
           </div>
           <StreamTabs active={stream} onChange={switchStream} />
         </div>

@@ -8,11 +8,11 @@ sem colocar lógica de negócio ou operações bloqueantes no callback de áudio
 ## Camadas
 
 ```text
-UI (Activity/WebView + estado de tela)
+UI (Jetpack Compose + ViewModel/StateFlow)
         ↓ eventos e UiState
-Domínio (regras da cadeia e casos de uso)
+Controle Kotlin existente (PluginBridge)
         ↓ modelos próprios da aplicação
-Dados (preferências, arquivos, OAuth/browser)
+Dados e integração (preferências, arquivos, OAuth/browser)
         ↓ API estreita e síncrona no limite de áudio
 JNI / C++ (TinyALSA + NAM + IR + DSP)
 ```
@@ -25,10 +25,15 @@ quando evita duplicação ou concentra regras reutilizáveis.
 
 - `data/model/ExtraNamEntry.kt` contém o modelo persistido da cadeia, fora da
   `MainActivity`.
-- A Activity ainda é o state holder legado e concentra a ponte do frontend
-  oficial, compatibilidade OAuth e chamadas JNI. Isso é deliberado nesta etapa:
-  mover essas rotinas sem testes de regressão poderia interromper o áudio ao
-  vivo.
+- Jetpack Compose é a UI principal do app. `PicoloComposeViewModel` mantém um
+  `StateFlow` de tela e recebe snapshots da Activity; `PluginBridge` continua
+  concentrando ações de UI e comandos já existentes.
+- O WebView oficial fica restrito ao fluxo autenticado de seleção/importação
+  do TONE3000 e pode ser fechado para retornar ao Compose. As rotinas OAuth e
+  de download continuam na Activity nesta etapa.
+- A Activity ainda concentra preferências, arquivos e algumas rotinas de
+  negócio. A extração para repositórios/controlador Kotlin deve ser feita com
+  testes de regressão para não interromper o áudio ao vivo.
 - O thread de áudio continua totalmente nativo. Nenhuma chamada de rede,
   leitura de arquivo, alocação ou chamada JNI deve ser adicionada ao caminho de
   processamento por bloco.
@@ -41,8 +46,8 @@ quando evita duplicação ou concentra regras reutilizáveis.
    JNI agrupados em poucos arquivos, conforme as recomendações do NDK.
 3. Extrair `ToneLoadUseCase`, `PresetUseCase` e `AudioRoutingUseCase` para
    remover regras de negócio da Activity.
-4. Transformar a tela legada em um state holder explícito, preservando o
-   WebView oficial como componente de apresentação.
+4. Substituir a atualização periódica de snapshots da UI por estado emitido
+   pelo repositório/controlador, mantendo operações pesadas fora da UI.
 5. Migrar preferências de configuração para DataStore no repositório, com
    migração compatível e sem alterar os nomes atuais das chaves.
 6. Adicionar testes unitários para serialização, reordenação, tipos AMP/IR e

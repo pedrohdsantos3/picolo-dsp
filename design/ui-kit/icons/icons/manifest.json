@@ -1,0 +1,58 @@
+{
+  "format": {
+    "viewBox": "0 0 24 24",
+    "strokeWidth": 1.8,
+    "lineCap": "round",
+    "lineJoin": "round",
+    "fill": "none",
+    "color": "currentColor"
+  },
+  "sizesDp": {
+    "compact": 20,
+    "default": 24,
+    "module": 28,
+    "hero": 32,
+    "minimumTouchTarget": 48
+  },
+  "semanticColors": {
+    "brand": "#FF6A1A",
+    "algorithmic": "#23D6C5",
+    "ir": "#FFC43D",
+    "shaping": "#A75AF2",
+    "time": "#3C9BFF",
+    "inactive": "#9AA6AE",
+    "error": "#FF4D5E"
+  },
+  "icons": [
+    "effects/compressor.svg",
+    "effects/delay.svg",
+    "effects/drive.svg",
+    "effects/eq.svg",
+    "effects/gate.svg",
+    "effects/ir.svg",
+    "effects/modulation.svg",
+    "effects/nam.svg",
+    "effects/reverb.svg",
+    "effects/utility.svg",
+    "navigation/editor.svg",
+    "navigation/footswitch.svg",
+    "navigation/more.svg",
+    "navigation/presets.svg",
+    "navigation/settings.svg",
+    "system/bluetooth.svg",
+    "system/chevron_left.svg",
+    "system/chevron_right.svg",
+    "system/drag.svg",
+    "system/folder.svg",
+    "system/info.svg",
+    "system/input.svg",
+    "system/link.svg",
+    "system/midi.svg",
+    "system/output.svg",
+    "system/power.svg",
+    "system/search.svg",
+    "system/tap_tempo.svg",
+    "system/tuner.svg",
+    "system/usb.svg"
+  ]
+}

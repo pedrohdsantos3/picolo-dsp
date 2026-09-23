@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import type { useChainState } from './useChainState';
 import type { ChainSide } from '../types/chain';
 import type { Model, Tone } from '../types/tone';
@@ -11,6 +11,7 @@ type ChainStateActions = ReturnType<typeof useChainState>['actions'];
 // Native falls back gracefully when an id went stale.
 const SWAP_STORAGE_KEY = 't3k.pendingSwapBlockId';
 const INSERT_TARGET_STORAGE_KEY = 't3k.pendingInsertBlockId';
+const ADD_MODULE_TYPE_KEY = 't3k.pendingAddModuleType';
 
 /** Sanity cap for dropped files; real .nam files and IRs are a few MB, and
     the bytes ride the native bridge as base64 strings. */
@@ -45,13 +46,19 @@ const chooseModuleType = () => new Promise<string | null>((resolve) => {
   panel.innerHTML = '<div style="font-size:16px;font-weight:bold;margin-bottom:14px">Adicionar módulo</div>';
   const select = document.createElement('select');
   select.style.cssText = 'width:100%;padding:12px;background:#151517;color:#fff;border:1px solid #777;border-radius:6px;font-size:15px';
-  [['AMP', 'AMP (NAM A2-Lite)'], ['PEDAL', 'PEDAL (NAM ultraleve)'], ['IR', 'IR (somente cabinet)']].forEach(([value, label]) => {
+  [['AMP', 'AMP (NAM A2-Lite)'], ['PEDAL', 'PEDAL'], ['FX', 'FX (reverb / IR)'], ['IR', 'IR (cabinet)']].forEach(([value, label]) => {
     const option = document.createElement('option'); option.value = value; option.textContent = label; select.appendChild(option);
   });
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;gap:8px;margin-top:14px';
+  const cancel = document.createElement('button');
+  cancel.textContent = 'CANCELAR'; cancel.style.cssText = 'flex:1;padding:11px;background:#444;color:#fff;border:1px solid #666;border-radius:6px;font-weight:bold';
+  cancel.onclick = () => { overlay.remove(); resolve(null); };
   const button = document.createElement('button');
-  button.textContent = 'CONTINUAR'; button.style.cssText = 'margin-top:14px;width:100%;padding:11px;background:#ddd;color:#111;border:0;border-radius:6px;font-weight:bold';
+  button.textContent = 'CONTINUAR'; button.style.cssText = 'flex:1;padding:11px;background:#ddd;color:#111;border:0;border-radius:6px;font-weight:bold';
   button.onclick = () => { overlay.remove(); resolve(select.value); };
-  panel.append(select, button); overlay.appendChild(panel); document.body.appendChild(overlay);
+  actions.append(cancel, button);
+  panel.append(select, actions); overlay.appendChild(panel); document.body.appendChild(overlay);
 });
 
 /** All files under a dropped directory, subfolders included. readEntries
@@ -101,6 +108,9 @@ export function useToneLoadFlow({
   requireConnection,
   setShowToneBrowser,
 }: UseToneLoadFlowOptions) {
+  const [selectedModuleType, setSelectedModuleType] = useState(() => {
+    try { return sessionStorage.getItem(ADD_MODULE_TYPE_KEY) ?? 'AMP'; } catch { return 'AMP'; }
+  });
   // A fully-resolved tone landed (Select callback or a browser card pick).
   // If a swap was pending, replace that block in place; otherwise add the
   // tone at the remembered insert slot.
@@ -111,24 +121,31 @@ export function useToneLoadFlow({
         return;
       }
 
-      // Consume the pending targets up front so they can never leak into a
-      // later selection. (Each flow clears the other's key before starting.)
+      // Keep the target until native confirms the load. If the bridge rejects
+      // this tone, ToneBrowser must stay open so the user can retry or choose
+      // another model without falling back to the legacy WebView editor.
       const swapBlockId = sessionStorage.getItem(SWAP_STORAGE_KEY);
-      sessionStorage.removeItem(SWAP_STORAGE_KEY);
       const insertBlockId = sessionStorage.getItem(INSERT_TARGET_STORAGE_KEY);
-      sessionStorage.removeItem(INSERT_TARGET_STORAGE_KEY);
 
       const toneJson = JSON.stringify(tone);
-      setShowToneBrowser(false);
 
       if (swapBlockId) {
         const swapped = await actions.swapTone(swapBlockId, toneJson);
-        if (swapped) return;
-        console.warn('Swap target no longer exists; adding tone as a new block');
+        if (!swapped) {
+          throw new Error('Could not replace that effect. The current chain was kept.');
+        }
+        sessionStorage.removeItem(SWAP_STORAGE_KEY);
+        sessionStorage.removeItem(INSERT_TARGET_STORAGE_KEY);
+        setShowToneBrowser(false);
+        return;
       }
 
       const blockId = await actions.loadTone(toneJson, insertBlockId ?? undefined);
-      if (!blockId) console.error('Failed to load tone');
+      if (!blockId) throw new Error('The selected tone could not be loaded. The current chain was kept.');
+
+      sessionStorage.removeItem(SWAP_STORAGE_KEY);
+      sessionStorage.removeItem(INSERT_TARGET_STORAGE_KEY);
+      setShowToneBrowser(false);
     },
     [actions, setShowToneBrowser]
   );
@@ -140,7 +157,9 @@ export function useToneLoadFlow({
     (side: ChainSide, insertBlockId: string) => {
       requireConnection(async () => {
         const selected = await chooseModuleType();
-        if (selected !== 'AMP' && selected !== 'PEDAL' && selected !== 'IR') return;
+        if (selected !== 'AMP' && selected !== 'PEDAL' && selected !== 'FX' && selected !== 'IR') return;
+        setSelectedModuleType(selected);
+        sessionStorage.setItem(ADD_MODULE_TYPE_KEY, selected);
         window.Tone3000Android?.setSelectedAddType?.(selected);
         sessionStorage.removeItem(SWAP_STORAGE_KEY);
         sessionStorage.setItem(INSERT_TARGET_STORAGE_KEY, insertBlockId);
@@ -224,6 +243,7 @@ export function useToneLoadFlow({
   }, []);
 
   return {
+    selectedModuleType,
     handleToneSelected,
     handleAddModel,
     handleSwapBlock,

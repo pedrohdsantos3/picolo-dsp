@@ -1,0 +1,95 @@
+{
+  "colors": {
+    "bgBase": "#090D10",
+    "surface1": "#11171C",
+    "surface2": "#171F25",
+    "textPrimary": "#F4F7F9",
+    "textSecondary": "#9AA6AE",
+    "brandOrange": "#FF6A1A",
+    "algorithmicTeal": "#23D6C5",
+    "irYellow": "#FFC43D",
+    "shapingPurple": "#A75AF2",
+    "timeBlue": "#3C9BFF",
+    "error": "#FF4D5E"
+  },
+  "spacingDp": [
+    4,
+    8,
+    12,
+    16,
+    24,
+    32
+  ],
+  "radiusDp": {
+    "input": 8,
+    "card": 12,
+    "pill": 999
+  },
+  "touchTargetDp": 48,
+  "typography": {
+    "display": {
+      "family": "Space Grotesk",
+      "weight": 700,
+      "sizeSp": 32,
+      "lineHeightSp": 38
+    },
+    "h1": {
+      "family": "Space Grotesk",
+      "weight": 600,
+      "sizeSp": 24,
+      "lineHeightSp": 30
+    },
+    "h2": {
+      "family": "Space Grotesk",
+      "weight": 600,
+      "sizeSp": 20,
+      "lineHeightSp": 26
+    },
+    "title": {
+      "family": "Inter",
+      "weight": 600,
+      "sizeSp": 18,
+      "lineHeightSp": 24
+    },
+    "body": {
+      "family": "Inter",
+      "weight": 400,
+      "sizeSp": 16,
+      "lineHeightSp": 24
+    },
+    "bodyCompact": {
+      "family": "Inter",
+      "weight": 400,
+      "sizeSp": 14,
+      "lineHeightSp": 20
+    },
+    "label": {
+      "family": "Inter",
+      "weight": 600,
+      "sizeSp": 12,
+      "lineHeightSp": 16
+    },
+    "technical": {
+      "family": "JetBrains Mono",
+      "weight": 500,
+      "sizeSp": 12,
+      "lineHeightSp": 16
+    },
+    "value": {
+      "family": "JetBrains Mono",
+      "weight": 500,
+      "sizeSp": 14,
+      "lineHeightSp": 18
+    }
+  },
+  "icons": {
+    "viewBox": 24,
+    "strokeWidth": 1.8,
+    "sizesDp": {
+      "compact": 20,
+      "default": 24,
+      "module": 28,
+      "hero": 32
+    }
+  }
+}

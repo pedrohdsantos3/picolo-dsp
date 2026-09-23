@@ -99,7 +99,7 @@ function chainState(): any {
         normalize: nam.normalize !== false,
         slimSize: nam.a2Full ? 1 : 0,
         inputGain: (db(nam.inGainDb) + 24) / 48,
-        outputGain: (db(nam.gainDb) + 24) / 36,
+        outputGain: (db(nam.gainDb) + 24) / 48,
         mix: Math.max(0, Math.min(1, db(nam.mix, 1))),
         eq: { enabled: true, pre: Boolean(nam.eqPre), bands },
       },
@@ -108,12 +108,12 @@ function chainState(): any {
   const cabinetBands = Array.isArray(source.cabinetIrEq) ? source.cabinetIrEq : [];
   const cabinet = source.cabinetIrLoaded ? {
     blockId: 'cabinet-ir', kind: 'tone',
-    tone: { id: -1, title: source.cabinetIrName || 'Cabinet IR', format: 'IR', moduleType: 'IR', images: source.cabinetIrImage ? [source.cabinetIrImage] : [], models: [], models_count: 1, a2_models_count: 0, downloads_count: 0, favorites_count: 0 },
-    activeModelId: -1, loaded: true, loadFailed: false, modelLoading: false, irLong: false,
+    tone: { id: -1, title: source.cabinetIrName || 'Cabinet IR', format: 'IR', moduleType: source.cabinetIrModuleType || 'IR', images: source.cabinetIrImage ? [source.cabinetIrImage] : [], models: [], models_count: 1, a2_models_count: 0, downloads_count: 0, favorites_count: 0 },
+    activeModelId: -1, loaded: true, loadFailed: false, modelLoading: false, irLong: Boolean(source.cabinetIrLong),
     params: {
       enabled: !Boolean(source.cabinetIrBypass), normalize: false, slimSize: 0,
       inputGain: (db(source.cabinetIrInGain) + 24) / 48,
-      outputGain: (db(source.cabinetIrOutGain) + 24) / 36,
+      outputGain: (db(source.cabinetIrOutGain) + 24) / 48,
       mix: Math.max(0, Math.min(1, db(source.cabinetIrMix, 1))),
       eq: { enabled: true, pre: Boolean(source.cabinetIrEqPre), bands: [
         [120, 'lowshelf'], [750, 'bell'], [4000, 'highshelf'],
@@ -139,21 +139,53 @@ function chainState(): any {
   };
 }
 
-function parameter<T extends ParameterType>(type: T): ParameterMap[T] {
-  let value: any = type === 'toggle' ? false : 0;
+const parameters = new Map<string, ParameterMap[ParameterType]>();
+
+function initialParameterValue(name: string, type: ParameterType): any {
+  const state = stateSnapshot();
+  if (name === 'inputLevel') return (db(state.inputGain) + 24) / 48;
+  if (name === 'outputLevel') return (db(state.outputGain) + 24) / 48;
+  if (name === 'gateThreshold') return (db(state.gateThreshold, -65) + 100) / 100;
+  if (name === 'toneBass') return Math.max(0, Math.min(1, 0.5 + db(state.eqLow) / 24));
+  if (name === 'toneMid') return Math.max(0, Math.min(1, 0.5 + db(state.eqMid) / 24));
+  if (name === 'toneTreble') return Math.max(0, Math.min(1, 0.5 + db(state.eqHigh) / 24));
+  if (name === 'gateEnabled') return Boolean(state.gateEnabled);
+  if (name === 'toneEqEnabled') return state.eqEnabled !== false;
+  return type === 'toggle' ? false : 0.5;
+}
+
+function parameter<T extends ParameterType>(name: string, type: T): ParameterMap[T] {
+  const cached = parameters.get(name);
+  if (cached) return cached as ParameterMap[T];
+  let value: any = initialParameterValue(name, type);
   const listeners = new Map<number, (v: any) => void>();
   let next = 1;
+  const publish = (v: any) => { value = v; listeners.forEach((fn) => fn(value)); };
+  const setNativeValue = (v: any) => {
+    publish(v);
+    if (name === 'inputLevel') void call('setInputGain', db(v) * 48 - 24);
+    else if (name === 'outputLevel') void call('setOutputGain', db(v) * 48 - 24);
+    else if (name === 'gateThreshold') void call('setGateThreshold', db(v) * 100 - 100);
+    else if (name === 'toneBass') void call('setEqLow', (db(v) * 10 - 5) * 2.4);
+    else if (name === 'toneMid') void call('setEqMid', (db(v) * 10 - 5) * 2.4);
+    else if (name === 'toneTreble') void call('setEqHigh', (db(v) * 10 - 5) * 2.4);
+    else if (name === 'gateEnabled') void call('setGateEnabled', Boolean(v));
+    else if (name === 'toneEqEnabled') void call('setEqEnabled', Boolean(v));
+  };
   const common = {
     getValue: () => value,
-    setValue: (v: any) => { value = v; listeners.forEach((fn) => fn(value)); },
+    setValue: setNativeValue,
+    requestInitialUpdate: () => publish(initialParameterValue(name, type)),
     valueChangedEvent: { addListener: (fn: (v: any) => void) => { const id = next++; listeners.set(id, fn); return id; }, removeListener: (id: number) => listeners.delete(id) },
   };
-  return common as ParameterMap[T];
+  const result = common as ParameterMap[T];
+  parameters.set(name, result as ParameterMap[ParameterType]);
+  return result;
 }
 
 export class AndroidBackend implements IAudioBackend {
-  getParameterState<T extends ParameterType>(_name: string, type: T): ParameterMap[T] {
-    return parameter(type);
+  getParameterState<T extends ParameterType>(name: string, type: T): ParameterMap[T] {
+    return parameter(name, type);
   }
 
   getPluginFunction(name: string): (...args: unknown[]) => Promise<unknown> {
@@ -217,14 +249,14 @@ export class AndroidBackend implements IAudioBackend {
     if (name === 'setBlockParam') return async (blockId, param, value) => {
       if (String(blockId) === 'cabinet-ir') {
         if (param === 'inputGain') return call('setCabinetInGain', db(value) * 48 - 24);
-        if (param === 'outputGain') return call('setCabinetOutGain', db(value) * 36 - 24);
+        if (param === 'outputGain') return call('setCabinetOutGain', db(value) * 48 - 24);
         if (param === 'mix') return call('setCabinetMix', value);
         if (param === 'enabled') return call('setCabinetBypass', !Boolean(value));
         return Promise.resolve();
       }
       const index = Number(String(blockId).replace('nam-', ''));
       if (param === 'inputGain') return call('setNamInGain', index, db(value) * 48 - 24);
-      if (param === 'outputGain') return call('setNamGain', index, db(value) * 36 - 24);
+      if (param === 'outputGain') return call('setNamGain', index, db(value) * 48 - 24);
       if (param === 'mix') return call('setNamMix', index, value);
       if (param === 'enabled') return call('setNamBypass', index, !Boolean(value));
       if (param === 'normalize') return call('setNamNormalize', index, Boolean(value));

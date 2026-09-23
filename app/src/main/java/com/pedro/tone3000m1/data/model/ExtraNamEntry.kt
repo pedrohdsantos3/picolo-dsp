@@ -14,7 +14,7 @@ data class ExtraNamEntry(
     val size: String,
     val path: String,
     val bypass: Boolean,
-    val gainDb: Float = 0.0f,
+    val gainDb: Float = -15.0f,
     val inGainDb: Float = 0.0f,
     val mix: Float = 1.0f,
     val eqLowDb: Float = 0.0f,

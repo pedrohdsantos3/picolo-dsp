@@ -117,23 +117,15 @@ target_compile_features(
 )
 
 
-#
-# IMPORTANTE PARA ESTE TESTE:
-#
-# NAM_ENABLE_A2_FAST foi removido intencionalmente.
-#
-# Assim o NeuralAmpModelerCore usa o caminho genérico
-# do WaveNet em vez do fast-path específico do A2.
-#
-# Mantemos NAM_SAMPLE_FLOAT e todas as demais opções
-# exatamente iguais para fazer um A/B válido.
-#
+# Enable the specialized A2 WaveNet implementation. The factory only selects
+# it for models matching the A2 shape; other NAM architectures stay generic.
 target_compile_definitions(
         namcore_objects
 
         PUBLIC
 
         NAM_SAMPLE_FLOAT
+        NAM_ENABLE_A2_FAST
 )
 
 

@@ -11,6 +11,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
+import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
@@ -25,6 +26,9 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.lifecycle.ViewModelProvider
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
@@ -111,9 +115,13 @@ class MainActivity : AppCompatActivity() {
 
         private const val PREF_CABINET_IR_PATH =
             "cabinet_ir_path"
+        private const val PREF_FX_CHAIN = "fx_ir_chain_json"
 
         private const val PREF_CABINET_IR_IMAGE =
             "cabinet_ir_image"
+
+        private const val PREF_CABINET_IR_TITLE = "cabinet_ir_title"
+        private const val PREF_CABINET_IR_TYPE = "cabinet_ir_module_type"
 
         private const val PREF_CABINET_IR_BYPASS =
             "cabinet_ir_bypass"
@@ -139,6 +147,8 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_OUTPUT_PAIR =
             "output_pair"
 
+        private const val PREF_ACTIVE_PRESET_SLOT = "active_preset_slot"
+
         private const val PREF_GATE_ENABLED =
             "gate_enabled"
 
@@ -153,6 +163,8 @@ class MainActivity : AppCompatActivity() {
 
         private const val PREF_EQ_HIGH =
             "eq_high_db"
+
+        private const val PREF_EQ_ENABLED = "eq_enabled"
 
         private const val PREF_EXTRA_NAM_CHAIN =
             "extra_nam_chain"
@@ -206,6 +218,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pluginWebView: WebView
     private lateinit var legacyScrollView: ScrollView
     private lateinit var rootLayout: FrameLayout
+    private lateinit var composeView: ComposeView
+    private lateinit var browserReturnButton: Button
 
     private lateinit var status: TextView
     private lateinit var currentModelText: TextView
@@ -288,6 +302,11 @@ class MainActivity : AppCompatActivity() {
     external fun nativeSetImpulseResponseEqDb(band: Int, db: Float)
     external fun nativeSetImpulseResponseEqPre(pre: Boolean)
     external fun nativeSetImpulseResponseEqEnabled(enabled: Boolean)
+    external fun nativeLoadFxImpulseResponse(slot: Int, path: String): String
+    external fun nativeClearFxImpulseResponse(slot: Int)
+    external fun nativeSetFxImpulseResponseBypass(slot: Int, bypass: Boolean)
+    external fun nativeSetFxImpulseResponseMix(slot: Int, mix: Float)
+    external fun nativeSetFxImpulseResponsePosition(slot: Int, namBlocksBefore: Int)
 
     external fun nativeAddChainModel(
         path: String
@@ -364,6 +383,10 @@ class MainActivity : AppCompatActivity() {
 
     external fun nativeSetEqHighDb(
         db: Float
+    )
+
+    external fun nativeSetEqEnabled(
+        enabled: Boolean
     )
 
     external fun nativeGetDspChainInfo(): String
@@ -446,6 +469,8 @@ class MainActivity : AppCompatActivity() {
                         nativeSetImpulseResponsePosition(position)
                         prefs.edit()
                             .putString(PREF_CABINET_IR_PATH, destination.absolutePath)
+                            .putString(PREF_CABINET_IR_TITLE, destination.nameWithoutExtension)
+                            .putString(PREF_CABINET_IR_TYPE, "IR")
                             .putInt(PREF_CABINET_IR_POSITION, position)
                             .apply()
                     }
@@ -468,6 +493,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(
             savedInstanceState
         )
+
+        supportActionBar?.hide()
 
         window.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
@@ -537,9 +564,7 @@ class MainActivity : AppCompatActivity() {
                 "OAuth callback received"
             )
 
-            status.text =
-                "OAuth callback received...\n" +
-                        "Waiting for app network..."
+            status.text = "TONE3000 callback received...\nPreparing selection..."
 
             // singleTask activities can receive onNewIntent while already
             // resumed; in that case Android does not call onResume again.
@@ -555,6 +580,15 @@ class MainActivity : AppCompatActivity() {
         processPendingOAuthIntent()
     }
 
+    @Deprecated("Use back navigation in the active Compose destination")
+    override fun onBackPressed() {
+        if (this::pluginWebView.isInitialized && pluginWebView.visibility == View.VISIBLE) {
+            showComposeUi()
+        } else {
+            super.onBackPressed()
+        }
+    }
+
     private fun processPendingOAuthIntent() {
 
         val pending =
@@ -566,10 +600,25 @@ class MainActivity : AppCompatActivity() {
 
         mainHandler.postDelayed(
             {
-                // The official UI owns the PKCE/session state in WebView.
-                // Always return this callback to it; stale native PKCE
-                // preferences must not hijack the modern Select flow.
-                deliverOAuthCallbackToWebView(pending.data)
+                // Compose starts TONE3000 OAuth in Kotlin, so its PKCE verifier
+                // lives in native preferences, not in the hidden WebView's
+                // sessionStorage. Let the native handler exchange the code and
+                // load the selected tone; routing this callback to React leaves
+                // it waiting for a verifier it never created.
+                val nativeVerifier = prefs.getString(PREF_VERIFIER, null)
+                if (nativeVerifier != null) {
+                    showComposeUi()
+                    status.text = "TONE3000 selection received...\nConnecting to catalog..."
+                    handleOAuthIntent(pending)
+                } else if (pending.data?.getQueryParameter("tone_id") != null) {
+                    // Retain support for OAuth flows that were initiated by
+                    // the React browser itself.
+                    showComposeWithBrowserProcessing()
+                    deliverOAuthCallbackToWebView(pending.data)
+                } else {
+                    showToneBrowserUi()
+                    deliverOAuthCallbackToWebView(pending.data)
+                }
             },
             500
         )
@@ -631,7 +680,7 @@ class MainActivity : AppCompatActivity() {
             TextView(this).apply {
 
                 text =
-                    "Tone3000 Android"
+                    "PicoloDSP"
 
                 textSize =
                     26f
@@ -1410,8 +1459,8 @@ class MainActivity : AppCompatActivity() {
                 webChromeClient = WebChromeClient()
 
 
-                // The React frontend is the primary UI; the previous HTML
-                // implementation remains packaged as a rollback target.
+                // Keep the authenticated TONE3000 catalog available for the
+                // Compose editor's import flow. The Compose screen is primary.
                 loadUrl(
                     "file:///android_asset/tone3000-official/index.html"
                 )
@@ -1439,10 +1488,58 @@ class MainActivity : AppCompatActivity() {
             )
         )
 
+        val composeViewModel = ViewModelProvider(this)[PicoloComposeViewModel::class.java]
+        val composeBridge = PluginBridge()
+        composeView = ComposeView(this).apply {
+            setViewCompositionStrategy(
+                ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+            )
+            setContent {
+                PicoloComposeApp(
+                    bridge = composeBridge,
+                    viewModel = composeViewModel,
+                    fetchState = {
+                        Triple(
+                            pluginStateJson(),
+                            status.text?.toString().orEmpty(),
+                            composeBridge.getStats(),
+                        )
+                    },
+                    onBrowse = { mode -> startTone3000SelectFlow(mode) },
+                )
+            }
+        }
+        rootLayout.addView(
+            composeView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        browserReturnButton = Button(this).apply {
+            text = "VOLTAR AO PICOLO DSP"
+            setOnClickListener { showComposeUi() }
+            visibility = View.GONE
+        }
+        rootLayout.addView(
+            browserReturnButton,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.END
+            ).apply {
+                val inset = (8 * resources.displayMetrics.density).toInt()
+                topMargin = inset
+                marginEnd = inset
+            }
+        )
+
 
         setContentView(
             rootLayout
         )
+        showComposeUi()
     }
 
 
@@ -1541,7 +1638,7 @@ class MainActivity : AppCompatActivity() {
                                 "bypass",
                                 false
                             ),
-                        gainDb = item.optDouble("gainDb", 0.0).toFloat(),
+                        gainDb = item.optDouble("gainDb", -15.0).toFloat(),
                         inGainDb = item.optDouble("inGainDb", 0.0).toFloat(),
                         mix = item.optDouble("mix", 1.0).toFloat(),
                         eqLowDb = item.optDouble("eqLowDb", 0.0).toFloat(),
@@ -1668,7 +1765,7 @@ class MainActivity : AppCompatActivity() {
                     // A missing preference means a fresh active block, never
                     // the stale value left in the Activity from a previous chain.
                     bypass = prefs.getBoolean(PREF_NAM_BYPASS, false),
-                    gainDb = prefs.getFloat(PREF_NAM_GAIN_DB, 0.0f),
+                    gainDb = prefs.getFloat(PREF_NAM_GAIN_DB, -15.0f),
                     inGainDb = prefs.getFloat(PREF_NAM_IN_GAIN_DB, 0.0f),
                     mix = prefs.getFloat(PREF_NAM_MIX, 1.0f),
                     eqLowDb = prefs.getFloat(PREF_NAM_EQ_LOW_DB, 0.0f),
@@ -1689,6 +1786,24 @@ class MainActivity : AppCompatActivity() {
 
         result.addAll(readExtraNamChain())
         return result
+    }
+
+    private fun readFxChain(): MutableList<JSONObject> {
+        val raw = prefs.getString(PREF_FX_CHAIN, "[]") ?: "[]"
+        val array = try { JSONArray(raw) } catch (_: Exception) { JSONArray() }
+        return buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val path = item.optString("path")
+                if (path.isNotBlank() && File(path).exists()) add(item)
+            }
+        }.toMutableList()
+    }
+
+    private fun persistFxChain(entries: List<JSONObject>) {
+        prefs.edit().putString(PREF_FX_CHAIN, JSONArray().also { array ->
+            entries.forEach { array.put(it) }
+        }.toString()).apply()
     }
 
 
@@ -1749,6 +1864,13 @@ class MainActivity : AppCompatActivity() {
             .coerceIn(0, entries.size)
         prefs.edit().putInt(PREF_CABINET_IR_POSITION, cabinetPosition).apply()
         nativeSetImpulseResponsePosition(cabinetPosition)
+        val fxEntries = readFxChain()
+        fxEntries.forEachIndexed { index, fx ->
+            val position = fx.optInt("position", entries.size).coerceIn(0, entries.size)
+            fx.put("position", position)
+            nativeSetFxImpulseResponsePosition(index, position)
+        }
+        persistFxChain(fxEntries)
     }
 
 
@@ -1848,9 +1970,10 @@ class MainActivity : AppCompatActivity() {
             }
 
             runOnUiThread {
-                startButton.isEnabled = entries.isNotEmpty()
+                val otherModulesRemain = readFxChain().isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null)?.let { File(it).exists() } == true
+                startButton.isEnabled = entries.isNotEmpty() || otherModulesRemain
                 updateBypassButton()
-                status.text = if (entries.isEmpty()) {
+                status.text = if (entries.isEmpty() && !otherModulesRemain) {
                     "NAM CHAIN EMPTY\n\nUse ADD NAM to insert a block."
                 } else {
                     result
@@ -2019,22 +2142,35 @@ class MainActivity : AppCompatActivity() {
     // ========================================================
 
     private fun showPluginUi() {
+        showComposeUi()
+    }
 
+    private fun showComposeUi() {
         legacyScrollView.visibility =
             View.GONE
 
         pluginWebView.visibility =
+            View.GONE
+
+        browserReturnButton.visibility =
+            View.GONE
+
+        composeView.visibility =
             View.VISIBLE
     }
 
+    private fun showToneBrowserUi() {
+        legacyScrollView.visibility = View.GONE
+        composeView.visibility = View.GONE
+        pluginWebView.visibility = View.VISIBLE
+        browserReturnButton.visibility = View.VISIBLE
+    }
 
-    private fun showLegacyDebugUi() {
-
-        pluginWebView.visibility =
-            View.GONE
-
-        legacyScrollView.visibility =
-            View.VISIBLE
+    private fun showComposeWithBrowserProcessing() {
+        legacyScrollView.visibility = View.GONE
+        pluginWebView.visibility = View.VISIBLE
+        browserReturnButton.visibility = View.GONE
+        composeView.visibility = View.VISIBLE
     }
 
 
@@ -2061,6 +2197,7 @@ class MainActivity : AppCompatActivity() {
                 "No capture loaded"
             )
         )
+        result.put("activePresetSlot", prefs.getInt(PREF_ACTIVE_PRESET_SLOT, 0))
 
         result.put(
             "modelSize",
@@ -2080,7 +2217,9 @@ class MainActivity : AppCompatActivity() {
 
         val cabinetPath = prefs.getString(PREF_CABINET_IR_PATH, null)
         result.put("cabinetIrLoaded", cabinetPath != null && File(cabinetPath).exists())
-        result.put("cabinetIrName", cabinetPath?.let { File(it).name } ?: "")
+        result.put("cabinetIrName", prefs.getString(PREF_CABINET_IR_TITLE, cabinetPath?.let { File(it).nameWithoutExtension } ?: "") ?: "")
+        result.put("cabinetIrModuleType", prefs.getString(PREF_CABINET_IR_TYPE, "IR") ?: "IR")
+        result.put("cabinetIrLong", prefs.getString(PREF_CABINET_IR_TYPE, "IR") == "FX")
         result.put("cabinetIrImage", prefs.getString(PREF_CABINET_IR_IMAGE, ""))
         result.put("cabinetIrBypass", prefs.getBoolean(PREF_CABINET_IR_BYPASS, false))
         result.put("cabinetIrPosition", prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS))
@@ -2165,6 +2304,8 @@ class MainActivity : AppCompatActivity() {
             ).toDouble()
         )
 
+        result.put("eqEnabled", prefs.getBoolean(PREF_EQ_ENABLED, true))
+
         result.put(
             "routing",
             nativeGetRoutingInfo()
@@ -2219,7 +2360,7 @@ class MainActivity : AppCompatActivity() {
                     "bypass",
                     bypass
                 )
-                .put("gainDb", prefs.getFloat(PREF_NAM_GAIN_DB, 0.0f))
+                .put("gainDb", prefs.getFloat(PREF_NAM_GAIN_DB, -15.0f))
                 .put("inGainDb", prefs.getFloat(PREF_NAM_IN_GAIN_DB, 0.0f))
                 .put("mix", prefs.getFloat(PREF_NAM_MIX, 1.0f))
                 .put("eqLowDb", prefs.getFloat(PREF_NAM_EQ_LOW_DB, 0.0f))
@@ -2288,23 +2429,30 @@ class MainActivity : AppCompatActivity() {
         )
 
         val signalChain = JSONArray()
+        val fxChain = readFxChain()
+        result.put("fxChain", JSONArray().also { array -> fxChain.forEach { array.put(it) } })
         val irLoaded = cabinetPath != null && File(cabinetPath).exists()
         val irPosition = prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS)
             .coerceIn(0, namChain.length())
-        for (index in 0 until namChain.length()) {
-            if (irLoaded && irPosition == index) {
+        for (position in 0..namChain.length()) {
+            if (irLoaded && irPosition == position) {
                 signalChain.put(JSONObject()
                     .put("type", "CABINET_IR")
-                    .put("position", index)
+                    .put("position", position)
                     .put("name", cabinetPath?.let { File(it).name } ?: "Cabinet IR"))
             }
-            signalChain.put(namChain.getJSONObject(index).put("type", "NAM"))
-        }
-        if (irLoaded && irPosition >= namChain.length()) {
-            signalChain.put(JSONObject()
-                .put("type", "CABINET_IR")
-                .put("position", namChain.length())
-                .put("name", cabinetPath?.let { File(it).name } ?: "Cabinet IR"))
+            fxChain.forEachIndexed { index, fx ->
+                if (fx.optInt("position", namChain.length()) == position) {
+                    signalChain.put(JSONObject()
+                        .put("type", "FX")
+                        .put("fxIndex", index)
+                        .put("position", position)
+                        .put("name", fx.optString("title", "Space FX"))
+                        .put("bypass", fx.optBoolean("bypass", false))
+                        .put("mix", fx.optDouble("mix", 0.5)))
+                }
+            }
+            if (position < namChain.length()) signalChain.put(namChain.getJSONObject(position).put("type", "NAM"))
         }
         result.put("signalChain", signalChain)
 
@@ -2602,6 +2750,13 @@ class MainActivity : AppCompatActivity() {
         }
 
 
+        @JavascriptInterface
+        fun setEqEnabled(enabled: Boolean) {
+            nativeSetEqEnabled(enabled)
+            prefs.edit().putBoolean(PREF_EQ_ENABLED, enabled).apply()
+        }
+
+
         private fun setEqFromPlugin(
             prefKey: String,
             db: Double,
@@ -2796,7 +2951,7 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun setSelectedAddType(type: String) {
             val normalized = type.uppercase(Locale.US)
-            if (normalized == "AMP" || normalized == "PEDAL" || normalized == "IR") {
+            if (normalized == "AMP" || normalized == "PEDAL" || normalized == "FX" || normalized == "IR") {
                 prefs.edit().putString(PREF_SELECTED_ADD_TYPE, normalized).apply()
             }
         }
@@ -2865,12 +3020,19 @@ class MainActivity : AppCompatActivity() {
                     modelName = name.removeSuffix(".nam"),
                     size = "unknown",
                     path = destination.absolutePath,
-                    bypass = false
+                    bypass = false,
+                    eqLowDb = 0.0f,
+                    eqMidDb = 0.0f,
+                    eqHighDb = 0.0f,
+                    eqBand3Db = 0.0f,
+                    eqBand4Db = 0.0f,
+                    eqBand5Db = 0.0f
                 )
                 if (target < entries.size) entries[target] = entry else entries.add(entry)
                 persistNamChainEntries(entries)
                 val result = rebuildNativeNamChain(entries)
                 if (!result.contains("failed", ignoreCase = true) && !result.contains("error", ignoreCase = true)) {
+                    runOnUiThread { showComposeUi() }
                     JSONObject().put("blockId", "nam-$target").toString()
                 } else {
                     JSONObject().put("error", result).toString()
@@ -2894,36 +3056,87 @@ class MainActivity : AppCompatActivity() {
                 val imageUrl = tone.optJSONArray("images")?.optString(0).orEmpty()
                 val selectedType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
                 val models = tone.optJSONArray("models") ?: JSONArray()
+                val toneFormat = tone.optString("format").lowercase(Locale.US)
                 if (toneId.isBlank() || models.length() == 0) return false
-                val model = models.getJSONObject(0)
-                val modelUrl = model.optString("model_url", model.optString("modelUrl"))
-                if (modelUrl.isBlank()) return false
+                if ((selectedType == "FX" || selectedType == "IR") && toneFormat != "ir") return false
+                if ((selectedType == "AMP" || selectedType == "PEDAL") && toneFormat != "nam") return false
                 val token = prefs.getString(PREF_ACCESS_TOKEN, null) ?: return false
+                if (selectedType == "FX") {
+                    val fxModels = (0 until models.length()).mapNotNull { index ->
+                        val candidate = models.optJSONObject(index) ?: return@mapNotNull null
+                        val id = candidate.optLong("id", 0L)
+                        val modelUrl = candidate.optString(
+                            "model_url",
+                            candidate.optString("modelUrl")
+                        ).takeIf(String::isNotBlank) ?: return@mapNotNull null
+                        OnlineModel(
+                            id = id,
+                            name = candidate.optString("name", "space-$id"),
+                            size = candidate.optString("size", "custom"),
+                            modelUrl = modelUrl
+                        )
+                    }
+                    if (fxModels.isEmpty()) return false
+                    val fxTarget = targetInsertId.removePrefix("fx-").toIntOrNull()
+                    val pendingMode = if (targetInsertId.startsWith("fx-") && fxTarget != null) "replace-fx:$fxTarget" else "add"
+                    if (readFxChain().size >= 8 && pendingMode == "add") return false
+                    prefs.edit().putString(PREF_PENDING_IMPORT_MODE, pendingMode).apply()
+                    runOnUiThread {
+                        showComposeUi()
+                        showFxModelSelectionDialog(toneId, title, imageUrl, fxModels, token)
+                    }
+                    return true
+                }
                 if (selectedType == "IR") {
+                    val model = models.getJSONObject(0)
+                    val modelUrl = model.optString("model_url", model.optString("modelUrl"))
+                    if (modelUrl.isBlank()) return false
                     val onlineModel = OnlineModel(
                         id = model.optLong("id", 0L),
                         name = model.optString("name", "cabinet-${model.optLong("id", 0L)}"),
                         size = model.optString("size", "custom"),
                         modelUrl = modelUrl
                     )
-                    Thread { downloadAndLoadCabinet(toneId, title, imageUrl, onlineModel, token) }.start()
+                    Thread { downloadAndLoadCabinet(toneId, title, imageUrl, onlineModel, token, selectedType) }.start()
+                    runOnUiThread { showComposeUi() }
                     return true
                 }
-                val mode = if (targetInsertId.startsWith("nam-")) {
-                    "replace:${targetInsertId.removePrefix("nam-").toIntOrNull() ?: 0}"
-                } else "add"
+                val mode = when {
+                    targetInsertId.startsWith("nam-") ->
+                        "replace:${targetInsertId.removePrefix("nam-").toIntOrNull() ?: 0}"
+                    targetInsertId.startsWith("insert-") -> "add"
+                    else -> prefs.getString(PREF_PENDING_IMPORT_MODE, "add") ?: "add"
+                }
                 prefs.edit()
                     .putString(PREF_PENDING_IMPORT_MODE, mode)
                     .putString(PREF_PENDING_TONE_IMAGE, imageUrl)
                     .putString(PREF_PENDING_TONE_TYPE, selectedType)
                     .apply()
-                val onlineModel = OnlineModel(
-                    id = model.optLong("id", 0L),
-                    name = model.optString("name", "capture-${model.optLong("id", 0L)}"),
-                    size = model.optString("size", "custom"),
-                    modelUrl = modelUrl
-                )
-                runOnUiThread { downloadAndLoadModel(toneId, title, onlineModel, token) }
+
+                // The official browser passes the package's models here. Keep
+                // every valid capture so multi-capture NAM tones can be chosen
+                // without reopening the browser (which would add a new package).
+                val onlineModels = (0 until models.length())
+                    .mapNotNull { index ->
+                        val candidate = models.optJSONObject(index) ?: return@mapNotNull null
+                        val id = candidate.optLong("id", 0L)
+                        val modelUrl = candidate.optString(
+                            "model_url",
+                            candidate.optString("modelUrl")
+                        ).takeIf(String::isNotBlank) ?: return@mapNotNull null
+                        OnlineModel(
+                            id = id,
+                            name = candidate.optString("name", "capture-$id"),
+                            size = candidate.optString("size", "custom"),
+                            modelUrl = modelUrl
+                        )
+                    }
+                if (onlineModels.isEmpty()) return false
+
+                runOnUiThread {
+                    showComposeUi()
+                    showModelSelectionDialog(toneId, title, onlineModels, token)
+                }
                 true
             } catch (error: Exception) {
                 Log.e(API_TAG, "React tone load failed", error)
@@ -2936,7 +3149,8 @@ class MainActivity : AppCompatActivity() {
             toneTitle: String,
             imageUrl: String,
             model: OnlineModel,
-            token: String
+            token: String,
+            moduleType: String
         ) {
             try {
                 val destination = File(filesDir, "cabinet-${model.id}.wav")
@@ -2947,14 +3161,29 @@ class MainActivity : AppCompatActivity() {
                 if (!result.startsWith("IR LOADED")) throw RuntimeException(result)
                 val position = nativeGetNamBlockCount()
                 nativeSetImpulseResponsePosition(position)
+                nativeSetImpulseResponseBypass(false)
+                nativeSetImpulseResponseInGainDb(0.0f)
+                nativeSetImpulseResponseOutGainDb(0.0f)
+                nativeSetImpulseResponseMix(if (moduleType == "FX") 0.5f else 1.0f)
+                nativeSetImpulseResponseEqPre(false)
+                nativeSetImpulseResponseEqEnabled(true)
+                for (band in 0 until 6) nativeSetImpulseResponseEqDb(band, 0.0f)
                 prefs.edit()
                     .putString(PREF_CABINET_IR_PATH, normalized.absolutePath)
                     .putString(PREF_CABINET_IR_IMAGE, imageUrl)
+                    .putString(PREF_CABINET_IR_TITLE, toneTitle)
+                    .putString(PREF_CABINET_IR_TYPE, moduleType)
                     .putInt(PREF_CABINET_IR_POSITION, position)
                     .putBoolean(PREF_CABINET_IR_BYPASS, false)
-                    .putFloat(PREF_CABINET_IR_MIX, 1.0f)
+                    .putFloat(PREF_CABINET_IR_IN_GAIN, 0.0f)
+                    .putFloat(PREF_CABINET_IR_OUT_GAIN, 0.0f)
+                    .putFloat(PREF_CABINET_IR_MIX, if (moduleType == "FX") 0.5f else 1.0f)
+                    .putBoolean(PREF_CABINET_IR_EQ_PRE, false)
+                    .putBoolean(PREF_CABINET_IR_EQ_ENABLED, true)
+                    .apply { for (band in 0 until 6) putFloat(PREF_CABINET_IR_EQ_PREFIX + band, 0.0f) }
                     .apply()
                 val audio = nativeStart()
+                prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
                 runOnUiThread {
                     status.text = "CABINET IR READY\n\n$toneTitle\n${model.name}\n$audio"
                     pluginWebView.postDelayed({ pluginWebView.reload() }, 150)
@@ -2962,6 +3191,78 @@ class MainActivity : AppCompatActivity() {
             } catch (error: Exception) {
                 Log.e(API_TAG, "Cabinet IR download/load failed", error)
                 runOnUiThread { status.text = "CABINET IR LOAD FAILED\n\n${error.message}" }
+            }
+        }
+
+        private fun downloadAndLoadFx(
+            toneId: String, toneTitle: String, imageUrl: String, model: OnlineModel, token: String
+        ) {
+            try {
+                val entries = readFxChain()
+                val targetIndex = prefs.getString(PREF_PENDING_IMPORT_MODE, "add")
+                    ?.removePrefix("replace-fx:")?.toIntOrNull()
+                    ?.takeIf { it in entries.indices }
+                if (entries.size >= 8 && targetIndex == null) throw IllegalStateException("FX chain full (maximum 8)")
+                val slot = targetIndex ?: entries.size
+                val replacedPath = targetIndex?.let { entries[it].optString("path") }
+                val destination = File(filesDir, "fx-space-${model.id}.wav")
+                if (destination.exists()) destination.delete()
+                val normalized = normalizeImpulseResponseWav(downloadModel(model, token, destination))
+                val loaded = nativeLoadFxImpulseResponse(slot, normalized.absolutePath)
+                if (!loaded.startsWith("FX LOADED")) throw IllegalStateException(loaded)
+                val entry = JSONObject()
+                    .put("toneId", toneId).put("title", toneTitle).put("image", imageUrl)
+                    .put("modelId", model.id).put("modelName", model.name)
+                    .put("path", normalized.absolutePath).put("bypass", false).put("mix", 0.5)
+                    .put("position", nativeGetNamBlockCount())
+                if (targetIndex == null) entries.add(entry) else entries[targetIndex] = entry
+                persistFxChain(entries)
+                nativeSetFxImpulseResponseBypass(slot, false)
+                nativeSetFxImpulseResponseMix(slot, 0.5f)
+                nativeSetFxImpulseResponsePosition(slot, entry.optInt("position"))
+                if (!replacedPath.isNullOrBlank() && replacedPath != normalized.absolutePath) {
+                    try { File(replacedPath).delete() } catch (_: Exception) { }
+                }
+                val audio = nativeStart()
+                prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
+                runOnUiThread {
+                    status.text = "FX READY\n\n$toneTitle\n${model.name}\n$audio"
+                    pluginWebView.postDelayed({ showComposeUi() }, 150)
+                }
+            } catch (error: Exception) {
+                Log.e(API_TAG, "FX import failed", error)
+                runOnUiThread { status.text = "FX LOAD FAILED\n${error.message}" }
+            }
+        }
+
+        fun loadSelectedCabinet(
+            toneId: String,
+            toneTitle: String,
+            modelId: Long,
+            modelName: String,
+            modelSize: String,
+            modelUrl: String,
+            token: String,
+            moduleType: String
+        ) {
+            val model = OnlineModel(modelId, modelName, modelSize, modelUrl)
+            if (moduleType == "FX") {
+                val importMode = prefs.getString(PREF_PENDING_IMPORT_MODE, "add") ?: "add"
+                val replaceIndex = importMode.removePrefix("replace-fx:").toIntOrNull()
+                if (readFxChain().size >= 8 && replaceIndex == null) {
+                    runOnUiThread { status.text = "FX CHAIN FULL\nMaximum 8 space effects." }
+                } else {
+                    downloadAndLoadFx(toneId, toneTitle, "", model, token)
+                }
+            } else {
+                downloadAndLoadCabinet(
+                    toneId = toneId,
+                    toneTitle = toneTitle,
+                    imageUrl = "",
+                    model = model,
+                    token = token,
+                    moduleType = moduleType
+                )
             }
         }
 
@@ -3043,6 +3344,7 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun removeCabinetIr() {
+            val resumeAudio = nativeIsRunning()
             nativeClearImpulseResponse()
             nativeSetImpulseResponseBypass(false)
             nativeSetImpulseResponseInGainDb(0.0f)
@@ -3057,6 +3359,8 @@ class MainActivity : AppCompatActivity() {
             prefs.edit()
                 .remove(PREF_CABINET_IR_PATH)
                 .remove(PREF_CABINET_IR_IMAGE)
+                .remove(PREF_CABINET_IR_TITLE)
+                .remove(PREF_CABINET_IR_TYPE)
                 .remove(PREF_CABINET_IR_BYPASS)
                 .remove(PREF_CABINET_IR_POSITION)
                 .remove(PREF_CABINET_IR_IN_GAIN)
@@ -3067,7 +3371,63 @@ class MainActivity : AppCompatActivity() {
                     for (band in 0 until 6) remove(PREF_CABINET_IR_EQ_PREFIX + band)
                 }
                 .apply()
-            runOnUiThread { status.text = "CABINET IR REMOVED" }
+            val hasOtherModules = nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty()
+            val audioResult = if (resumeAudio && hasOtherModules) nativeStart() else ""
+            runOnUiThread {
+                status.text = if (audioResult.startsWith("AUDIO ACTIVE")) {
+                    "CABINET IR REMOVED\n$audioResult"
+                } else if (resumeAudio && hasOtherModules) {
+                    "CABINET IR REMOVED\n$audioResult"
+                } else {
+                    "CABINET IR REMOVED"
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun removeFx(fxIndex: Int) {
+            Thread {
+                val entries = readFxChain()
+                if (fxIndex !in entries.indices) return@Thread
+                val wasRunning = nativeIsRunning()
+                val removed = entries.removeAt(fxIndex)
+                for (slot in 0 until 8) nativeClearFxImpulseResponse(slot)
+                entries.forEachIndexed { slot, item ->
+                    val loaded = nativeLoadFxImpulseResponse(slot, item.optString("path"))
+                    if (!loaded.startsWith("FX LOADED")) {
+                        runOnUiThread { status.text = "FX CHAIN RELOAD FAILED\n$loaded" }
+                        return@Thread
+                    }
+                    nativeSetFxImpulseResponseBypass(slot, item.optBoolean("bypass", false))
+                    nativeSetFxImpulseResponseMix(slot, item.optDouble("mix", 0.5).toFloat())
+                    val namCount = nativeGetNamBlockCount()
+                    nativeSetFxImpulseResponsePosition(slot, item.optInt("position", namCount).coerceIn(0, namCount))
+                }
+                persistFxChain(entries)
+                try { File(removed.optString("path")).delete() } catch (_: Exception) { }
+                val hasModules = nativeGetNamBlockCount() > 0 || entries.isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null
+                val audio = if (wasRunning && hasModules) nativeStart() else ""
+                runOnUiThread { status.text = "FX REMOVED\n$audio" }
+            }.start()
+        }
+
+        @JavascriptInterface
+        fun setFxBypass(fxIndex: Int, bypassed: Boolean) {
+            val entries = readFxChain()
+            val item = entries.getOrNull(fxIndex) ?: return
+            item.put("bypass", bypassed)
+            persistFxChain(entries)
+            nativeSetFxImpulseResponseBypass(fxIndex, bypassed)
+        }
+
+        @JavascriptInterface
+        fun setFxMix(fxIndex: Int, mix: Double) {
+            val entries = readFxChain()
+            val item = entries.getOrNull(fxIndex) ?: return
+            val value = mix.toFloat().coerceIn(0f, 1f)
+            item.put("mix", value.toDouble())
+            persistFxChain(entries)
+            nativeSetFxImpulseResponseMix(fxIndex, value)
         }
 
         @JavascriptInterface
@@ -3174,12 +3534,47 @@ class MainActivity : AppCompatActivity() {
             }.start()
         }
 
+        /** Reorders the mixed NAM + cabinet chain, matching the Compose tile
+         * order. The native graph and persisted IR position are changed by
+         * the same rollback-safe reorder routine used by the Web UI. */
+        @JavascriptInterface
+        fun moveModule(blockId: String, direction: Int) {
+            Thread {
+                try {
+                    val chain = JSONObject(pluginStateJson()).optJSONArray("signalChain") ?: return@Thread
+                    val ids = buildList {
+                        for (index in 0 until chain.length()) {
+                            val item = chain.optJSONObject(index) ?: continue
+                            add(when (item.optString("type")) {
+                                "CABINET_IR" -> "cabinet-ir"
+                                "FX" -> "fx-${item.optInt("fxIndex", index)}"
+                                else -> "nam-${item.optInt("chainIndex", index)}"
+                            })
+                        }
+                    }.toMutableList()
+                    val current = ids.indexOf(blockId)
+                    if (current < 0 || ids.isEmpty()) return@Thread
+                    val target = (current + direction).coerceIn(0, ids.lastIndex)
+                    if (target == current) return@Thread
+                    val moved = ids.removeAt(current)
+                    ids.add(target, moved)
+                    val requested = JSONArray()
+                    ids.forEach { requested.put(it) }
+                    reorderChain(requested.toString())
+                } catch (error: Exception) {
+                    Log.e(API_TAG, "Compose module reorder failed", error)
+                }
+            }.start()
+        }
+
         @JavascriptInterface
         fun reorderChain(blockIdsJson: String): Boolean {
             return try {
                 val requested = JSONArray(blockIdsJson)
                     .let { array -> (0 until array.length()).map { array.optString(it) } }
                 val entries = readNamChainEntries()
+                val wasRunning = nativeIsRunning()
+                val fxEntries = readFxChain()
                 val orderedIndices = requested
                     .filter { it.startsWith("nam-") }
                     .mapNotNull { it.removePrefix("nam-").toIntOrNull() }
@@ -3188,20 +3583,56 @@ class MainActivity : AppCompatActivity() {
                     .toMutableList()
                 entries.indices.forEach { if (it !in orderedIndices) orderedIndices.add(it) }
                 val reordered = orderedIndices.map { entries[it] }
+                val requestedFxIndices = requested.filter { it.startsWith("fx-") }
+                    .mapNotNull { it.removePrefix("fx-").toIntOrNull() }
+                    .filter { it in fxEntries.indices }.distinct().toMutableList()
+                fxEntries.indices.forEach { if (it !in requestedFxIndices) requestedFxIndices.add(it) }
+                val reorderedFx = requestedFxIndices.map { fxEntries[it] }.toMutableList()
+                val fxPositions = mutableMapOf<Int, Int>()
+                var namBefore = 0
+                requested.forEach { id ->
+                    when {
+                        id.startsWith("nam-") -> namBefore++
+                        id.startsWith("fx-") -> id.removePrefix("fx-").toIntOrNull()?.let { fxPositions[it] = namBefore }
+                    }
+                }
                 val cabinetPosition = requested.indexOf("cabinet-ir")
                     .takeIf { it >= 0 }
                     ?.coerceIn(0, reordered.size)
                     ?: prefs.getInt(PREF_CABINET_IR_POSITION, reordered.size).coerceIn(0, reordered.size)
-                Thread {
-                    val result = rebuildNativeNamChain(reordered)
-                    if (result.startsWith("NAM CHAIN READY")) {
-                        persistNamChainEntries(reordered)
-                        prefs.edit().putInt(PREF_CABINET_IR_POSITION, cabinetPosition).apply()
-                        nativeSetImpulseResponsePosition(cabinetPosition)
+                // The WebView drag is optimistic. Do not report success (and
+                // let the UI settle) until the native chain has actually been
+                // rebuilt in that order. If loading any model fails, restore
+                // the previous DSP chain and keep its persisted ordering.
+                val result = rebuildNativeNamChain(reordered)
+                if (result.startsWith("NAM CHAIN READY")) {
+                    persistNamChainEntries(reordered)
+                    prefs.edit().putInt(PREF_CABINET_IR_POSITION, cabinetPosition).apply()
+                    nativeSetImpulseResponsePosition(cabinetPosition)
+                    for (slot in 0 until 8) nativeClearFxImpulseResponse(slot)
+                    reorderedFx.forEachIndexed { slot, item ->
+                        val loaded = nativeLoadFxImpulseResponse(slot, item.optString("path"))
+                        if (!loaded.startsWith("FX LOADED")) return false
+                        item.put("position", fxPositions[requestedFxIndices.getOrNull(slot)] ?: reordered.size)
+                        nativeSetFxImpulseResponseBypass(slot, item.optBoolean("bypass", false))
+                        nativeSetFxImpulseResponseMix(slot, item.optDouble("mix", 0.5).toFloat())
+                        nativeSetFxImpulseResponsePosition(slot, item.optInt("position").coerceIn(0, reordered.size))
                     }
-                    runOnUiThread { status.text = result }
-                }.start()
-                true
+                    persistFxChain(reorderedFx)
+                    val audio = if (wasRunning && (reordered.isNotEmpty() || reorderedFx.isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null)) nativeStart() else ""
+                    runOnUiThread { status.text = if (audio.isBlank()) result else "$result\n$audio" }
+                    true
+                } else {
+                    val rollback = rebuildNativeNamChain(entries)
+                    runOnUiThread {
+                        status.text = if (rollback.startsWith("NAM CHAIN READY")) {
+                            "Reordenação cancelada: $result"
+                        } else {
+                            "Falha ao reordenar e restaurar cadeia: $rollback"
+                        }
+                    }
+                    false
+                }
             } catch (error: Exception) {
                 Log.e(API_TAG, "Chain reorder failed", error)
                 false
@@ -3213,12 +3644,33 @@ class MainActivity : AppCompatActivity() {
             return try {
                 nativeClearNamChain()
                 nativeClearImpulseResponse()
+                for (slot in 0 until 8) nativeClearFxImpulseResponse(slot)
                 clearPersistedModel()
                 persistExtraNamChain(emptyList())
+                nativeSetEqLowDb(0.0f)
+                nativeSetEqMidDb(0.0f)
+                nativeSetEqHighDb(0.0f)
+                nativeSetEqEnabled(true)
                 prefs.edit()
+                    .putFloat(PREF_EQ_LOW, 0.0f)
+                    .putFloat(PREF_EQ_MID, 0.0f)
+                    .putFloat(PREF_EQ_HIGH, 0.0f)
+                    .putBoolean(PREF_EQ_ENABLED, true)
                     .remove(PREF_CABINET_IR_PATH)
+                    .remove(PREF_CABINET_IR_IMAGE)
+                    .remove(PREF_CABINET_IR_TITLE)
+                    .remove(PREF_CABINET_IR_TYPE)
                     .remove(PREF_CABINET_IR_POSITION)
                     .remove(PREF_CABINET_IR_BYPASS)
+                    .remove(PREF_CABINET_IR_IN_GAIN)
+                    .remove(PREF_CABINET_IR_OUT_GAIN)
+                    .remove(PREF_CABINET_IR_MIX)
+                    .remove(PREF_CABINET_IR_EQ_PRE)
+                    .remove(PREF_CABINET_IR_EQ_ENABLED)
+                    .remove(PREF_FX_CHAIN)
+                    .apply {
+                        for (band in 0 until 6) remove(PREF_CABINET_IR_EQ_PREFIX + band)
+                    }
                     .apply()
                 bypass = false
                 nativeSetBypass(false)
@@ -3550,10 +4002,10 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun showDebugUi() {
-
             runOnUiThread {
-
-                showLegacyDebugUi()
+                // The legacy Android debug screen is no longer a valid
+                // destination now that Compose is the primary UI.
+                showComposeUi()
             }
         }
     }
@@ -3724,6 +4176,10 @@ class MainActivity : AppCompatActivity() {
             highDb
         )
 
+        nativeSetEqEnabled(
+            prefs.getBoolean(PREF_EQ_ENABLED, true)
+        )
+
 
         gateThresholdSlider.progress =
             (
@@ -3810,6 +4266,8 @@ class MainActivity : AppCompatActivity() {
         val eqHighDb: Float,
         val extraNamChainJson: String,
         val cabinetIrPath: String?,
+        val cabinetIrTitle: String,
+        val cabinetIrModuleType: String,
         val cabinetIrBypass: Boolean,
         val cabinetIrPosition: Int,
         val cabinetIrInGain: Float,
@@ -4005,6 +4463,8 @@ class MainActivity : AppCompatActivity() {
         ,
             extraNamChainJson = prefs.getString(presetKey(slot, "extra_nam_chain"), "[]") ?: "[]",
             cabinetIrPath = prefs.getString(presetKey(slot, "cabinet_ir_path"), null),
+            cabinetIrTitle = prefs.getString(presetKey(slot, "cabinet_ir_title"), "") ?: "",
+            cabinetIrModuleType = prefs.getString(presetKey(slot, "cabinet_ir_module_type"), "IR") ?: "IR",
             cabinetIrBypass = prefs.getBoolean(presetKey(slot, "cabinet_ir_bypass"), false),
             cabinetIrPosition = prefs.getInt(presetKey(slot, "cabinet_ir_position"), MAX_NAM_BLOCKS),
             cabinetIrInGain = prefs.getFloat(presetKey(slot, "cabinet_ir_in_gain"), 0.0f),
@@ -4273,6 +4733,7 @@ class MainActivity : AppCompatActivity() {
 
                 prefs
                     .edit()
+                    .putInt(PREF_ACTIVE_PRESET_SLOT, slot)
 
                     .putBoolean(
                         presetKey(
@@ -4429,6 +4890,8 @@ class MainActivity : AppCompatActivity() {
                         presetKey(slot, "cabinet_ir_path"),
                         cabinetPresetPath
                     )
+                    .putString(presetKey(slot, "cabinet_ir_title"), prefs.getString(PREF_CABINET_IR_TITLE, "") ?: "")
+                    .putString(presetKey(slot, "cabinet_ir_module_type"), prefs.getString(PREF_CABINET_IR_TYPE, "IR") ?: "IR")
                     .putBoolean(
                         presetKey(slot, "cabinet_ir_bypass"),
                         prefs.getBoolean(PREF_CABINET_IR_BYPASS, false)
@@ -4450,7 +4913,7 @@ class MainActivity : AppCompatActivity() {
                         prefs.getFloat(PREF_CABINET_IR_MIX, 1.0f)
                     )
                     .putBoolean(presetKey(slot, "nam_bypass"), prefs.getBoolean(PREF_NAM_BYPASS, bypass))
-                    .putFloat(presetKey(slot, "nam_gain_db"), prefs.getFloat(PREF_NAM_GAIN_DB, 0.0f))
+                    .putFloat(presetKey(slot, "nam_gain_db"), prefs.getFloat(PREF_NAM_GAIN_DB, -15.0f))
                     .putFloat(presetKey(slot, "nam_in_gain_db"), prefs.getFloat(PREF_NAM_IN_GAIN_DB, 0.0f))
                     .putFloat(presetKey(slot, "nam_mix"), prefs.getFloat(PREF_NAM_MIX, 1.0f))
                     .putFloat(presetKey(slot, "nam_eq_low_db"), prefs.getFloat(PREF_NAM_EQ_LOW_DB, 0.0f))
@@ -4641,6 +5104,7 @@ class MainActivity : AppCompatActivity() {
 
                 prefs
                     .edit()
+                    .putInt(PREF_ACTIVE_PRESET_SLOT, slot)
 
                     .putString(
                         PREF_LAST_MODEL_PATH,
@@ -4714,13 +5178,15 @@ class MainActivity : AppCompatActivity() {
 
                     .putString(PREF_EXTRA_NAM_CHAIN, preset.extraNamChainJson)
                     .putString(PREF_CABINET_IR_PATH, preset.cabinetIrPath)
+                    .putString(PREF_CABINET_IR_TITLE, preset.cabinetIrTitle)
+                    .putString(PREF_CABINET_IR_TYPE, preset.cabinetIrModuleType)
                     .putBoolean(PREF_CABINET_IR_BYPASS, preset.cabinetIrBypass)
                     .putInt(PREF_CABINET_IR_POSITION, preset.cabinetIrPosition)
                     .putFloat(PREF_CABINET_IR_IN_GAIN, preset.cabinetIrInGain)
                     .putFloat(PREF_CABINET_IR_OUT_GAIN, preset.cabinetIrOutGain)
                     .putFloat(PREF_CABINET_IR_MIX, preset.cabinetIrMix)
                     .putBoolean(PREF_NAM_BYPASS, prefs.getBoolean(presetKey(slot, "nam_bypass"), false))
-                    .putFloat(PREF_NAM_GAIN_DB, prefs.getFloat(presetKey(slot, "nam_gain_db"), 0.0f))
+                    .putFloat(PREF_NAM_GAIN_DB, prefs.getFloat(presetKey(slot, "nam_gain_db"), -15.0f))
                     .putFloat(PREF_NAM_IN_GAIN_DB, prefs.getFloat(presetKey(slot, "nam_in_gain_db"), 0.0f))
                     .putFloat(PREF_NAM_MIX, prefs.getFloat(presetKey(slot, "nam_mix"), 1.0f))
                     .putFloat(PREF_NAM_EQ_LOW_DB, prefs.getFloat(presetKey(slot, "nam_eq_low_db"), 0.0f))
@@ -5081,6 +5547,15 @@ class MainActivity : AppCompatActivity() {
                         nativeSetImpulseResponseEqEnabled(prefs.getBoolean(PREF_CABINET_IR_EQ_ENABLED, true))
                         for (band in 0 until 6) nativeSetImpulseResponseEqDb(band, prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + band, 0.0f))
                     }
+                    readFxChain().forEachIndexed { slot, fx ->
+                        val loaded = nativeLoadFxImpulseResponse(slot, fx.optString("path"))
+                        if (loaded.startsWith("FX LOADED")) {
+                            nativeSetFxImpulseResponseBypass(slot, fx.optBoolean("bypass", false))
+                            nativeSetFxImpulseResponseMix(slot, fx.optDouble("mix", 0.5).toFloat())
+                            val namCount = nativeGetNamBlockCount()
+                            nativeSetFxImpulseResponsePosition(slot, fx.optInt("position", namCount).coerceIn(0, namCount))
+                        }
+                    }
                     restored
 
                 } else {
@@ -5162,14 +5637,15 @@ class MainActivity : AppCompatActivity() {
     private fun startTone3000SelectFlow(
         importMode: String = "replace"
     ) {
-        val labels = arrayOf("PEDAL (NAM ultraleve)", "AMP (NAM A2-Lite)", "IR (somente cabinet)")
+        val labels = arrayOf("PEDAL", "AMP (NAM A2-Lite)", "FX (reverb / IR)", "IR (cabinet)")
         AlertDialog.Builder(this)
             .setTitle("Adicionar módulo")
             .setItems(labels) { _, which ->
-                val type = when (which) { 0 -> "PEDAL"; 1 -> "AMP"; else -> "IR" }
+                val type = when (which) { 0 -> "PEDAL"; 1 -> "AMP"; 2 -> "FX"; else -> "IR" }
                 prefs.edit().putString(PREF_SELECTED_ADD_TYPE, type).apply()
                 openTone3000SelectFlow(importMode)
             }
+            .setNegativeButton("CANCELAR", null)
             .show()
     }
 
@@ -5238,6 +5714,13 @@ class MainActivity : AppCompatActivity() {
             .apply()
 
 
+        val selectedModuleType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
+        val gears = when (selectedModuleType) {
+            "PEDAL" -> "pedal"
+            "FX" -> "space"
+            "IR" -> "cab"
+            else -> "amp-cab_amp"
+        }
         val uri =
             Uri.parse(
                 AUTHORIZE_URL
@@ -5281,13 +5764,14 @@ class MainActivity : AppCompatActivity() {
 
                 .appendQueryParameter(
                     "format",
-                    if (prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") == "IR") "ir" else "nam"
+                    if (selectedModuleType == "IR" || selectedModuleType == "FX") "ir" else "nam"
                 )
-
-                .appendQueryParameter(
-                    "architecture",
-                    "2"
-                )
+                .appendQueryParameter("gears", gears)
+                .apply {
+                    if (selectedModuleType != "IR" && selectedModuleType != "FX") {
+                        appendQueryParameter("architecture", "2")
+                    }
+                }
 
                 .appendQueryParameter(
                     "menubar",
@@ -5507,22 +5991,19 @@ class MainActivity : AppCompatActivity() {
                 )
 
 
-                val tone =
-                    getTone(
-                        toneId,
-                        token
-                    )
+                val selectedType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
+                val architecture = if (selectedType == "IR" || selectedType == "FX") null else 2
+                val tone = getTone(toneId, token, architecture)
 
 
-                stage(
-                    "3/3 - FETCHING A2 CAPTURES..."
-                )
+                stage(if (architecture == null) "3/3 - FETCHING IMPULSE RESPONSE..." else "3/3 - FETCHING A2 CAPTURES...")
 
 
                 val models =
                     listA2Models(
                         toneId,
-                        token
+                        token,
+                        architecture
                     )
 
 
@@ -5533,20 +6014,42 @@ class MainActivity : AppCompatActivity() {
 
 
                 runOnUiThread {
-
-                    showModelSelectionDialog(
-                        toneId =
-                            toneId,
-
-                        toneTitle =
-                            tone.title,
-
-                        models =
-                            models,
-
-                        token =
-                            token
-                    )
+                    showComposeUi()
+                    if (architecture == null) {
+                        if (models.isEmpty()) {
+                            restoreCurrentModelAvailability("No impulse response found for:\n${tone.title}")
+                        } else if (selectedType == "FX") {
+                            showFxModelSelectionDialog(
+                                toneId = toneId,
+                                toneTitle = tone.title,
+                                imageUrl = "",
+                                models = models,
+                                token = token
+                            )
+                        } else {
+                            stage("Loading impulse response:\n${models.first().name}")
+                            val selectedModel = models.first()
+                            Thread {
+                                PluginBridge().loadSelectedCabinet(
+                                    toneId = toneId,
+                                    toneTitle = tone.title,
+                                    modelId = selectedModel.id,
+                                    modelName = selectedModel.name,
+                                    modelSize = selectedModel.size,
+                                    modelUrl = selectedModel.modelUrl,
+                                    token = token,
+                                    moduleType = selectedType
+                                )
+                            }.start()
+                        }
+                    } else {
+                        showModelSelectionDialog(
+                            toneId = toneId,
+                            toneTitle = tone.title,
+                            models = models,
+                            token = token
+                        )
+                    }
                 }
 
 
@@ -5807,7 +6310,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun getTone(
         toneId: String,
-        token: String
+        token: String,
+        architecture: Int? = 2
     ): OnlineTone {
 
         val url =
@@ -5815,7 +6319,7 @@ class MainActivity : AppCompatActivity() {
                     urlEncode(
                         toneId
                     ) +
-                    "?architecture=2"
+                    (architecture?.let { "?architecture=$it" } ?: "")
 
 
         val started =
@@ -5931,7 +6435,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun listA2Models(
         toneId: String,
-        token: String
+        token: String,
+        architecture: Int? = 2
     ): List<OnlineModel> {
 
         /*
@@ -5953,11 +6458,12 @@ class MainActivity : AppCompatActivity() {
 
         do {
 
+            val architectureQuery = architecture?.let { "&architecture=$it" } ?: ""
             val url =
                 "$API_BASE/api/v1/models" +
                         "?tone_id=" +
                         urlEncode(toneId) +
-                        "&architecture=2" +
+                        architectureQuery +
                         "&page=$page" +
                         "&page_size=300"
 
@@ -6234,11 +6740,13 @@ class MainActivity : AppCompatActivity() {
             )
 
 
+        val selectedModuleType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
+        val hidePedalTier = selectedModuleType == "PEDAL"
         val labels =
             sorted
                 .map {
-
-                    "${it.size.uppercase()} • ${it.name} • #${it.id}"
+                    if (hidePedalTier) "${it.name} • #${it.id}"
+                    else "${it.size.uppercase()} • ${it.name} • #${it.id}"
                 }
                 .toTypedArray()
 
@@ -6249,7 +6757,7 @@ class MainActivity : AppCompatActivity() {
 
         status.text =
             "$toneTitle\n\n" +
-                    "${sorted.size} compatible A2 captures found.\n" +
+                    "${sorted.size} compatible captures found.\n" +
                     "Select a capture to continue."
 
 
@@ -6269,10 +6777,12 @@ class MainActivity : AppCompatActivity() {
             ) ?: "replace"
 
 
+        val actionVerb = if (importMode == "add") "ADD" else "REPLACE"
+        val actionTarget = if (hidePedalTier) "PEDAL" else "NAM"
         val actionTitle =
             if (importMode == "add") {
 
-                "ADD NAM — SELECT CAPTURE"
+                "$actionVerb $actionTarget — SELECT CAPTURE"
 
             } else {
 
@@ -6281,9 +6791,9 @@ class MainActivity : AppCompatActivity() {
                     .toIntOrNull()
 
                 if (replacementIndex != null) {
-                    "REPLACE NAM ${replacementIndex + 1} — SELECT CAPTURE"
+                    "$actionVerb $actionTarget ${replacementIndex + 1} — SELECT CAPTURE"
                 } else {
-                    "REPLACE NAM 1 — SELECT CAPTURE"
+                    "$actionVerb $actionTarget 1 — SELECT CAPTURE"
                 }
             }
 
@@ -6316,8 +6826,8 @@ class MainActivity : AppCompatActivity() {
                     status.text =
                         "$toneTitle\n\n" +
                                 "Selected capture:\n" +
-                                "${selected.name}\n" +
-                                "${selected.size.uppercase()} • #${selected.id}"
+                                if (hidePedalTier) "${selected.name} • #${selected.id}"
+                                else "${selected.name}\n${selected.size.uppercase()} • #${selected.id}"
 
 
                     downloadAndLoadModel(
@@ -6365,6 +6875,62 @@ class MainActivity : AppCompatActivity() {
         )
 
 
+        dialog.show()
+    }
+
+    private fun showFxModelSelectionDialog(
+        toneId: String,
+        toneTitle: String,
+        imageUrl: String,
+        models: List<OnlineModel>,
+        token: String
+    ) {
+        if (models.isEmpty()) {
+            prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
+            restoreCurrentModelAvailability("No space captures found for:\n$toneTitle")
+            return
+        }
+
+        fun loadSelected(model: OnlineModel) {
+            status.text = "$toneTitle\n\nSelected space capture:\n${model.name}\nLoading..."
+            Thread {
+                PluginBridge().loadSelectedCabinet(
+                    toneId = toneId,
+                    toneTitle = toneTitle,
+                    modelId = model.id,
+                    modelName = model.name,
+                    modelSize = model.size,
+                    modelUrl = model.modelUrl,
+                    token = token,
+                    moduleType = "FX",
+                )
+            }.start()
+        }
+
+        if (models.size == 1) {
+            loadSelected(models.single())
+            return
+        }
+
+        val labels = models.map { "${it.name} • #${it.id}" }.toTypedArray()
+        val importMode = prefs.getString(PREF_PENDING_IMPORT_MODE, "add") ?: "add"
+        val targetIndex = importMode.removePrefix("replace-fx:").toIntOrNull()
+        val title = if (targetIndex != null) {
+            "REPLACE FX ${targetIndex + 1} — SELECT SPACE CAPTURE"
+        } else {
+            "ADD FX — SELECT SPACE CAPTURE"
+        }
+        status.text = "$toneTitle\n\n${models.size} space captures found. Select one to continue."
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(labels) { _, index -> loadSelected(models[index]) }
+            .setNegativeButton("CANCEL") { _, _ ->
+                prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
+                restoreCurrentModelAvailability("Space selection canceled.\nCurrent chain kept.")
+            }
+            .setCancelable(false)
+            .create()
+        dialog.setCanceledOnTouchOutside(false)
         dialog.show()
     }
 
@@ -6497,7 +7063,7 @@ class MainActivity : AppCompatActivity() {
                     nativeSetChainNamBypass(addedChainIndex, false)
                     nativeSetChainNamInGainDb(addedChainIndex, 0.0f)
                     nativeSetChainNamMix(addedChainIndex, 1.0f)
-                    nativeSetChainNamGainDb(addedChainIndex, 0.0f)
+                    nativeSetChainNamGainDb(addedChainIndex, -15.0f)
                     for (band in 0 until 6) {
                         nativeSetChainNamEqDb(addedChainIndex, band, 0.0f)
                     }
@@ -6532,9 +7098,15 @@ class MainActivity : AppCompatActivity() {
                                 committedExtra.absolutePath,
 
                             bypass =
-                                false
-                            ,imageUrl = imageUrl
-                            ,moduleType = moduleType
+                                false,
+                            eqLowDb = 0.0f,
+                            eqMidDb = 0.0f,
+                            eqHighDb = 0.0f,
+                            eqBand3Db = 0.0f,
+                            eqBand4Db = 0.0f,
+                            eqBand5Db = 0.0f,
+                            imageUrl = imageUrl,
+                            moduleType = moduleType
                         )
                     )
 
