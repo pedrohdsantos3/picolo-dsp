@@ -99,6 +99,9 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_LAST_TONE_TITLE =
             "last_tone_title"
 
+        private const val PREF_LAST_TONE_IMAGE =
+            "last_tone_image"
+
         private const val PREF_CABINET_IR_PATH =
             "cabinet_ir_path"
 
@@ -162,6 +165,9 @@ class MainActivity : AppCompatActivity() {
 
         private const val PREF_PENDING_IMPORT_MODE =
             "pending_import_mode"
+
+        private const val PREF_PENDING_TONE_IMAGE =
+            "pending_tone_image"
 
         private const val MAX_NAM_BLOCKS =
             4
@@ -1446,7 +1452,8 @@ class MainActivity : AppCompatActivity() {
         val eqPre: Boolean = false,
         val eqEnabled: Boolean = true,
         val normalize: Boolean = true,
-        val a2Full: Boolean = false
+        val a2Full: Boolean = false,
+        val imageUrl: String = ""
     )
 
 
@@ -1554,6 +1561,7 @@ class MainActivity : AppCompatActivity() {
                         ,eqEnabled = item.optBoolean("eqEnabled", true)
                         ,normalize = item.optBoolean("normalize", true)
                         ,a2Full = item.optBoolean("a2Full", false)
+                        ,imageUrl = item.optString("imageUrl", "")
                     )
                 )
             }
@@ -1633,6 +1641,7 @@ class MainActivity : AppCompatActivity() {
                     .put("eqEnabled", entry.eqEnabled)
                     .put("normalize", entry.normalize)
                     .put("a2Full", entry.a2Full)
+                    .put("imageUrl", entry.imageUrl)
             )
         }
 
@@ -1677,6 +1686,7 @@ class MainActivity : AppCompatActivity() {
                     ,eqEnabled = prefs.getBoolean(PREF_NAM_EQ_ENABLED, true)
                     ,normalize = prefs.getBoolean(PREF_NAM_NORMALIZE, true)
                     ,a2Full = prefs.getBoolean(PREF_NAM_A2_FULL, false)
+                    ,imageUrl = prefs.getString(PREF_LAST_TONE_IMAGE, "") ?: ""
                 )
             )
         }
@@ -1704,7 +1714,8 @@ class MainActivity : AppCompatActivity() {
                 .remove(PREF_NAM_EQ_BAND5_DB)
                 .remove(PREF_NAM_EQ_PRE)
                 .remove(PREF_NAM_NORMALIZE)
-                .remove(PREF_NAM_A2_FULL)
+            .remove(PREF_NAM_A2_FULL)
+            .remove(PREF_LAST_TONE_IMAGE)
                 .apply()
             nativeSetImpulseResponsePosition(0)
             return
@@ -1718,6 +1729,7 @@ class MainActivity : AppCompatActivity() {
             .putString(PREF_LAST_MODEL_SIZE, first.size)
             .putString(PREF_LAST_TONE_ID, first.toneId)
             .putString(PREF_LAST_TONE_TITLE, first.toneTitle)
+            .putString(PREF_LAST_TONE_IMAGE, first.imageUrl)
             .putFloat(PREF_NAM_GAIN_DB, first.gainDb)
             .putFloat(PREF_NAM_IN_GAIN_DB, first.inGainDb)
             .putFloat(PREF_NAM_MIX, first.mix)
@@ -2219,6 +2231,7 @@ class MainActivity : AppCompatActivity() {
                 .put("eqEnabled", prefs.getBoolean(PREF_NAM_EQ_ENABLED, true))
                 .put("normalize", prefs.getBoolean(PREF_NAM_NORMALIZE, true))
                 .put("a2Full", prefs.getBoolean(PREF_NAM_A2_FULL, false))
+                .put("images", JSONArray().put(prefs.getString(PREF_LAST_TONE_IMAGE, "")))
             )
         }
 
@@ -2262,6 +2275,7 @@ class MainActivity : AppCompatActivity() {
                         .put("eqEnabled", entry.eqEnabled)
                         .put("normalize", entry.normalize)
                         .put("a2Full", entry.a2Full)
+                        .put("images", JSONArray().put(entry.imageUrl))
                 )
             }
 
@@ -2867,6 +2881,7 @@ class MainActivity : AppCompatActivity() {
                 val tone = JSONObject(toneJson)
                 val toneId = tone.optString("id")
                 val title = tone.optString("title", "Tone $toneId")
+                val imageUrl = tone.optJSONArray("images")?.optString(0).orEmpty()
                 val models = tone.optJSONArray("models") ?: JSONArray()
                 if (toneId.isBlank() || models.length() == 0) return false
                 val model = models.getJSONObject(0)
@@ -2876,7 +2891,10 @@ class MainActivity : AppCompatActivity() {
                 val mode = if (targetInsertId.startsWith("nam-")) {
                     "replace:${targetInsertId.removePrefix("nam-").toIntOrNull() ?: 0}"
                 } else "add"
-                prefs.edit().putString(PREF_PENDING_IMPORT_MODE, mode).apply()
+                prefs.edit()
+                    .putString(PREF_PENDING_IMPORT_MODE, mode)
+                    .putString(PREF_PENDING_TONE_IMAGE, imageUrl)
+                    .apply()
                 val onlineModel = OnlineModel(
                     id = model.optLong("id", 0L),
                     name = model.optString("name", "capture-${model.optLong("id", 0L)}"),
@@ -6205,6 +6223,8 @@ class MainActivity : AppCompatActivity() {
         token: String
     ) {
 
+        val imageUrl = prefs.getString(PREF_PENDING_TONE_IMAGE, "") ?: ""
+
         startButton.isEnabled =
             false
 
@@ -6353,6 +6373,7 @@ class MainActivity : AppCompatActivity() {
 
                             bypass =
                                 false
+                            ,imageUrl = imageUrl
                         )
                     )
 
@@ -6417,7 +6438,8 @@ class MainActivity : AppCompatActivity() {
                         modelId = model.id,
                         modelName = model.name,
                         size = model.size,
-                        path = committed.absolutePath
+                        path = committed.absolutePath,
+                        imageUrl = imageUrl
                     )
 
                     val replaceResult = rebuildNativeNamChain(entries)

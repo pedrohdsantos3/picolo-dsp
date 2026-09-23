@@ -85,6 +85,7 @@ function chainState(): any {
         id: Number(nam.modelId ?? index),
         title: nam.toneTitle || nam.modelName || `NAM ${index + 1}`,
         format: 'NAM',
+        images: Array.isArray(nam.images) ? nam.images.filter((url: any) => typeof url === 'string' && url.length > 0) : [],
         models: [], models_count: 1, a2_models_count: 1,
         downloads_count: 0, favorites_count: 0,
       },
