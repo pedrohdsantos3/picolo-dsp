@@ -52,7 +52,9 @@ function meterState(): any {
   const input = statDb(stats, 'capturePeak');
   const output = statDb(stats, 'postEqPeak');
   const cpuMatch = stats.match(/CPU budget used\(avg\)=(-?\d+(?:\.\d+)?)%/);
-  const cpu = cpuMatch ? Math.max(0, Number(cpuMatch[1])) : 0;
+  // Native reports the already-formatted percentage (e.g. 41.0%). The
+  // meter store expects a 0..1 ratio and formats it as a percentage later.
+  const cpu = cpuMatch ? Math.max(0, Number(cpuMatch[1]) / 100) : 0;
   return { input: [input, input], output: [output, output], blocks: {}, cpu, correlation: 1 };
 }
 
