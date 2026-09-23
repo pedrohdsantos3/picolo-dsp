@@ -112,6 +112,14 @@ nominal de 2,67 ms) e cai automaticamente para 256 frames se a interface não
 aceitar o período menor. A latência efetiva deve ser confirmada no hardware,
 pois o firmware e o driver podem impor períodos maiores.
 
+### Medição de referência
+
+No Samsung SM-G781B usado no desenvolvimento, com uma Audient EVO4 conectada,
+dois NAMs e o companion root ativo, a medição observada foi: bloco de 128
+frames, processamento médio de 1,126 ms, máximo de 2,123 ms, orçamento de
+2,667 ms, zero blocos acima do orçamento e zero erros de captura/playback. A
+thread recebeu `SCHED_FIFO:2` após o serviço Magisk reaplicá-lo.
+
 Clone os submódulos e compile com o JDK do Android Studio:
 
 ```bash
