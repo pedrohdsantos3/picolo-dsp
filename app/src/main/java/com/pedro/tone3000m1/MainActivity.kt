@@ -32,6 +32,7 @@ import com.pedro.tone3000m1.data.model.ExtraNamEntry
 import com.pedro.tone3000m1.data.model.OnlineModel
 import com.pedro.tone3000m1.data.model.PicoloStateSnapshot
 import com.pedro.tone3000m1.data.repository.NamChainRepository
+import com.pedro.tone3000m1.data.repository.FxChainRepository
 import com.pedro.tone3000m1.data.repository.PicoloStateRepository
 import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
 import com.pedro.tone3000m1.ui.actions.PicoloActions
@@ -429,6 +430,10 @@ class MainActivity : AppCompatActivity() {
 
     private val namChainRepository by lazy {
         NamChainRepository(prefs, PREF_EXTRA_NAM_CHAIN, PREF_LAST_MODEL_PATH)
+    }
+
+    private val fxChainRepository by lazy {
+        FxChainRepository(prefs, PREF_FX_CHAIN, PREF_FX_NATIVE_CHAIN)
     }
 
     private val tone3000ApiRepository by lazy {
@@ -1471,37 +1476,13 @@ class MainActivity : AppCompatActivity() {
         return result
     }
 
-    private fun readFxChain(): MutableList<JSONObject> {
-        val raw = prefs.getString(PREF_FX_CHAIN, "[]") ?: "[]"
-        val array = try { JSONArray(raw) } catch (_: Exception) { JSONArray() }
-        return buildList {
-            for (index in 0 until array.length()) {
-                val item = array.optJSONObject(index) ?: continue
-                val path = item.optString("path")
-                if (path.isNotBlank() && File(path).exists()) add(item)
-            }
-        }.toMutableList()
-    }
+    private fun readFxChain(): MutableList<JSONObject> = fxChainRepository.readImpulseChain()
 
-    private fun persistFxChain(entries: List<JSONObject>) {
-        prefs.edit().putString(PREF_FX_CHAIN, JSONArray().also { array ->
-            entries.forEach { array.put(it) }
-        }.toString()).apply()
-    }
+    private fun persistFxChain(entries: List<JSONObject>) = fxChainRepository.persistImpulseChain(entries)
 
-    private fun readFxNativeChain(): MutableList<JSONObject> {
-        val raw = prefs.getString(PREF_FX_NATIVE_CHAIN, "[]") ?: "[]"
-        val array = try { JSONArray(raw) } catch (_: Exception) { JSONArray() }
-        return buildList {
-            for (index in 0 until array.length()) array.optJSONObject(index)?.let { add(it) }
-        }.toMutableList()
-    }
+    private fun readFxNativeChain(): MutableList<JSONObject> = fxChainRepository.readNativeChain()
 
-    private fun persistFxNativeChain(entries: List<JSONObject>) {
-        prefs.edit().putString(PREF_FX_NATIVE_CHAIN, JSONArray().also { array ->
-            entries.forEach { array.put(it) }
-        }.toString()).apply()
-    }
+    private fun persistFxNativeChain(entries: List<JSONObject>) = fxChainRepository.persistNativeChain(entries)
 
     private fun syncFxNativeChain(entries: List<JSONObject>, reset: Boolean = false) {
         if (reset) for (slot in 0 until 8) nativeClearFxNative(slot)

@@ -24,6 +24,8 @@ C++: TinyALSA + NAM + IR + efeitos
   e a persistência dos tokens.
 - `NamChainRepository` lê e grava os blocos NAM adicionais no formato JSON
   existente. O bloco principal ainda usa preferências legadas.
+- `FxChainRepository` lê e grava as cadeias de IR/FX e FX nativo, preservando
+  o JSON atual; a Activity continua sincronizando as entradas com o motor JNI.
 - `ui/model/PicoloUiState.kt` mantém os modelos de apresentação e converte o
   snapshot nativo separado dos Composables.
 - `ui/actions/PicoloActions.kt` descreve as ações que a UI pode executar. Os
