@@ -1004,7 +1004,7 @@ class MainActivity : AppCompatActivity() {
                             PREF_EQ_LOW,
 
                         nativeSetter =
-                            ::nativeSetEqLowDb
+                            audioEngine::nativeSetEqLowDb
                     )
                 )
             }
@@ -1039,7 +1039,7 @@ class MainActivity : AppCompatActivity() {
                             PREF_EQ_MID,
 
                         nativeSetter =
-                            ::nativeSetEqMidDb
+                            audioEngine::nativeSetEqMidDb
                     )
                 )
             }
@@ -1074,7 +1074,7 @@ class MainActivity : AppCompatActivity() {
                             PREF_EQ_HIGH,
 
                         nativeSetter =
-                            ::nativeSetEqHighDb
+                            audioEngine::nativeSetEqHighDb
                     )
                 )
             }
@@ -1248,7 +1248,7 @@ class MainActivity : AppCompatActivity() {
         val composeViewModel = ViewModelProvider(this)[PicoloComposeViewModel::class.java]
         val composeActions = AudioAppController()
         composeViewModel.observe(
-            PicoloStateRepository {
+            PicoloStateRepository(readSnapshot = {
                 val (pluginState, stats) = withContext(Dispatchers.IO) {
                     pluginStateJson() to composeActions.getStats()
                 }
@@ -1259,7 +1259,7 @@ class MainActivity : AppCompatActivity() {
                     },
                     stats = stats,
                 )
-            },
+            }),
         )
         composeView = ComposeView(this).apply {
             setViewCompositionStrategy(
@@ -2256,7 +2256,7 @@ class MainActivity : AppCompatActivity() {
             setEqFromPlugin(
                 PREF_EQ_LOW,
                 db,
-                ::nativeSetEqLowDb,
+                audioEngine::nativeSetEqLowDb,
                 eqLowSlider
             )
         }
@@ -2269,7 +2269,7 @@ class MainActivity : AppCompatActivity() {
             setEqFromPlugin(
                 PREF_EQ_MID,
                 db,
-                ::nativeSetEqMidDb,
+                audioEngine::nativeSetEqMidDb,
                 eqMidSlider
             )
         }
@@ -2282,7 +2282,7 @@ class MainActivity : AppCompatActivity() {
             setEqFromPlugin(
                 PREF_EQ_HIGH,
                 db,
-                ::nativeSetEqHighDb,
+                audioEngine::nativeSetEqHighDb,
                 eqHighSlider
             )
         }
@@ -3667,7 +3667,7 @@ class MainActivity : AppCompatActivity() {
 
                 if (!applyingPresetUi) {
 
-                    audioEngine.nativeSetter(
+                    nativeSetter(
                         db
                     )
                 }
