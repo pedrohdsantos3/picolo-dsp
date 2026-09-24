@@ -6954,7 +6954,7 @@ namespace {
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeLoadModel(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeLoadModel(
         JNIEnv* env,
         jobject,
         jstring path
@@ -6983,7 +6983,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeLoadModel(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeLoadImpulseResponse(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeLoadImpulseResponse(
         JNIEnv* env, jobject, jstring path
 ) {
     const char* chars = env->GetStringUTFChars(path, nullptr);
@@ -6994,7 +6994,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeLoadImpulseResponse(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeLoadFxImpulseResponse(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeLoadFxImpulseResponse(
         JNIEnv* env, jobject, jint slot, jstring path
 ) {
     const char* chars = env->GetStringUTFChars(path, nullptr);
@@ -7005,7 +7005,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeLoadFxImpulseResponse(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeClearFxImpulseResponse(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeClearFxImpulseResponse(
         JNIEnv*, jobject, jint slot
 ) {
     gEngine.clearFxImpulseResponse(static_cast<int>(slot));
@@ -7013,7 +7013,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeClearFxImpulseResponse(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetFxImpulseResponseBypass(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetFxImpulseResponseBypass(
         JNIEnv*, jobject, jint slot, jboolean bypass
 ) {
     gEngine.setFxImpulseResponseBypass(static_cast<int>(slot), bypass == JNI_TRUE);
@@ -7021,7 +7021,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetFxImpulseResponseBypass(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetFxImpulseResponseMix(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetFxImpulseResponseMix(
         JNIEnv*, jobject, jint slot, jfloat mix
 ) {
     gEngine.setFxImpulseResponseMix(static_cast<int>(slot), mix);
@@ -7029,7 +7029,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetFxImpulseResponseMix(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetFxImpulseResponsePosition(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetFxImpulseResponsePosition(
         JNIEnv*, jobject, jint slot, jint namBlocksBefore
 ) {
     gEngine.setFxImpulseResponsePosition(static_cast<int>(slot), static_cast<int>(namBlocksBefore));
@@ -7037,7 +7037,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetFxImpulseResponsePosition(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeConfigureFxNative(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeConfigureFxNative(
         JNIEnv*, jobject, jint slot, jint type, jint namBlocksBefore
 ) {
     gEngine.configureFxNative(static_cast<int>(slot), static_cast<int>(type), static_cast<int>(namBlocksBefore));
@@ -7045,7 +7045,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeConfigureFxNative(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeClearFxNative(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeClearFxNative(
         JNIEnv*, jobject, jint slot
 ) {
     gEngine.clearFxNative(static_cast<int>(slot));
@@ -7053,7 +7053,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeClearFxNative(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetFxNativeBypass(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetFxNativeBypass(
         JNIEnv*, jobject, jint slot, jboolean bypass
 ) {
     gEngine.setFxNativeBypass(static_cast<int>(slot), bypass == JNI_TRUE);
@@ -7061,7 +7061,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetFxNativeBypass(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetFxNativeMix(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetFxNativeMix(
         JNIEnv*, jobject, jint slot, jfloat mix
 ) {
     gEngine.setFxNativeMix(static_cast<int>(slot), mix);
@@ -7069,7 +7069,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetFxNativeMix(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetFxNativeParameter(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetFxNativeParameter(
         JNIEnv*, jobject, jint slot, jint parameter, jfloat value
 ) {
     gEngine.setFxNativeParameter(static_cast<int>(slot), static_cast<int>(parameter), value);
@@ -7077,7 +7077,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetFxNativeParameter(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetFxNativePosition(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetFxNativePosition(
         JNIEnv*, jobject, jint slot, jint namBlocksBefore
 ) {
     gEngine.setFxNativePosition(static_cast<int>(slot), static_cast<int>(namBlocksBefore));
@@ -7085,7 +7085,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetFxNativePosition(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseBypass(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetImpulseResponseBypass(
         JNIEnv*, jobject, jboolean bypass
 ) {
     gEngine.setImpulseResponseBypass(bypass == JNI_TRUE);
@@ -7093,7 +7093,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseBypass(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeClearImpulseResponse(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeClearImpulseResponse(
         JNIEnv*, jobject
 ) {
     gEngine.clearImpulseResponse();
@@ -7101,7 +7101,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeClearImpulseResponse(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponsePosition(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetImpulseResponsePosition(
         JNIEnv*, jobject, jint namBlocksBefore
 ) {
     gEngine.setImpulseResponsePosition(static_cast<int>(namBlocksBefore));
@@ -7109,7 +7109,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponsePosition(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseInGainDb(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetImpulseResponseInGainDb(
         JNIEnv*, jobject, jfloat db
 ) {
     gEngine.setImpulseResponseInGainDb(db);
@@ -7117,7 +7117,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseInGainDb(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseOutGainDb(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetImpulseResponseOutGainDb(
         JNIEnv*, jobject, jfloat db
 ) {
     gEngine.setImpulseResponseOutGainDb(db);
@@ -7125,7 +7125,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseOutGainDb(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseMix(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetImpulseResponseMix(
         JNIEnv*, jobject, jfloat mix
 ) {
     gEngine.setImpulseResponseMix(mix);
@@ -7133,7 +7133,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseMix(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseEqDb(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetImpulseResponseEqDb(
         JNIEnv*, jobject, jint band, jfloat db
 ) {
     gEngine.setImpulseResponseEqDb(static_cast<int>(band), db);
@@ -7141,7 +7141,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseEqDb(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseEqPre(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetImpulseResponseEqPre(
         JNIEnv*, jobject, jboolean pre
 ) {
     gEngine.setImpulseResponseEqPre(pre == JNI_TRUE);
@@ -7149,7 +7149,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseEqPre(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseEqEnabled(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetImpulseResponseEqEnabled(
         JNIEnv*, jobject, jboolean enabled
 ) {
     gEngine.setImpulseResponseEqEnabled(enabled == JNI_TRUE);
@@ -7158,7 +7158,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetImpulseResponseEqEnabled(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeAddChainModel(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeAddChainModel(
         JNIEnv* env,
         jobject,
         jstring path
@@ -7191,7 +7191,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeAddChainModel(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeClearExtraNamBlocks(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeClearExtraNamBlocks(
         JNIEnv* env,
         jobject
 ) {
@@ -7204,7 +7204,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeClearExtraNamBlocks(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeClearNamChain(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeClearNamChain(
         JNIEnv* env,
         jobject
 ) {
@@ -7217,7 +7217,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeClearNamChain(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamBypass(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetChainNamBypass(
         JNIEnv*,
         jobject,
         jint chainIndex,
@@ -7234,7 +7234,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamBypass(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamQuality(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetChainNamQuality(
         JNIEnv* env, jobject, jint chainIndex, jboolean full
 ) {
     return makeJString(env, gEngine.setChainNamQuality(
@@ -7243,7 +7243,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamQuality(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamGainDb(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetChainNamGainDb(
         JNIEnv*, jobject, jint chainIndex, jfloat db
 ) {
     gEngine.setChainNamGainDb(static_cast<int>(chainIndex), db);
@@ -7251,7 +7251,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamGainDb(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamInGainDb(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetChainNamInGainDb(
         JNIEnv*, jobject, jint chainIndex, jfloat db
 ) {
     gEngine.setChainNamInGainDb(static_cast<int>(chainIndex), db);
@@ -7259,7 +7259,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamInGainDb(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamMix(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetChainNamMix(
         JNIEnv*, jobject, jint chainIndex, jfloat mix
 ) {
     gEngine.setChainNamMix(static_cast<int>(chainIndex), mix);
@@ -7267,7 +7267,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamMix(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamNormalize(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetChainNamNormalize(
         JNIEnv*, jobject, jint chainIndex, jboolean enabled
 ) {
     gEngine.setChainNamNormalize(static_cast<int>(chainIndex), enabled == JNI_TRUE);
@@ -7275,7 +7275,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamNormalize(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamEqDb(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetChainNamEqDb(
         JNIEnv*, jobject, jint chainIndex, jint band, jfloat db
 ) {
     gEngine.setChainNamEqDb(static_cast<int>(chainIndex), static_cast<int>(band), db);
@@ -7283,7 +7283,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamEqDb(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamEqPre(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetChainNamEqPre(
         JNIEnv*, jobject, jint chainIndex, jboolean pre
 ) {
     gEngine.setChainNamEqPre(static_cast<int>(chainIndex), pre == JNI_TRUE);
@@ -7291,7 +7291,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamEqPre(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamEqEnabled(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetChainNamEqEnabled(
         JNIEnv*, jobject, jint chainIndex, jboolean enabled
 ) {
     gEngine.setChainNamEqEnabled(static_cast<int>(chainIndex), enabled == JNI_TRUE);
@@ -7300,7 +7300,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetChainNamEqEnabled(
 
 extern "C"
 JNIEXPORT jint JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeGetNamBlockCount(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeGetNamBlockCount(
         JNIEnv*,
         jobject
 ) {
@@ -7312,7 +7312,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeGetNamBlockCount(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSwitchPresetGapless(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSwitchPresetGapless(
         JNIEnv* env,
         jobject,
         jstring path,
@@ -7368,7 +7368,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSwitchPresetGapless(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeStart(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeStart(
         JNIEnv* env,
         jobject
 ) {
@@ -7381,7 +7381,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeStart(
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeIsRunning(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeIsRunning(
         JNIEnv*,
         jobject
 ) {
@@ -7393,7 +7393,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeIsRunning(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeStop(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeStop(
         JNIEnv*,
         jobject
 ) {
@@ -7403,7 +7403,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeStop(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetBypass(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetBypass(
         JNIEnv*,
         jobject,
         jboolean bypass
@@ -7416,7 +7416,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetBypass(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetInputGainDb(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetInputGainDb(
         JNIEnv*,
         jobject,
         jfloat gainDb
@@ -7429,7 +7429,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetInputGainDb(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetOutputGainDb(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetOutputGainDb(
         JNIEnv*,
         jobject,
         jfloat gainDb
@@ -7442,7 +7442,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetOutputGainDb(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetGateEnabled(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetGateEnabled(
         JNIEnv*,
         jobject,
         jboolean enabled
@@ -7456,7 +7456,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetGateEnabled(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetGateThresholdDb(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetGateThresholdDb(
         JNIEnv*,
         jobject,
         jfloat db
@@ -7469,7 +7469,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetGateThresholdDb(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetEqLowDb(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetEqLowDb(
         JNIEnv*,
         jobject,
         jfloat db
@@ -7482,7 +7482,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetEqLowDb(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetEqMidDb(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetEqMidDb(
         JNIEnv*,
         jobject,
         jfloat db
@@ -7495,7 +7495,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetEqMidDb(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetEqHighDb(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetEqHighDb(
         JNIEnv*,
         jobject,
         jfloat db
@@ -7508,7 +7508,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetEqHighDb(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetEqEnabled(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetEqEnabled(
         JNIEnv*,
         jobject,
         jboolean enabled
@@ -7519,7 +7519,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetEqEnabled(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeGetDspChainInfo(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeGetDspChainInfo(
         JNIEnv* env,
         jobject
 ) {
@@ -7532,7 +7532,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeGetDspChainInfo(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetInputChannel(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetInputChannel(
         JNIEnv*,
         jobject,
         jint channel
@@ -7547,7 +7547,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetInputChannel(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeSetOutputPair(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetOutputPair(
         JNIEnv*,
         jobject,
         jint pairIndex
@@ -7562,7 +7562,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetOutputPair(
 
 extern "C"
 JNIEXPORT jint JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeCycleInputChannel(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeCycleInputChannel(
         JNIEnv*,
         jobject
 ) {
@@ -7574,7 +7574,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeCycleInputChannel(
 
 extern "C"
 JNIEXPORT jint JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeCycleOutputPair(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeCycleOutputPair(
         JNIEnv*,
         jobject
 ) {
@@ -7586,7 +7586,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeCycleOutputPair(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeGetRoutingInfo(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeGetRoutingInfo(
         JNIEnv* env,
         jobject
 ) {
@@ -7599,7 +7599,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeGetRoutingInfo(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeScanUsbAudio(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeScanUsbAudio(
         JNIEnv* env,
         jobject
 ) {
@@ -7612,7 +7612,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeScanUsbAudio(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeGetAudioDeviceInfo(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeGetAudioDeviceInfo(
         JNIEnv* env,
         jobject
 ) {
@@ -7625,7 +7625,7 @@ Java_com_pedro_tone3000m1_MainActivity_nativeGetAudioDeviceInfo(
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_pedro_tone3000m1_MainActivity_nativeGetStats(
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeGetStats(
         JNIEnv* env,
         jobject
 ) {

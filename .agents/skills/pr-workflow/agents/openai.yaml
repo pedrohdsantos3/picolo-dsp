@@ -1,0 +1,3 @@
+interface:
+  display_name: "Pull Request Workflow"
+  short_description: "Create PRs with motivation, resolution, and verification"

@@ -12,10 +12,10 @@ Jetpack Compose + PicoloComposeViewModel
 PicoloActions (contrato tipado)
         ↓
 AudioAppController (adaptador ainda hospedado em MainActivity)
-        ↓
-SharedPreferences / arquivos / OAuth / downloads
-        ↓ API JNI
-C++: TinyALSA + NAM + IR + efeitos
+        ├── repositórios: SharedPreferences / API / arquivos
+        └── NativeAudioEngine (fachada JNI)
+                    ↓
+             C++: TinyALSA + NAM + IR + efeitos
 ```
 
 - A seleção TONE3000 usa Custom Tabs, PKCE e callback nativo; o app lista e
@@ -26,6 +26,9 @@ C++: TinyALSA + NAM + IR + efeitos
   existente. O bloco principal ainda usa preferências legadas.
 - `FxChainRepository` lê e grava as cadeias de IR/FX e FX nativo, preservando
   o JSON atual; a Activity continua sincronizando as entradas com o motor JNI.
+- `NativeAudioEngine` concentra a carga da biblioteca e as declarações JNI;
+  os nomes dos exports C++ acompanham essa classe. A Activity usa a fachada,
+  mas ainda coordena parte dos comandos através do controller interno.
 - `ui/model/PicoloUiState.kt` mantém os modelos de apresentação e converte o
   snapshot nativo separado dos Composables.
 - `ui/actions/PicoloActions.kt` descreve as ações que a UI pode executar. Os
@@ -48,9 +51,11 @@ C++: TinyALSA + NAM + IR + efeitos
    `AudioAppController` para casos de uso/repositórios independentes da
    Activity. Começar por presets e roteamento de áudio, depois importação de
    tons, OAuth e downloads.
-3. **Limite JNI:** agrupar chamadas JNI atrás de uma fachada `AudioEngine`
-   e retirar declarações nativas de `MainActivity`. Manter o motor de áudio
-   sem dependências Android e sem trabalho bloqueante no processamento.
+3. **Limite JNI:** extraímos as declarações e a carga da biblioteca para
+   `NativeAudioEngine`, junto com a atualização coordenada dos símbolos C++.
+   O próximo refinamento é depender de uma interface de engine nos casos de
+   uso. O motor continua sem dependências Android e sem trabalho bloqueante no
+   processamento.
 4. **Estado de tela:** substituir a consulta periódica do repositório por
    publicação de snapshots imutáveis quando as ações alterarem o estado. A
    UI já observa um fluxo pelo ViewModel; hoje o fluxo ainda consulta a
