@@ -1,9 +1,9 @@
 [submodule "app/src/main/cpp/NeuralAmpModelerCore"]
 	path = app/src/main/cpp/NeuralAmpModelerCore
-	url = https://github.com/sdatkinson/NeuralAmpModelerCore.git
+	url = https://github.com/pedrohdsantos3/NeuralAmpModelerCore.git
 [submodule "app/src/main/cpp/third_party/NeuralAmpModelerCore"]
 	path = app/src/main/cpp/third_party/NeuralAmpModelerCore
-	url = https://github.com/sdatkinson/NeuralAmpModelerCore.git
+	url = https://github.com/pedrohdsantos3/NeuralAmpModelerCore.git
 [submodule "app/src/main/cpp/third_party/tinyalsa"]
 	path = app/src/main/cpp/third_party/tinyalsa
 	url = https://github.com/tinyalsa/tinyalsa.git
