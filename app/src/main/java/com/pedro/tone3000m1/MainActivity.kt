@@ -204,11 +204,6 @@ class MainActivity : AppCompatActivity() {
         private const val PRESET_COUNT =
             4
 
-        init {
-            System.loadLibrary(
-                "tone3000m1"
-            )
-        }
     }
 
 
@@ -282,142 +277,6 @@ class MainActivity : AppCompatActivity() {
 
 
     // ========================================================
-    // NATIVE
-    // ========================================================
-
-    external fun nativeLoadModel(
-        path: String
-    ): String
-
-    external fun nativeLoadImpulseResponse(path: String): String
-
-    external fun nativeSetImpulseResponseBypass(bypass: Boolean)
-    external fun nativeClearImpulseResponse()
-
-    external fun nativeSetImpulseResponsePosition(namBlocksBefore: Int)
-    external fun nativeSetImpulseResponseInGainDb(db: Float)
-    external fun nativeSetImpulseResponseOutGainDb(db: Float)
-    external fun nativeSetImpulseResponseMix(mix: Float)
-    external fun nativeSetImpulseResponseEqDb(band: Int, db: Float)
-    external fun nativeSetImpulseResponseEqPre(pre: Boolean)
-    external fun nativeSetImpulseResponseEqEnabled(enabled: Boolean)
-    external fun nativeLoadFxImpulseResponse(slot: Int, path: String): String
-    external fun nativeClearFxImpulseResponse(slot: Int)
-    external fun nativeSetFxImpulseResponseBypass(slot: Int, bypass: Boolean)
-    external fun nativeSetFxImpulseResponseMix(slot: Int, mix: Float)
-    external fun nativeSetFxImpulseResponsePosition(slot: Int, namBlocksBefore: Int)
-    external fun nativeConfigureFxNative(slot: Int, type: Int, namBlocksBefore: Int)
-    external fun nativeClearFxNative(slot: Int)
-    external fun nativeSetFxNativeBypass(slot: Int, bypass: Boolean)
-    external fun nativeSetFxNativeMix(slot: Int, mix: Float)
-    external fun nativeSetFxNativeParameter(slot: Int, parameter: Int, value: Float)
-    external fun nativeSetFxNativePosition(slot: Int, namBlocksBefore: Int)
-
-    external fun nativeAddChainModel(
-        path: String
-    ): String
-
-    external fun nativeClearExtraNamBlocks(): String
-
-    external fun nativeClearNamChain(): String
-
-    external fun nativeSetChainNamBypass(
-        chainIndex: Int,
-        bypass: Boolean
-    )
-
-    external fun nativeSetChainNamQuality(chainIndex: Int, full: Boolean): String
-
-    external fun nativeSetChainNamGainDb(chainIndex: Int, db: Float)
-    external fun nativeSetChainNamInGainDb(chainIndex: Int, db: Float)
-    external fun nativeSetChainNamMix(chainIndex: Int, mix: Float)
-    external fun nativeSetChainNamNormalize(chainIndex: Int, enabled: Boolean)
-
-    external fun nativeSetChainNamEqDb(chainIndex: Int, band: Int, db: Float)
-    external fun nativeSetChainNamEqPre(chainIndex: Int, pre: Boolean)
-    external fun nativeSetChainNamEqEnabled(chainIndex: Int, enabled: Boolean)
-
-    external fun nativeGetNamBlockCount(): Int
-
-    external fun nativeSwitchPresetGapless(
-        path: String,
-        inputGainDb: Float,
-        outputGainDb: Float,
-        inputChannel: Int,
-        outputPair: Int,
-        gateEnabled: Boolean,
-        gateThresholdDb: Float,
-        eqLowDb: Float,
-        eqMidDb: Float,
-        eqHighDb: Float
-    ): String
-
-    external fun nativeStart(): String
-
-    external fun nativeIsRunning(): Boolean
-
-    external fun nativeStop()
-
-    external fun nativeSetBypass(
-        bypass: Boolean
-    )
-
-    external fun nativeSetInputGainDb(
-        gainDb: Float
-    )
-
-    external fun nativeSetOutputGainDb(
-        gainDb: Float
-    )
-
-    external fun nativeSetGateEnabled(
-        enabled: Boolean
-    )
-
-    external fun nativeSetGateThresholdDb(
-        db: Float
-    )
-
-    external fun nativeSetEqLowDb(
-        db: Float
-    )
-
-    external fun nativeSetEqMidDb(
-        db: Float
-    )
-
-    external fun nativeSetEqHighDb(
-        db: Float
-    )
-
-    external fun nativeSetEqEnabled(
-        enabled: Boolean
-    )
-
-    external fun nativeGetDspChainInfo(): String
-
-    external fun nativeSetInputChannel(
-        channel: Int
-    )
-
-    external fun nativeSetOutputPair(
-        pairIndex: Int
-    )
-
-    external fun nativeCycleInputChannel(): Int
-
-    external fun nativeCycleOutputPair(): Int
-
-    external fun nativeGetRoutingInfo(): String
-
-    external fun nativeScanUsbAudio(): String
-
-    external fun nativeGetAudioDeviceInfo(): String
-
-    external fun nativeGetStats(): String
-
-
-    // ========================================================
     // PREFS
     // ========================================================
 
@@ -427,6 +286,8 @@ class MainActivity : AppCompatActivity() {
             MODE_PRIVATE
         )
     }
+
+    private val audioEngine by lazy { NativeAudioEngine() }
 
     private val namChainRepository by lazy {
         NamChainRepository(prefs, PREF_EXTRA_NAM_CHAIN, PREF_LAST_MODEL_PATH)
@@ -476,14 +337,14 @@ class MainActivity : AppCompatActivity() {
                         requireNotNull(input) { "Unable to open selected IR" }
                         FileOutputStream(destination).use { output -> input.copyTo(output) }
                     }
-                    val result = nativeLoadImpulseResponse(destination.absolutePath)
+                    val result = audioEngine.nativeLoadImpulseResponse(destination.absolutePath)
                     if (result.startsWith("IR LOADED")) {
                         val position = if (prefs.contains(PREF_CABINET_IR_POSITION)) {
-                            prefs.getInt(PREF_CABINET_IR_POSITION, nativeGetNamBlockCount())
+                            prefs.getInt(PREF_CABINET_IR_POSITION, audioEngine.nativeGetNamBlockCount())
                         } else {
-                            nativeGetNamBlockCount()
-                        }.coerceIn(0, nativeGetNamBlockCount())
-                        nativeSetImpulseResponsePosition(position)
+                            audioEngine.nativeGetNamBlockCount()
+                        }.coerceIn(0, audioEngine.nativeGetNamBlockCount())
+                        audioEngine.nativeSetImpulseResponsePosition(position)
                         prefs.edit()
                             .putString(PREF_CABINET_IR_PATH, destination.absolutePath)
                             .putString(PREF_CABINET_IR_TITLE, destination.nameWithoutExtension)
@@ -627,7 +488,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
 
-        nativeStop()
+        audioEngine.nativeStop()
 
         super.onStop()
     }
@@ -729,7 +590,7 @@ class MainActivity : AppCompatActivity() {
                 setOnClickListener {
 
                     status.text =
-                        nativeScanUsbAudio()
+                        audioEngine.nativeScanUsbAudio()
                 }
             }
 
@@ -780,7 +641,7 @@ class MainActivity : AppCompatActivity() {
                 setOnClickListener {
 
                     val selected =
-                        nativeCycleInputChannel()
+                        audioEngine.nativeCycleInputChannel()
 
                     prefs
                         .edit()
@@ -804,7 +665,7 @@ class MainActivity : AppCompatActivity() {
                 setOnClickListener {
 
                     val selected =
-                        nativeCycleOutputPair()
+                        audioEngine.nativeCycleOutputPair()
 
                     prefs
                         .edit()
@@ -897,7 +758,7 @@ class MainActivity : AppCompatActivity() {
 
                             if (!applyingPresetUi) {
 
-                                nativeSetInputGainDb(
+                                audioEngine.nativeSetInputGainDb(
                                     gain
                                 )
                             }
@@ -969,7 +830,7 @@ class MainActivity : AppCompatActivity() {
 
                             if (!applyingPresetUi) {
 
-                                nativeSetOutputGainDb(
+                                audioEngine.nativeSetOutputGainDb(
                                     gain
                                 )
                             }
@@ -1022,7 +883,7 @@ class MainActivity : AppCompatActivity() {
                     gateEnabled =
                         !gateEnabled
 
-                    nativeSetGateEnabled(
+                    audioEngine.nativeSetGateEnabled(
                         gateEnabled
                     )
 
@@ -1082,7 +943,7 @@ class MainActivity : AppCompatActivity() {
 
                             if (!applyingPresetUi) {
 
-                                nativeSetGateThresholdDb(
+                                audioEngine.nativeSetGateThresholdDb(
                                     db
                                 )
                             }
@@ -1233,13 +1094,13 @@ class MainActivity : AppCompatActivity() {
                     syncFxNativeChain(readFxNativeChain(), reset = true)
 
                     val result =
-                        nativeStart()
+                        audioEngine.nativeStart()
 
                     status.text =
                         result
 
                     audioDeviceText.text =
-                        nativeGetAudioDeviceInfo()
+                        audioEngine.nativeGetAudioDeviceInfo()
 
                     refreshRoutingUi()
                 }
@@ -1257,7 +1118,7 @@ class MainActivity : AppCompatActivity() {
                     bypass =
                         !bypass
 
-                    nativeSetBypass(
+                    audioEngine.nativeSetBypass(
                         bypass
                     )
 
@@ -1277,7 +1138,7 @@ class MainActivity : AppCompatActivity() {
                 setOnClickListener {
 
                     status.text =
-                        nativeGetStats()
+                        audioEngine.nativeGetStats()
                 }
             }
 
@@ -1290,7 +1151,7 @@ class MainActivity : AppCompatActivity() {
 
                 setOnClickListener {
 
-                    nativeStop()
+                    audioEngine.nativeStop()
 
                     status.text =
                         "STOPPED"
@@ -1485,16 +1346,16 @@ class MainActivity : AppCompatActivity() {
     private fun persistFxNativeChain(entries: List<JSONObject>) = fxChainRepository.persistNativeChain(entries)
 
     private fun syncFxNativeChain(entries: List<JSONObject>, reset: Boolean = false) {
-        if (reset) for (slot in 0 until 8) nativeClearFxNative(slot)
+        if (reset) for (slot in 0 until 8) audioEngine.nativeClearFxNative(slot)
         entries.forEachIndexed { slot, item ->
             val type = item.optInt("effect", 0).coerceIn(0, 3)
-            if (reset) nativeConfigureFxNative(slot, type, MAX_NAM_BLOCKS)
-            nativeSetFxNativeBypass(slot, item.optBoolean("bypass", false))
-            nativeSetFxNativeMix(slot, item.optDouble("mix", 0.35).toFloat())
-            nativeSetFxNativeParameter(slot, 0, item.optDouble("param1", when (type) { 0, 1 -> 350.0; 2 -> 1500.0; else -> 150.0 }).toFloat())
-            nativeSetFxNativeParameter(slot, 1, item.optDouble("param2", when (type) { 0, 1 -> 0.35; 2 -> 0.5; else -> 5000.0 }).toFloat())
-            nativeSetFxNativeParameter(slot, 2, item.optDouble("param3", 12.0).toFloat())
-            nativeSetFxNativePosition(slot, MAX_NAM_BLOCKS)
+            if (reset) audioEngine.nativeConfigureFxNative(slot, type, MAX_NAM_BLOCKS)
+            audioEngine.nativeSetFxNativeBypass(slot, item.optBoolean("bypass", false))
+            audioEngine.nativeSetFxNativeMix(slot, item.optDouble("mix", 0.35).toFloat())
+            audioEngine.nativeSetFxNativeParameter(slot, 0, item.optDouble("param1", when (type) { 0, 1 -> 350.0; 2 -> 1500.0; else -> 150.0 }).toFloat())
+            audioEngine.nativeSetFxNativeParameter(slot, 1, item.optDouble("param2", when (type) { 0, 1 -> 0.35; 2 -> 0.5; else -> 5000.0 }).toFloat())
+            audioEngine.nativeSetFxNativeParameter(slot, 2, item.optDouble("param3", 12.0).toFloat())
+            audioEngine.nativeSetFxNativePosition(slot, MAX_NAM_BLOCKS)
         }
     }
 
@@ -1520,7 +1381,7 @@ class MainActivity : AppCompatActivity() {
             .remove(PREF_NAM_A2_FULL)
             .remove(PREF_LAST_TONE_IMAGE)
                 .apply()
-            nativeSetImpulseResponsePosition(0)
+            audioEngine.nativeSetImpulseResponsePosition(0)
             return
         }
 
@@ -1555,26 +1416,26 @@ class MainActivity : AppCompatActivity() {
         val cabinetPosition = prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS)
             .coerceIn(0, entries.size)
         prefs.edit().putInt(PREF_CABINET_IR_POSITION, cabinetPosition).apply()
-        nativeSetImpulseResponsePosition(cabinetPosition)
+        audioEngine.nativeSetImpulseResponsePosition(cabinetPosition)
         val fxEntries = readFxChain()
         fxEntries.forEachIndexed { index, fx ->
             val position = fx.optInt("position", entries.size).coerceIn(0, entries.size)
             fx.put("position", position)
-            nativeSetFxImpulseResponsePosition(index, position)
+            audioEngine.nativeSetFxImpulseResponsePosition(index, position)
         }
         persistFxChain(fxEntries)
     }
 
 
     private fun rebuildNativeNamChain(entries: List<ExtraNamEntry>): String {
-        val wasRunning = nativeIsRunning()
-        nativeClearNamChain()
+        val wasRunning = audioEngine.nativeIsRunning()
+        audioEngine.nativeClearNamChain()
 
         entries.forEachIndexed { index, entry ->
             val result = if (index == 0) {
-                nativeLoadModel(entry.path)
+                audioEngine.nativeLoadModel(entry.path)
             } else {
-                nativeAddChainModel(entry.path)
+                audioEngine.nativeAddChainModel(entry.path)
             }
 
             val loaded = if (index == 0) {
@@ -1587,24 +1448,24 @@ class MainActivity : AppCompatActivity() {
                 return result
             }
 
-            nativeSetChainNamBypass(index, entry.bypass)
-            nativeSetChainNamGainDb(index, entry.gainDb)
-            nativeSetChainNamInGainDb(index, entry.inGainDb)
-            nativeSetChainNamMix(index, entry.mix)
-            nativeSetChainNamEqDb(index, 0, entry.eqLowDb)
-            nativeSetChainNamEqDb(index, 1, entry.eqMidDb)
-            nativeSetChainNamEqDb(index, 2, entry.eqHighDb)
-            nativeSetChainNamEqDb(index, 3, entry.eqBand3Db)
-            nativeSetChainNamEqDb(index, 4, entry.eqBand4Db)
-            nativeSetChainNamEqDb(index, 5, entry.eqBand5Db)
-            nativeSetChainNamEqPre(index, entry.eqPre)
-            nativeSetChainNamEqEnabled(index, entry.eqEnabled)
-            nativeSetChainNamNormalize(index, entry.normalize && entry.moduleType != "PEDAL")
-            nativeSetChainNamQuality(index, entry.a2Full && entry.moduleType == "AMP")
+            audioEngine.nativeSetChainNamBypass(index, entry.bypass)
+            audioEngine.nativeSetChainNamGainDb(index, entry.gainDb)
+            audioEngine.nativeSetChainNamInGainDb(index, entry.inGainDb)
+            audioEngine.nativeSetChainNamMix(index, entry.mix)
+            audioEngine.nativeSetChainNamEqDb(index, 0, entry.eqLowDb)
+            audioEngine.nativeSetChainNamEqDb(index, 1, entry.eqMidDb)
+            audioEngine.nativeSetChainNamEqDb(index, 2, entry.eqHighDb)
+            audioEngine.nativeSetChainNamEqDb(index, 3, entry.eqBand3Db)
+            audioEngine.nativeSetChainNamEqDb(index, 4, entry.eqBand4Db)
+            audioEngine.nativeSetChainNamEqDb(index, 5, entry.eqBand5Db)
+            audioEngine.nativeSetChainNamEqPre(index, entry.eqPre)
+            audioEngine.nativeSetChainNamEqEnabled(index, entry.eqEnabled)
+            audioEngine.nativeSetChainNamNormalize(index, entry.normalize && entry.moduleType != "PEDAL")
+            audioEngine.nativeSetChainNamQuality(index, entry.a2Full && entry.moduleType == "AMP")
         }
 
         if (wasRunning) {
-            val audioResult = nativeStart()
+            val audioResult = audioEngine.nativeStart()
             if (!audioResult.startsWith("AUDIO ACTIVE")) {
                 return audioResult
             }
@@ -1617,19 +1478,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyPersistedNamControls() {
         readNamChainEntries().forEachIndexed { index, entry ->
-            nativeSetChainNamGainDb(index, entry.gainDb)
-            nativeSetChainNamInGainDb(index, entry.inGainDb)
-            nativeSetChainNamMix(index, entry.mix)
-            nativeSetChainNamEqDb(index, 0, entry.eqLowDb)
-            nativeSetChainNamEqDb(index, 1, entry.eqMidDb)
-            nativeSetChainNamEqDb(index, 2, entry.eqHighDb)
-            nativeSetChainNamEqDb(index, 3, entry.eqBand3Db)
-            nativeSetChainNamEqDb(index, 4, entry.eqBand4Db)
-            nativeSetChainNamEqDb(index, 5, entry.eqBand5Db)
-            nativeSetChainNamEqPre(index, entry.eqPre)
-            nativeSetChainNamEqEnabled(index, entry.eqEnabled)
-            nativeSetChainNamNormalize(index, entry.normalize && entry.moduleType != "PEDAL")
-            nativeSetChainNamQuality(index, entry.a2Full && entry.moduleType == "AMP")
+            audioEngine.nativeSetChainNamGainDb(index, entry.gainDb)
+            audioEngine.nativeSetChainNamInGainDb(index, entry.inGainDb)
+            audioEngine.nativeSetChainNamMix(index, entry.mix)
+            audioEngine.nativeSetChainNamEqDb(index, 0, entry.eqLowDb)
+            audioEngine.nativeSetChainNamEqDb(index, 1, entry.eqMidDb)
+            audioEngine.nativeSetChainNamEqDb(index, 2, entry.eqHighDb)
+            audioEngine.nativeSetChainNamEqDb(index, 3, entry.eqBand3Db)
+            audioEngine.nativeSetChainNamEqDb(index, 4, entry.eqBand4Db)
+            audioEngine.nativeSetChainNamEqDb(index, 5, entry.eqBand5Db)
+            audioEngine.nativeSetChainNamEqPre(index, entry.eqPre)
+            audioEngine.nativeSetChainNamEqEnabled(index, entry.eqEnabled)
+            audioEngine.nativeSetChainNamNormalize(index, entry.normalize && entry.moduleType != "PEDAL")
+            audioEngine.nativeSetChainNamQuality(index, entry.a2Full && entry.moduleType == "AMP")
         }
     }
 
@@ -1675,7 +1536,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun restoreExtraNamChainNative(): String {
 
-        nativeClearExtraNamBlocks()
+        audioEngine.nativeClearExtraNamBlocks()
 
 
         val entries =
@@ -1700,7 +1561,7 @@ class MainActivity : AppCompatActivity() {
             .forEach { entry ->
 
                 val result =
-                    nativeAddChainModel(
+                    audioEngine.nativeAddChainModel(
                         entry.path
                     )
 
@@ -1716,7 +1577,7 @@ class MainActivity : AppCompatActivity() {
                                 1
 
 
-                    nativeSetChainNamBypass(
+                    audioEngine.nativeSetChainNamBypass(
                         chainIndex,
                         entry.bypass
                     )
@@ -1793,7 +1654,7 @@ class MainActivity : AppCompatActivity() {
 
         Thread {
 
-            nativeClearExtraNamBlocks()
+            audioEngine.nativeClearExtraNamBlocks()
 
 
             readExtraNamChain()
@@ -1848,7 +1709,7 @@ class MainActivity : AppCompatActivity() {
 
         result.put(
             "running",
-            nativeIsRunning()
+            audioEngine.nativeIsRunning()
         )
 
         result.put(
@@ -1974,17 +1835,17 @@ class MainActivity : AppCompatActivity() {
 
         result.put(
             "routing",
-            nativeGetRoutingInfo()
+            audioEngine.nativeGetRoutingInfo()
         )
 
         result.put(
             "audioDevice",
-            nativeGetAudioDeviceInfo()
+            audioEngine.nativeGetAudioDeviceInfo()
         )
 
         result.put(
             "namBlockCount",
-            nativeGetNamBlockCount()
+            audioEngine.nativeGetNamBlockCount()
         )
 
 
@@ -2231,7 +2092,7 @@ class MainActivity : AppCompatActivity() {
                     )
 
 
-            nativeSetInputGainDb(
+            audioEngine.nativeSetInputGainDb(
                 value
             )
 
@@ -2278,7 +2139,7 @@ class MainActivity : AppCompatActivity() {
                     )
 
 
-            nativeSetOutputGainDb(
+            audioEngine.nativeSetOutputGainDb(
                 value
             )
 
@@ -2320,7 +2181,7 @@ class MainActivity : AppCompatActivity() {
                 enabled
 
 
-            nativeSetGateEnabled(
+            audioEngine.nativeSetGateEnabled(
                 enabled
             )
 
@@ -2354,7 +2215,7 @@ class MainActivity : AppCompatActivity() {
                     )
 
 
-            nativeSetGateThresholdDb(
+            audioEngine.nativeSetGateThresholdDb(
                 value
             )
 
@@ -2428,7 +2289,7 @@ class MainActivity : AppCompatActivity() {
 
 
         override fun setEqEnabled(enabled: Boolean) {
-            nativeSetEqEnabled(enabled)
+            audioEngine.nativeSetEqEnabled(enabled)
             prefs.edit().putBoolean(PREF_EQ_ENABLED, enabled).apply()
         }
 
@@ -2486,7 +2347,7 @@ class MainActivity : AppCompatActivity() {
         fun cycleInput(): Int {
 
             val selected =
-                nativeCycleInputChannel()
+                audioEngine.nativeCycleInputChannel()
 
 
             prefs
@@ -2511,7 +2372,7 @@ class MainActivity : AppCompatActivity() {
         override fun cycleOutput(): Int {
 
             val selected =
-                nativeCycleOutputPair()
+                audioEngine.nativeCycleOutputPair()
 
 
             prefs
@@ -2538,7 +2399,7 @@ class MainActivity : AppCompatActivity() {
             syncFxNativeChain(readFxNativeChain(), reset = true)
 
             val result =
-                nativeStart()
+                audioEngine.nativeStart()
 
 
             runOnUiThread {
@@ -2547,7 +2408,7 @@ class MainActivity : AppCompatActivity() {
                     result
 
                 audioDeviceText.text =
-                    nativeGetAudioDeviceInfo()
+                    audioEngine.nativeGetAudioDeviceInfo()
 
                 refreshRoutingUi()
             }
@@ -2559,7 +2420,7 @@ class MainActivity : AppCompatActivity() {
 
         override fun stopAudio(): String {
 
-            nativeStop()
+            audioEngine.nativeStop()
 
 
             runOnUiThread {
@@ -2592,7 +2453,7 @@ class MainActivity : AppCompatActivity() {
                 !bypass
 
 
-            nativeSetBypass(
+            audioEngine.nativeSetBypass(
                 bypass
             )
 
@@ -2630,7 +2491,7 @@ class MainActivity : AppCompatActivity() {
         fun addNam() {
 
             if (
-                nativeGetNamBlockCount() >=
+                audioEngine.nativeGetNamBlockCount() >=
                 MAX_NAM_BLOCKS
             ) {
 
@@ -2647,7 +2508,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
 
                 startTone3000SelectFlow(
-                    if (nativeGetNamBlockCount() == 0) {
+                    if (audioEngine.nativeGetNamBlockCount() == 0) {
                         "replace"
                     } else {
                         "add"
@@ -2837,17 +2698,17 @@ class MainActivity : AppCompatActivity() {
                 if (destination.exists()) destination.delete()
                 val downloaded = downloadModel(model, token, destination)
                 val normalized = normalizeImpulseResponseWav(downloaded)
-                val result = nativeLoadImpulseResponse(normalized.absolutePath)
+                val result = audioEngine.nativeLoadImpulseResponse(normalized.absolutePath)
                 if (!result.startsWith("IR LOADED")) throw RuntimeException(result)
-                val position = nativeGetNamBlockCount()
-                nativeSetImpulseResponsePosition(position)
-                nativeSetImpulseResponseBypass(false)
-                nativeSetImpulseResponseInGainDb(0.0f)
-                nativeSetImpulseResponseOutGainDb(0.0f)
-                nativeSetImpulseResponseMix(if (moduleType == "FX") 0.5f else 1.0f)
-                nativeSetImpulseResponseEqPre(false)
-                nativeSetImpulseResponseEqEnabled(true)
-                for (band in 0 until 6) nativeSetImpulseResponseEqDb(band, 0.0f)
+                val position = audioEngine.nativeGetNamBlockCount()
+                audioEngine.nativeSetImpulseResponsePosition(position)
+                audioEngine.nativeSetImpulseResponseBypass(false)
+                audioEngine.nativeSetImpulseResponseInGainDb(0.0f)
+                audioEngine.nativeSetImpulseResponseOutGainDb(0.0f)
+                audioEngine.nativeSetImpulseResponseMix(if (moduleType == "FX") 0.5f else 1.0f)
+                audioEngine.nativeSetImpulseResponseEqPre(false)
+                audioEngine.nativeSetImpulseResponseEqEnabled(true)
+                for (band in 0 until 6) audioEngine.nativeSetImpulseResponseEqDb(band, 0.0f)
                 prefs.edit()
                     .putString(PREF_CABINET_IR_PATH, normalized.absolutePath)
                     .putString(PREF_CABINET_IR_IMAGE, imageUrl)
@@ -2863,7 +2724,7 @@ class MainActivity : AppCompatActivity() {
                     .putBoolean(PREF_CABINET_IR_EQ_ENABLED, true)
                     .apply { for (band in 0 until 6) putFloat(PREF_CABINET_IR_EQ_PREFIX + band, 0.0f) }
                     .apply()
-                val audio = nativeStart()
+                val audio = audioEngine.nativeStart()
                 prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
                 runOnUiThread {
                     status.text = "CABINET IR READY\n\n$toneTitle\n${model.name}\n$audio"
@@ -2888,22 +2749,22 @@ class MainActivity : AppCompatActivity() {
                 val destination = File(filesDir, "fx-space-${model.id}.wav")
                 if (destination.exists()) destination.delete()
                 val normalized = normalizeImpulseResponseWav(downloadModel(model, token, destination))
-                val loaded = nativeLoadFxImpulseResponse(slot, normalized.absolutePath)
+                val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, normalized.absolutePath)
                 if (!loaded.startsWith("FX LOADED")) throw IllegalStateException(loaded)
                 val entry = JSONObject()
                     .put("toneId", toneId).put("title", toneTitle).put("image", imageUrl)
                     .put("modelId", model.id).put("modelName", model.name)
                     .put("path", normalized.absolutePath).put("bypass", false).put("mix", 0.5)
-                    .put("position", nativeGetNamBlockCount())
+                    .put("position", audioEngine.nativeGetNamBlockCount())
                 if (targetIndex == null) entries.add(entry) else entries[targetIndex] = entry
                 persistFxChain(entries)
-                nativeSetFxImpulseResponseBypass(slot, false)
-                nativeSetFxImpulseResponseMix(slot, 0.5f)
-                nativeSetFxImpulseResponsePosition(slot, entry.optInt("position"))
+                audioEngine.nativeSetFxImpulseResponseBypass(slot, false)
+                audioEngine.nativeSetFxImpulseResponseMix(slot, 0.5f)
+                audioEngine.nativeSetFxImpulseResponsePosition(slot, entry.optInt("position"))
                 if (!replacedPath.isNullOrBlank() && replacedPath != normalized.absolutePath) {
                     try { File(replacedPath).delete() } catch (_: Exception) { }
                 }
-                val audio = nativeStart()
+                val audio = audioEngine.nativeStart()
                 prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
                 runOnUiThread {
                     status.text = "FX READY\n\n$toneTitle\n${model.name}\n$audio"
@@ -3022,15 +2883,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun removeCabinetIr() {
-            val resumeAudio = nativeIsRunning()
-            nativeClearImpulseResponse()
-            nativeSetImpulseResponseBypass(false)
-            nativeSetImpulseResponseInGainDb(0.0f)
-            nativeSetImpulseResponseOutGainDb(0.0f)
-            nativeSetImpulseResponseMix(1.0f)
-            nativeSetImpulseResponseEqPre(false)
-            nativeSetImpulseResponseEqEnabled(true)
-            for (band in 0 until 6) nativeSetImpulseResponseEqDb(band, 0.0f)
+            val resumeAudio = audioEngine.nativeIsRunning()
+            audioEngine.nativeClearImpulseResponse()
+            audioEngine.nativeSetImpulseResponseBypass(false)
+            audioEngine.nativeSetImpulseResponseInGainDb(0.0f)
+            audioEngine.nativeSetImpulseResponseOutGainDb(0.0f)
+            audioEngine.nativeSetImpulseResponseMix(1.0f)
+            audioEngine.nativeSetImpulseResponseEqPre(false)
+            audioEngine.nativeSetImpulseResponseEqEnabled(true)
+            for (band in 0 until 6) audioEngine.nativeSetImpulseResponseEqDb(band, 0.0f)
             prefs.getString(PREF_CABINET_IR_PATH, null)?.let { path ->
                 try { File(path).delete() } catch (_: Exception) { }
             }
@@ -3050,8 +2911,8 @@ class MainActivity : AppCompatActivity() {
                     for (band in 0 until 6) remove(PREF_CABINET_IR_EQ_PREFIX + band)
                 }
                 .apply()
-            val hasOtherModules = nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty()
-            val audioResult = if (resumeAudio && hasOtherModules) nativeStart() else ""
+            val hasOtherModules = audioEngine.nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty()
+            val audioResult = if (resumeAudio && hasOtherModules) audioEngine.nativeStart() else ""
             runOnUiThread {
                 status.text = if (audioResult.startsWith("AUDIO ACTIVE")) {
                     "CABINET IR REMOVED\n$audioResult"
@@ -3067,24 +2928,24 @@ class MainActivity : AppCompatActivity() {
             Thread {
                 val entries = readFxChain()
                 if (fxIndex !in entries.indices) return@Thread
-                val wasRunning = nativeIsRunning()
+                val wasRunning = audioEngine.nativeIsRunning()
                 val removed = entries.removeAt(fxIndex)
-                for (slot in 0 until 8) nativeClearFxImpulseResponse(slot)
+                for (slot in 0 until 8) audioEngine.nativeClearFxImpulseResponse(slot)
                 entries.forEachIndexed { slot, item ->
-                    val loaded = nativeLoadFxImpulseResponse(slot, item.optString("path"))
+                    val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, item.optString("path"))
                     if (!loaded.startsWith("FX LOADED")) {
                         runOnUiThread { status.text = "FX CHAIN RELOAD FAILED\n$loaded" }
                         return@Thread
                     }
-                    nativeSetFxImpulseResponseBypass(slot, item.optBoolean("bypass", false))
-                    nativeSetFxImpulseResponseMix(slot, item.optDouble("mix", 0.5).toFloat())
-                    val namCount = nativeGetNamBlockCount()
-                    nativeSetFxImpulseResponsePosition(slot, item.optInt("position", namCount).coerceIn(0, namCount))
+                    audioEngine.nativeSetFxImpulseResponseBypass(slot, item.optBoolean("bypass", false))
+                    audioEngine.nativeSetFxImpulseResponseMix(slot, item.optDouble("mix", 0.5).toFloat())
+                    val namCount = audioEngine.nativeGetNamBlockCount()
+                    audioEngine.nativeSetFxImpulseResponsePosition(slot, item.optInt("position", namCount).coerceIn(0, namCount))
                 }
                 persistFxChain(entries)
                 try { File(removed.optString("path")).delete() } catch (_: Exception) { }
-                val hasModules = nativeGetNamBlockCount() > 0 || entries.isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null
-                val audio = if (wasRunning && hasModules) nativeStart() else ""
+                val hasModules = audioEngine.nativeGetNamBlockCount() > 0 || entries.isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null
+                val audio = if (wasRunning && hasModules) audioEngine.nativeStart() else ""
                 runOnUiThread { status.text = "FX REMOVED\n$audio" }
             }.start()
         }
@@ -3094,7 +2955,7 @@ class MainActivity : AppCompatActivity() {
             val item = entries.getOrNull(fxIndex) ?: return
             item.put("bypass", bypassed)
             persistFxChain(entries)
-            nativeSetFxImpulseResponseBypass(fxIndex, bypassed)
+            audioEngine.nativeSetFxImpulseResponseBypass(fxIndex, bypassed)
         }
 
         override fun setFxMix(fxIndex: Int, mix: Double) {
@@ -3103,7 +2964,7 @@ class MainActivity : AppCompatActivity() {
             val value = mix.toFloat().coerceIn(0f, 1f)
             item.put("mix", value.toDouble())
             persistFxChain(entries)
-            nativeSetFxImpulseResponseMix(fxIndex, value)
+            audioEngine.nativeSetFxImpulseResponseMix(fxIndex, value)
         }
 
         override fun addFxNative(effect: Int) {
@@ -3112,7 +2973,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { status.text = "FXNATIVE CHAIN FULL\nMaximum 8 native effects." }
                 return
             }
-            val wasRunning = nativeIsRunning()
+            val wasRunning = audioEngine.nativeIsRunning()
             val selected = effect.coerceIn(0, 3)
             val entry = JSONObject().put("effect", selected).put("bypass", false).put("mix", 0.35)
                 .put("param1", when (selected) { 0, 1 -> 350.0; 2 -> 1500.0; else -> 150.0 })
@@ -3121,18 +2982,18 @@ class MainActivity : AppCompatActivity() {
             entries.add(entry)
             persistFxNativeChain(entries)
             syncFxNativeChain(entries, reset = true)
-            val audio = if (wasRunning) nativeStart() else ""
+            val audio = if (wasRunning) audioEngine.nativeStart() else ""
             runOnUiThread { status.text = "FXNATIVE ADDED\nStereo post NAM/CAB\n$audio" }
         }
 
         override fun removeFxNative(nativeIndex: Int) {
             val entries = readFxNativeChain()
             if (nativeIndex !in entries.indices) return
-            val wasRunning = nativeIsRunning()
+            val wasRunning = audioEngine.nativeIsRunning()
             entries.removeAt(nativeIndex)
             persistFxNativeChain(entries)
             syncFxNativeChain(entries, reset = true)
-            val audio = if (wasRunning && (nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null)) nativeStart() else ""
+            val audio = if (wasRunning && (audioEngine.nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null)) audioEngine.nativeStart() else ""
             runOnUiThread { status.text = "FXNATIVE REMOVED\n$audio" }
         }
 
@@ -3141,7 +3002,7 @@ class MainActivity : AppCompatActivity() {
             val entry = entries.getOrNull(nativeIndex) ?: return
             entry.put("bypass", bypassed)
             persistFxNativeChain(entries)
-            nativeSetFxNativeBypass(nativeIndex, bypassed)
+            audioEngine.nativeSetFxNativeBypass(nativeIndex, bypassed)
         }
 
         override fun setFxNativeMix(nativeIndex: Int, mix: Double) {
@@ -3150,7 +3011,7 @@ class MainActivity : AppCompatActivity() {
             val value = mix.toFloat().coerceIn(0f, 1f)
             entry.put("mix", value.toDouble())
             persistFxNativeChain(entries)
-            nativeSetFxNativeMix(nativeIndex, value)
+            audioEngine.nativeSetFxNativeMix(nativeIndex, value)
         }
 
         override fun setFxNativeParameter(nativeIndex: Int, parameter: Int, value: Double) {
@@ -3166,13 +3027,13 @@ class MainActivity : AppCompatActivity() {
             }
             entry.put("param${parameter + 1}", normalized.toDouble())
             persistFxNativeChain(entries)
-            nativeSetFxNativeParameter(nativeIndex, parameter, normalized)
+            audioEngine.nativeSetFxNativeParameter(nativeIndex, parameter, normalized)
         }
 
         override fun setFxNativeType(nativeIndex: Int, effect: Int) {
             val entries = readFxNativeChain()
             val entry = entries.getOrNull(nativeIndex) ?: return
-            val wasRunning = nativeIsRunning()
+            val wasRunning = audioEngine.nativeIsRunning()
             val selected = effect.coerceIn(0, 3)
             entry.put("effect", selected)
             entry.put("param1", when (selected) { 0, 1 -> 350.0; 2 -> 1500.0; else -> 150.0 })
@@ -3180,60 +3041,60 @@ class MainActivity : AppCompatActivity() {
             entry.put("param3", 12.0)
             persistFxNativeChain(entries)
             syncFxNativeChain(entries, reset = true)
-            if (wasRunning) nativeStart()
+            if (wasRunning) audioEngine.nativeStart()
         }
 
         override fun setCabinetBypass(bypassed: Boolean) {
-            nativeSetImpulseResponseBypass(bypassed)
+            audioEngine.nativeSetImpulseResponseBypass(bypassed)
             prefs.edit().putBoolean(PREF_CABINET_IR_BYPASS, bypassed).apply()
         }
 
         fun moveCabinet(direction: Int) {
-            val maxPosition = nativeGetNamBlockCount().coerceIn(0, MAX_NAM_BLOCKS)
+            val maxPosition = audioEngine.nativeGetNamBlockCount().coerceIn(0, MAX_NAM_BLOCKS)
             val current = prefs.getInt(PREF_CABINET_IR_POSITION, maxPosition).coerceIn(0, maxPosition)
             val next = (current + direction.coerceIn(-1, 1)).coerceIn(0, maxPosition)
-            nativeSetImpulseResponsePosition(next)
+            audioEngine.nativeSetImpulseResponsePosition(next)
             prefs.edit().putInt(PREF_CABINET_IR_POSITION, next).apply()
         }
 
         override fun setCabinetInGain(db: Double) {
             val value = db.toFloat().coerceIn(-24.0f, 24.0f)
-            nativeSetImpulseResponseInGainDb(value)
+            audioEngine.nativeSetImpulseResponseInGainDb(value)
             prefs.edit().putFloat(PREF_CABINET_IR_IN_GAIN, value).apply()
         }
 
         override fun setCabinetOutGain(db: Double) {
             val value = db.toFloat().coerceIn(-24.0f, 12.0f)
-            nativeSetImpulseResponseOutGainDb(value)
+            audioEngine.nativeSetImpulseResponseOutGainDb(value)
             prefs.edit().putFloat(PREF_CABINET_IR_OUT_GAIN, value).apply()
         }
 
         override fun setCabinetMix(mix: Double) {
             val value = mix.toFloat().coerceIn(0.0f, 1.0f)
-            nativeSetImpulseResponseMix(value)
+            audioEngine.nativeSetImpulseResponseMix(value)
             prefs.edit().putFloat(PREF_CABINET_IR_MIX, value).apply()
         }
 
         override fun setCabinetEq(band: Int, db: Double) {
             if (band !in 0 until 6) return
             val value = db.toFloat().coerceIn(-12.0f, 12.0f)
-            nativeSetImpulseResponseEqDb(band, value)
+            audioEngine.nativeSetImpulseResponseEqDb(band, value)
             prefs.edit().putFloat(PREF_CABINET_IR_EQ_PREFIX + band, value).apply()
         }
 
         fun setCabinetEqPosition(pre: Boolean) {
-            nativeSetImpulseResponseEqPre(pre)
+            audioEngine.nativeSetImpulseResponseEqPre(pre)
             prefs.edit().putBoolean(PREF_CABINET_IR_EQ_PRE, pre).apply()
         }
 
         override fun setCabinetEqEnabled(enabled: Boolean) {
-            nativeSetImpulseResponseEqEnabled(enabled)
+            audioEngine.nativeSetImpulseResponseEqEnabled(enabled)
             prefs.edit().putBoolean(PREF_CABINET_IR_EQ_ENABLED, enabled).apply()
         }
 
 
         fun changeNam(chainIndex: Int) {
-            if (chainIndex !in 0 until nativeGetNamBlockCount()) {
+            if (chainIndex !in 0 until audioEngine.nativeGetNamBlockCount()) {
                 return
             }
 
@@ -3313,7 +3174,7 @@ class MainActivity : AppCompatActivity() {
                 val requested = JSONArray(blockIdsJson)
                     .let { array -> (0 until array.length()).map { array.optString(it) } }
                 val entries = readNamChainEntries()
-                val wasRunning = nativeIsRunning()
+                val wasRunning = audioEngine.nativeIsRunning()
                 val fxEntries = readFxChain()
                 val orderedIndices = requested
                     .filter { it.startsWith("nam-") }
@@ -3347,18 +3208,18 @@ class MainActivity : AppCompatActivity() {
                 if (result.startsWith("NAM CHAIN READY")) {
                     persistNamChainEntries(reordered)
                     prefs.edit().putInt(PREF_CABINET_IR_POSITION, cabinetPosition).apply()
-                    nativeSetImpulseResponsePosition(cabinetPosition)
-                    for (slot in 0 until 8) nativeClearFxImpulseResponse(slot)
+                    audioEngine.nativeSetImpulseResponsePosition(cabinetPosition)
+                    for (slot in 0 until 8) audioEngine.nativeClearFxImpulseResponse(slot)
                     reorderedFx.forEachIndexed { slot, item ->
-                        val loaded = nativeLoadFxImpulseResponse(slot, item.optString("path"))
+                        val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, item.optString("path"))
                         if (!loaded.startsWith("FX LOADED")) return false
                         item.put("position", fxPositions[requestedFxIndices.getOrNull(slot)] ?: reordered.size)
-                        nativeSetFxImpulseResponseBypass(slot, item.optBoolean("bypass", false))
-                        nativeSetFxImpulseResponseMix(slot, item.optDouble("mix", 0.5).toFloat())
-                        nativeSetFxImpulseResponsePosition(slot, item.optInt("position").coerceIn(0, reordered.size))
+                        audioEngine.nativeSetFxImpulseResponseBypass(slot, item.optBoolean("bypass", false))
+                        audioEngine.nativeSetFxImpulseResponseMix(slot, item.optDouble("mix", 0.5).toFloat())
+                        audioEngine.nativeSetFxImpulseResponsePosition(slot, item.optInt("position").coerceIn(0, reordered.size))
                     }
                     persistFxChain(reorderedFx)
-                    val audio = if (wasRunning && (reordered.isNotEmpty() || reorderedFx.isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null)) nativeStart() else ""
+                    val audio = if (wasRunning && (reordered.isNotEmpty() || reorderedFx.isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null)) audioEngine.nativeStart() else ""
                     runOnUiThread { status.text = if (audio.isBlank()) result else "$result\n$audio" }
                     true
                 } else {
@@ -3380,15 +3241,15 @@ class MainActivity : AppCompatActivity() {
 
         fun resetToDefault(): Boolean {
             return try {
-                nativeClearNamChain()
-                nativeClearImpulseResponse()
-                for (slot in 0 until 8) nativeClearFxImpulseResponse(slot)
+                audioEngine.nativeClearNamChain()
+                audioEngine.nativeClearImpulseResponse()
+                for (slot in 0 until 8) audioEngine.nativeClearFxImpulseResponse(slot)
                 clearPersistedModel()
                 persistExtraNamChain(emptyList())
-                nativeSetEqLowDb(0.0f)
-                nativeSetEqMidDb(0.0f)
-                nativeSetEqHighDb(0.0f)
-                nativeSetEqEnabled(true)
+                audioEngine.nativeSetEqLowDb(0.0f)
+                audioEngine.nativeSetEqMidDb(0.0f)
+                audioEngine.nativeSetEqHighDb(0.0f)
+                audioEngine.nativeSetEqEnabled(true)
                 prefs.edit()
                     .putFloat(PREF_EQ_LOW, 0.0f)
                     .putFloat(PREF_EQ_MID, 0.0f)
@@ -3411,7 +3272,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     .apply()
                 bypass = false
-                nativeSetBypass(false)
+                audioEngine.nativeSetBypass(false)
                 true
             } catch (error: Exception) {
                 Log.e(API_TAG, "Reset to default failed", error)
@@ -3425,7 +3286,7 @@ class MainActivity : AppCompatActivity() {
             enabled: Boolean
         ) {
 
-            nativeSetChainNamBypass(
+            audioEngine.nativeSetChainNamBypass(
                 chainIndex,
                 enabled
             )
@@ -3495,7 +3356,7 @@ class MainActivity : AppCompatActivity() {
             val all = entries.toMutableList()
             all[chainIndex] = all[chainIndex].copy(inGainDb = value)
             persistNamChainEntries(all)
-            nativeSetChainNamInGainDb(chainIndex, value)
+            audioEngine.nativeSetChainNamInGainDb(chainIndex, value)
         }
 
         override fun setNamMix(chainIndex: Int, mix: Double) {
@@ -3505,7 +3366,7 @@ class MainActivity : AppCompatActivity() {
             val all = entries.toMutableList()
             all[chainIndex] = all[chainIndex].copy(mix = value)
             persistNamChainEntries(all)
-            nativeSetChainNamMix(chainIndex, value)
+            audioEngine.nativeSetChainNamMix(chainIndex, value)
         }
 
         override fun setNamEq(chainIndex: Int, band: Int, db: Double) {
@@ -3518,7 +3379,7 @@ class MainActivity : AppCompatActivity() {
             val all = entries.toMutableList()
             all[chainIndex] = all[chainIndex].copy(eqPre = pre)
             persistNamChainEntries(all)
-            nativeSetChainNamEqPre(chainIndex, pre)
+            audioEngine.nativeSetChainNamEqPre(chainIndex, pre)
         }
 
         override fun setNamEqEnabled(chainIndex: Int, enabled: Boolean) {
@@ -3532,7 +3393,7 @@ class MainActivity : AppCompatActivity() {
                 all[extraIndex] = all[extraIndex].copy(eqEnabled = enabled)
                 persistNamChainEntries(all)
             }
-            nativeSetChainNamEqEnabled(chainIndex, enabled)
+            audioEngine.nativeSetChainNamEqEnabled(chainIndex, enabled)
         }
 
         override fun setNamNormalize(chainIndex: Int, enabled: Boolean) {
@@ -3541,7 +3402,7 @@ class MainActivity : AppCompatActivity() {
             val all = entries.toMutableList()
             all[chainIndex] = all[chainIndex].copy(normalize = enabled)
             persistNamChainEntries(all)
-            nativeSetChainNamNormalize(chainIndex, enabled)
+            audioEngine.nativeSetChainNamNormalize(chainIndex, enabled)
         }
 
         override fun setNamQuality(chainIndex: Int, full: Boolean) {
@@ -3551,7 +3412,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { status.text = "A2 Full is available for AMP blocks only." }
                 return
             }
-            val result = nativeSetChainNamQuality(chainIndex, full)
+            val result = audioEngine.nativeSetChainNamQuality(chainIndex, full)
             if (!result.startsWith("A2 ")) {
                 runOnUiThread { status.text = result }
                 return
@@ -3580,8 +3441,8 @@ class MainActivity : AppCompatActivity() {
             val all = entries.toMutableList()
             all[chainIndex] = updated
             persistNamChainEntries(all)
-            if (control == 0) nativeSetChainNamGainDb(chainIndex, value)
-            else nativeSetChainNamEqDb(chainIndex, control - 1, value)
+            if (control == 0) audioEngine.nativeSetChainNamGainDb(chainIndex, value)
+            else audioEngine.nativeSetChainNamEqDb(chainIndex, control - 1, value)
         }
 
 
@@ -3685,21 +3546,21 @@ class MainActivity : AppCompatActivity() {
 
         override fun scanUsbAudio(): String {
 
-            return nativeScanUsbAudio()
+            return audioEngine.nativeScanUsbAudio()
         }
 
 
         fun getStats(): String {
 
-            return nativeGetStats()
+            return audioEngine.nativeGetStats()
         }
 
         fun getAudioDeviceState(): String {
             return JSONObject()
-                .put("running", nativeIsRunning())
+                .put("running", audioEngine.nativeIsRunning())
                 .put("standalone", true)
                 .put("deviceType", "TinyALSA")
-                .put("deviceName", nativeGetAudioDeviceInfo())
+                .put("deviceName", audioEngine.nativeGetAudioDeviceInfo())
                 .put("sampleRate", 48000)
                 .put("bufferSize", 128)
                 .put("inputChannels", 2)
@@ -3710,12 +3571,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         fun restartAudioDevice(): String {
-            nativeStop()
-            return nativeStart()
+            audioEngine.nativeStop()
+            return audioEngine.nativeStart()
         }
 
         fun getAudioInputLevels(): String {
-            return nativeGetStats()
+            return audioEngine.nativeGetStats()
         }
 
 
@@ -3748,11 +3609,11 @@ class MainActivity : AppCompatActivity() {
             )
 
 
-        nativeSetInputChannel(
+        audioEngine.nativeSetInputChannel(
             inputChannel
         )
 
-        nativeSetOutputPair(
+        audioEngine.nativeSetOutputPair(
             outputPair
         )
 
@@ -3765,7 +3626,7 @@ class MainActivity : AppCompatActivity() {
 
         routingText.text =
             "\n" +
-                    nativeGetRoutingInfo()
+                    audioEngine.nativeGetRoutingInfo()
     }
 
 
@@ -3806,7 +3667,7 @@ class MainActivity : AppCompatActivity() {
 
                 if (!applyingPresetUi) {
 
-                    nativeSetter(
+                    audioEngine.nativeSetter(
                         db
                     )
                 }
@@ -3874,27 +3735,27 @@ class MainActivity : AppCompatActivity() {
             )
 
 
-        nativeSetGateEnabled(
+        audioEngine.nativeSetGateEnabled(
             gateEnabled
         )
 
-        nativeSetGateThresholdDb(
+        audioEngine.nativeSetGateThresholdDb(
             gateThreshold
         )
 
-        nativeSetEqLowDb(
+        audioEngine.nativeSetEqLowDb(
             lowDb
         )
 
-        nativeSetEqMidDb(
+        audioEngine.nativeSetEqMidDb(
             midDb
         )
 
-        nativeSetEqHighDb(
+        audioEngine.nativeSetEqHighDb(
             highDb
         )
 
-        nativeSetEqEnabled(
+        audioEngine.nativeSetEqEnabled(
             prefs.getBoolean(PREF_EQ_ENABLED, true)
         )
 
@@ -3958,7 +3819,7 @@ class MainActivity : AppCompatActivity() {
 
         dspChainText.text =
             "\n" +
-                    nativeGetDspChainInfo()
+                    audioEngine.nativeGetDspChainInfo()
     }
 
 
@@ -4789,7 +4650,7 @@ class MainActivity : AppCompatActivity() {
             try {
 
                 val result =
-                    nativeSwitchPresetGapless(
+                    audioEngine.nativeSwitchPresetGapless(
                         preset.modelPath,
                         preset.inputGainDb,
                         preset.outputGainDb,
@@ -4933,16 +4794,16 @@ class MainActivity : AppCompatActivity() {
                 val restoredChain = rebuildNativeNamChain(readNamChainEntries())
                 val irPath = preset.cabinetIrPath
                 if (irPath != null && File(irPath).exists()) {
-                    nativeLoadImpulseResponse(irPath)
-                    nativeSetImpulseResponseBypass(preset.cabinetIrBypass)
-                    nativeSetImpulseResponsePosition(preset.cabinetIrPosition)
-                    nativeSetImpulseResponseInGainDb(preset.cabinetIrInGain)
-                    nativeSetImpulseResponseOutGainDb(preset.cabinetIrOutGain)
-                    nativeSetImpulseResponseMix(preset.cabinetIrMix)
-                    nativeSetImpulseResponseEqPre(presetCabinetEqPre(preset.slot))
-                    for (band in 0 until 6) nativeSetImpulseResponseEqDb(band, presetCabinetEq(preset.slot, band))
+                    audioEngine.nativeLoadImpulseResponse(irPath)
+                    audioEngine.nativeSetImpulseResponseBypass(preset.cabinetIrBypass)
+                    audioEngine.nativeSetImpulseResponsePosition(preset.cabinetIrPosition)
+                    audioEngine.nativeSetImpulseResponseInGainDb(preset.cabinetIrInGain)
+                    audioEngine.nativeSetImpulseResponseOutGainDb(preset.cabinetIrOutGain)
+                    audioEngine.nativeSetImpulseResponseMix(preset.cabinetIrMix)
+                    audioEngine.nativeSetImpulseResponseEqPre(presetCabinetEqPre(preset.slot))
+                    for (band in 0 until 6) audioEngine.nativeSetImpulseResponseEqDb(band, presetCabinetEq(preset.slot, band))
                 } else {
-                    nativeClearImpulseResponse()
+                    audioEngine.nativeClearImpulseResponse()
                 }
 
 
@@ -5054,11 +4915,11 @@ class MainActivity : AppCompatActivity() {
                     bypass =
                         false
 
-                    nativeSetBypass(
+                    audioEngine.nativeSetBypass(
                         false
                     )
 
-                    val audioResult = nativeStart()
+                    val audioResult = audioEngine.nativeStart()
                     status.text = status.text.toString() + "\n\n" + audioResult
 
                     updateBypassButton()
@@ -5145,11 +5006,11 @@ class MainActivity : AppCompatActivity() {
             )
 
 
-        nativeSetInputGainDb(
+        audioEngine.nativeSetInputGainDb(
             inputGain
         )
 
-        nativeSetOutputGainDb(
+        audioEngine.nativeSetOutputGainDb(
             outputGain
         )
 
@@ -5193,7 +5054,7 @@ class MainActivity : AppCompatActivity() {
             if (extraEntries.isNotEmpty()) {
                 Thread {
                     val restored = rebuildNativeNamChain(extraEntries)
-                    val audio = if (restored.startsWith("NAM CHAIN READY")) nativeStart() else restored
+                    val audio = if (restored.startsWith("NAM CHAIN READY")) audioEngine.nativeStart() else restored
                     runOnUiThread {
                         startButton.isEnabled = restored.startsWith("NAM CHAIN READY")
                         status.text = restored + "\n" + audio
@@ -5260,7 +5121,7 @@ class MainActivity : AppCompatActivity() {
         Thread {
 
             val result =
-                nativeLoadModel(
+                audioEngine.nativeLoadModel(
                     file.absolutePath
                 )
 
@@ -5276,23 +5137,23 @@ class MainActivity : AppCompatActivity() {
                     applyPersistedNamControls()
                     val irPath = prefs.getString(PREF_CABINET_IR_PATH, null)
                     if (irPath != null && File(irPath).exists()) {
-                        nativeLoadImpulseResponse(irPath)
-                        nativeSetImpulseResponseBypass(prefs.getBoolean(PREF_CABINET_IR_BYPASS, false))
-                        nativeSetImpulseResponsePosition(prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS))
-                        nativeSetImpulseResponseInGainDb(prefs.getFloat(PREF_CABINET_IR_IN_GAIN, 0.0f))
-                        nativeSetImpulseResponseOutGainDb(prefs.getFloat(PREF_CABINET_IR_OUT_GAIN, 0.0f))
-                        nativeSetImpulseResponseMix(prefs.getFloat(PREF_CABINET_IR_MIX, 1.0f))
-                        nativeSetImpulseResponseEqPre(prefs.getBoolean(PREF_CABINET_IR_EQ_PRE, false))
-                        nativeSetImpulseResponseEqEnabled(prefs.getBoolean(PREF_CABINET_IR_EQ_ENABLED, true))
-                        for (band in 0 until 6) nativeSetImpulseResponseEqDb(band, prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + band, 0.0f))
+                        audioEngine.nativeLoadImpulseResponse(irPath)
+                        audioEngine.nativeSetImpulseResponseBypass(prefs.getBoolean(PREF_CABINET_IR_BYPASS, false))
+                        audioEngine.nativeSetImpulseResponsePosition(prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS))
+                        audioEngine.nativeSetImpulseResponseInGainDb(prefs.getFloat(PREF_CABINET_IR_IN_GAIN, 0.0f))
+                        audioEngine.nativeSetImpulseResponseOutGainDb(prefs.getFloat(PREF_CABINET_IR_OUT_GAIN, 0.0f))
+                        audioEngine.nativeSetImpulseResponseMix(prefs.getFloat(PREF_CABINET_IR_MIX, 1.0f))
+                        audioEngine.nativeSetImpulseResponseEqPre(prefs.getBoolean(PREF_CABINET_IR_EQ_PRE, false))
+                        audioEngine.nativeSetImpulseResponseEqEnabled(prefs.getBoolean(PREF_CABINET_IR_EQ_ENABLED, true))
+                        for (band in 0 until 6) audioEngine.nativeSetImpulseResponseEqDb(band, prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + band, 0.0f))
                     }
                     readFxChain().forEachIndexed { slot, fx ->
-                        val loaded = nativeLoadFxImpulseResponse(slot, fx.optString("path"))
+                        val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, fx.optString("path"))
                         if (loaded.startsWith("FX LOADED")) {
-                            nativeSetFxImpulseResponseBypass(slot, fx.optBoolean("bypass", false))
-                            nativeSetFxImpulseResponseMix(slot, fx.optDouble("mix", 0.5).toFloat())
-                            val namCount = nativeGetNamBlockCount()
-                            nativeSetFxImpulseResponsePosition(slot, fx.optInt("position", namCount).coerceIn(0, namCount))
+                            audioEngine.nativeSetFxImpulseResponseBypass(slot, fx.optBoolean("bypass", false))
+                            audioEngine.nativeSetFxImpulseResponseMix(slot, fx.optDouble("mix", 0.5).toFloat())
+                            val namCount = audioEngine.nativeGetNamBlockCount()
+                            audioEngine.nativeSetFxImpulseResponsePosition(slot, fx.optInt("position", namCount).coerceIn(0, namCount))
                         }
                     }
                     restored
@@ -5349,7 +5210,7 @@ class MainActivity : AppCompatActivity() {
                     bypass =
                         false
 
-                    nativeSetBypass(
+                    audioEngine.nativeSetBypass(
                         false
                     )
 
@@ -5415,7 +5276,7 @@ class MainActivity : AppCompatActivity() {
          * but the currently persisted/current DSP remains available until
          * a new capture has been downloaded and loaded successfully.
          */
-        nativeStop()
+        audioEngine.nativeStop()
 
         startButton.isEnabled =
             false
@@ -6302,7 +6163,7 @@ class MainActivity : AppCompatActivity() {
                     .toIntOrNull()
 
 
-                nativeStop()
+                audioEngine.nativeStop()
 
 
                 pendingFile =
@@ -6361,7 +6222,7 @@ class MainActivity : AppCompatActivity() {
 
 
                     val addResult =
-                        nativeAddChainModel(
+                        audioEngine.nativeAddChainModel(
                             committedExtra.absolutePath
                         )
 
@@ -6380,20 +6241,20 @@ class MainActivity : AppCompatActivity() {
                         )
                     }
 
-                    val addedChainIndex = nativeGetNamBlockCount() - 1
-                    nativeSetChainNamBypass(addedChainIndex, false)
-                    nativeSetChainNamInGainDb(addedChainIndex, 0.0f)
-                    nativeSetChainNamMix(addedChainIndex, 1.0f)
+                    val addedChainIndex = audioEngine.nativeGetNamBlockCount() - 1
+                    audioEngine.nativeSetChainNamBypass(addedChainIndex, false)
+                    audioEngine.nativeSetChainNamInGainDb(addedChainIndex, 0.0f)
+                    audioEngine.nativeSetChainNamMix(addedChainIndex, 1.0f)
                     val addedLevelDb = if (moduleType == "PEDAL") -10.0f else -15.0f
-                    nativeSetChainNamGainDb(addedChainIndex, addedLevelDb)
+                    audioEngine.nativeSetChainNamGainDb(addedChainIndex, addedLevelDb)
                     for (band in 0 until 6) {
-                        nativeSetChainNamEqDb(addedChainIndex, band, 0.0f)
+                        audioEngine.nativeSetChainNamEqDb(addedChainIndex, band, 0.0f)
                     }
-                    nativeSetChainNamEqPre(addedChainIndex, false)
-                    nativeSetChainNamNormalize(addedChainIndex, moduleType != "PEDAL")
-                    nativeSetChainNamEqEnabled(addedChainIndex, true)
+                    audioEngine.nativeSetChainNamEqPre(addedChainIndex, false)
+                    audioEngine.nativeSetChainNamNormalize(addedChainIndex, moduleType != "PEDAL")
+                    audioEngine.nativeSetChainNamEqEnabled(addedChainIndex, true)
                     val addedA2Full = moduleType == "AMP"
-                    nativeSetChainNamQuality(addedChainIndex, addedA2Full)
+                    audioEngine.nativeSetChainNamQuality(addedChainIndex, addedA2Full)
 
 
                     val entries =
@@ -6440,7 +6301,7 @@ class MainActivity : AppCompatActivity() {
                         )
                     )
 
-                    val audioResult = nativeStart()
+                    val audioResult = audioEngine.nativeStart()
 
 
                     persistExtraNamChain(
@@ -6531,7 +6392,7 @@ class MainActivity : AppCompatActivity() {
                         throw RuntimeException(replaceResult)
                     }
 
-                    val audioResult = nativeStart()
+                    val audioResult = audioEngine.nativeStart()
 
                     persistNamChainEntries(entries)
                     if (previous.path != committed.absolutePath) {
@@ -6559,7 +6420,7 @@ class MainActivity : AppCompatActivity() {
 
 
                 val loadResult =
-                    nativeLoadModel(
+                    audioEngine.nativeLoadModel(
                         downloaded.absolutePath
                     )
 
@@ -6577,16 +6438,16 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 if (moduleType == "PEDAL") {
-                    nativeSetChainNamGainDb(0, -10.0f)
-                    nativeSetChainNamInGainDb(0, 0.0f)
-                    nativeSetChainNamMix(0, 1.0f)
-                    for (band in 0 until 6) nativeSetChainNamEqDb(0, band, 0.0f)
-                    nativeSetChainNamEqPre(0, false)
-                    nativeSetChainNamEqEnabled(0, true)
-                    nativeSetChainNamNormalize(0, false)
+                    audioEngine.nativeSetChainNamGainDb(0, -10.0f)
+                    audioEngine.nativeSetChainNamInGainDb(0, 0.0f)
+                    audioEngine.nativeSetChainNamMix(0, 1.0f)
+                    for (band in 0 until 6) audioEngine.nativeSetChainNamEqDb(0, band, 0.0f)
+                    audioEngine.nativeSetChainNamEqPre(0, false)
+                    audioEngine.nativeSetChainNamEqEnabled(0, true)
+                    audioEngine.nativeSetChainNamNormalize(0, false)
                 }
-                nativeSetChainNamQuality(0, moduleType == "AMP")
-                val audioResult = nativeStart()
+                audioEngine.nativeSetChainNamQuality(0, moduleType == "AMP")
+                val audioResult = audioEngine.nativeStart()
 
 
                 /*
@@ -6647,7 +6508,7 @@ class MainActivity : AppCompatActivity() {
                         false
 
 
-                    nativeSetBypass(
+                    audioEngine.nativeSetBypass(
                         false
                     )
 
@@ -6694,7 +6555,7 @@ class MainActivity : AppCompatActivity() {
                         bypass =
                             false
 
-                        nativeSetBypass(
+                        audioEngine.nativeSetBypass(
                             false
                         )
 
@@ -7024,7 +6885,7 @@ class MainActivity : AppCompatActivity() {
         return try {
 
             val result =
-                nativeLoadModel(
+                audioEngine.nativeLoadModel(
                     file.absolutePath
                 )
 
