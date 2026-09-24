@@ -80,31 +80,11 @@ and also enables permissive SELinux. Remove it with
 `root-service/uninstall-adb-userdebug.sh`. ADB root for a single session is not
 by itself a persistent boot service.
 
-## Optional web frontend
-
-The `ui/` directory contains the React/TypeScript tree of the official TONE3000
-frontend, under MIT (`ui/TONE3000-PLUGIN-LICENSE`). Its JUCE bridge was replaced
-by `ui/src/backend/AndroidBackend.ts`, which maps state and chain controls to
-`Tone3000Android`; the audio backend remains this app's TinyALSA/NAM engine.
-The legacy UI remains as a fallback while adapting JUCE features without direct
-Android equivalents, such as OAuth, MIDI, and stereo.
-
-To build the bundle without changing the APK:
-
-```bash
-cd ui
-npm install --no-audit --no-fund
-npm run build
-```
-
-Imported code and dependencies remain subject to their own licenses. Include
-the official frontend's MIT notice with any distribution.
-
 ## Signal-chain architecture
 
-The UI exposes an ordered chain of typed blocks. NAM and Cabinet/IR blocks can
-be moved in the chain; FXNative blocks are processed after the NAM/CAB stages
-and do not make the NAM engine stereo. Presets persist the chain and its
+The app maintains an ordered chain of typed blocks. NAM and Cabinet/IR blocks
+can be moved in the chain; FXNative blocks are processed after the NAM/CAB
+stages and do not make the NAM engine stereo. Presets persist the chain and its
 corresponding controls.
 
 Each NAM has In Gain, Mix, Out Gain, normalization, A2 Lite/Full, bypass, and a
