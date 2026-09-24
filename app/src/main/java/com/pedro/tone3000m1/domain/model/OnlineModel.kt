@@ -1,4 +1,4 @@
-package com.pedro.tone3000m1.data.model
+package com.pedro.tone3000m1.domain.model
 
 internal data class OnlineModel(
     val id: Long,

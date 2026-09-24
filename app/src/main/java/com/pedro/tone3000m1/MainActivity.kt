@@ -8,7 +8,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.util.Base64
 import android.util.Log
 import android.view.View
 import android.view.WindowManager
@@ -29,7 +28,6 @@ import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import com.pedro.tone3000m1.data.model.ExtraNamEntry
-import com.pedro.tone3000m1.data.model.OnlineModel
 import com.pedro.tone3000m1.data.model.PicoloStateSnapshot
 import com.pedro.tone3000m1.data.repository.NamChainRepository
 import com.pedro.tone3000m1.data.repository.FxChainRepository
@@ -38,24 +36,25 @@ import com.pedro.tone3000m1.data.repository.AudioRoutingRepositoryImpl
 import com.pedro.tone3000m1.data.repository.PresetPreferenceKeys
 import com.pedro.tone3000m1.data.repository.PicoloStateRepository
 import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
+import com.pedro.tone3000m1.data.repository.ToneImportRepositoryImpl
+import com.pedro.tone3000m1.data.repository.ToneSessionRepositoryImpl
 import com.pedro.tone3000m1.domain.usecase.AudioRoutingUseCase
 import com.pedro.tone3000m1.domain.usecase.LoadPresetUseCase
 import com.pedro.tone3000m1.domain.usecase.SavePresetUseCase
 import com.pedro.tone3000m1.domain.model.PresetData
+import com.pedro.tone3000m1.domain.model.OnlineModel
 import com.pedro.tone3000m1.domain.repository.PresetRepository
+import com.pedro.tone3000m1.domain.usecase.CompleteToneSelectionUseCase
+import com.pedro.tone3000m1.domain.usecase.CommitCurrentToneModelUseCase
+import com.pedro.tone3000m1.domain.usecase.CommitExtraToneModelUseCase
+import com.pedro.tone3000m1.domain.usecase.DownloadToneModelUseCase
+import com.pedro.tone3000m1.domain.usecase.ImportLocalNamFileUseCase
+import com.pedro.tone3000m1.domain.usecase.ListToneModelsUseCase
+import com.pedro.tone3000m1.domain.usecase.PrepareImpulseResponseUseCase
+import com.pedro.tone3000m1.domain.usecase.PrepareToneAuthorizationUseCase
 import com.pedro.tone3000m1.ui.actions.PicoloActions
 import java.io.File
 import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
-import java.nio.charset.StandardCharsets
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
-import java.security.MessageDigest
-import java.security.SecureRandom
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -85,18 +84,6 @@ class MainActivity : AppCompatActivity() {
 
         private const val PREFS =
             "tone3000"
-
-        private const val PREF_VERIFIER =
-            "pkce_verifier"
-
-        private const val PREF_STATE =
-            "oauth_state"
-
-        private const val PREF_ACCESS_TOKEN =
-            "access_token"
-
-        private const val PREF_REFRESH_TOKEN =
-            "refresh_token"
 
         private const val PREF_LAST_MODEL_PATH =
             PresetPreferenceKeys.LAST_MODEL_PATH
@@ -330,6 +317,46 @@ class MainActivity : AppCompatActivity() {
 
     private val tone3000ApiRepository by lazy {
         Tone3000ApiRepository(API_BASE, PUBLISHABLE_KEY, REDIRECT_URI)
+    }
+
+    private val toneSessionRepository by lazy {
+        ToneSessionRepositoryImpl(prefs)
+    }
+
+    private val toneImportRepository by lazy {
+        ToneImportRepositoryImpl(filesDir)
+    }
+
+    private val prepareToneAuthorizationUseCase by lazy {
+        PrepareToneAuthorizationUseCase(toneSessionRepository)
+    }
+
+    private val completeToneSelectionUseCase by lazy {
+        CompleteToneSelectionUseCase(tone3000ApiRepository, toneSessionRepository)
+    }
+
+    private val listToneModelsUseCase by lazy {
+        ListToneModelsUseCase(tone3000ApiRepository)
+    }
+
+    private val downloadToneModelUseCase by lazy {
+        DownloadToneModelUseCase(tone3000ApiRepository, toneImportRepository)
+    }
+
+    private val importLocalNamFileUseCase by lazy {
+        ImportLocalNamFileUseCase(toneImportRepository)
+    }
+
+    private val prepareImpulseResponseUseCase by lazy {
+        PrepareImpulseResponseUseCase(toneImportRepository)
+    }
+
+    private val commitCurrentToneModelUseCase by lazy {
+        CommitCurrentToneModelUseCase(toneImportRepository)
+    }
+
+    private val commitExtraToneModelUseCase by lazy {
+        CommitExtraToneModelUseCase(toneImportRepository)
     }
 
 
@@ -1608,57 +1635,6 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    private fun commitExtraDownloadedModel(
-        pendingFile: File,
-        modelId: Long
-    ): File {
-
-        val destination =
-            File(
-                filesDir,
-                "chain-nam-" +
-                        System.currentTimeMillis() +
-                        "-" +
-                        modelId +
-                        ".nam"
-            )
-
-
-        try {
-
-            Files.move(
-                pendingFile.toPath(),
-                destination.toPath(),
-                StandardCopyOption.ATOMIC_MOVE
-            )
-
-        } catch (
-            _: AtomicMoveNotSupportedException
-        ) {
-
-            Files.move(
-                pendingFile.toPath(),
-                destination.toPath()
-            )
-        }
-
-
-        if (
-            !destination.exists() ||
-            destination.length() ==
-            0L
-        ) {
-
-            throw RuntimeException(
-                "Failed to commit extra NAM block."
-            )
-        }
-
-
-        return destination
-    }
-
-
     private fun clearExtraNamChain() {
 
         Thread {
@@ -2406,16 +2382,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         fun setAccessToken(token: String): Boolean {
-            val value = token.trim()
-            if (value.isBlank()) {
-                prefs.edit()
-                    .remove(PREF_ACCESS_TOKEN)
-                    .remove(PREF_REFRESH_TOKEN)
-                    .apply()
-                return false
-            }
-            prefs.edit().putString(PREF_ACCESS_TOKEN, value).apply()
-            return true
+            return toneSessionRepository.saveAccessToken(token)
         }
 
 
@@ -2496,14 +2463,9 @@ class MainActivity : AppCompatActivity() {
                 if (files.length() == 0) return JSONObject().put("error", "No local file").toString()
                 val source = files.getJSONObject(0)
                 val name = source.optString("name", "$title.nam")
-                if (!name.lowercase(Locale.US).endsWith(".nam")) {
-                    return JSONObject().put("error", "Only .nam files are supported on Android").toString()
-                }
                 val encoded = source.optString("data")
-                if (encoded.isBlank()) return JSONObject().put("error", "Empty local file").toString()
-                val safeName = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
-                val destination = File(filesDir, "local-${System.currentTimeMillis()}-$safeName")
-                destination.writeBytes(Base64.decode(encoded, Base64.DEFAULT))
+                val importedFile = importLocalNamFileUseCase.execute(name, encoded)
+                val destination = importedFile.file
 
                 val entries = readNamChainEntries().toMutableList()
                 val requested = targetBlockId.removePrefix("nam-").toIntOrNull()
@@ -2516,7 +2478,7 @@ class MainActivity : AppCompatActivity() {
                     toneId = "local-${destination.name}",
                     toneTitle = title,
                     modelId = 0L,
-                    modelName = name.removeSuffix(".nam"),
+                            modelName = importedFile.originalName.removeSuffix(".nam"),
                     size = "unknown",
                     path = destination.absolutePath,
                     bypass = false,
@@ -2592,7 +2554,7 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
 
-            val token = prefs.getString(PREF_ACCESS_TOKEN, null)
+            val token = toneSessionRepository.accessToken()
             if (token.isNullOrBlank()) {
                 runOnUiThread {
                     showPackageCaptureUnavailable("Sign in to TONE3000 to view this package's captures.")
@@ -2606,7 +2568,7 @@ class MainActivity : AppCompatActivity() {
             Thread {
                 try {
                     val architecture = if (source.moduleType == "FX" || source.moduleType == "IR") null else 2
-                    val freshModels = tone3000ApiRepository.listModels(source.toneId, token, architecture)
+                    val freshModels = listToneModelsUseCase.execute(source.toneId, token, architecture)
                     val models = mergePackageCaptures(source.toneId, source.moduleType, freshModels)
                     if (models.isNotEmpty()) cachePackageCaptures(source.toneId, source.moduleType, models)
                     runOnUiThread {
@@ -2666,10 +2628,8 @@ class MainActivity : AppCompatActivity() {
             moduleType: String
         ) {
             try {
-                val destination = File(filesDir, "cabinet-${model.id}.wav")
-                if (destination.exists()) destination.delete()
-                val downloaded = downloadModel(model, token, destination)
-                val normalized = normalizeImpulseResponseWav(downloaded)
+                val downloaded = downloadToneModelUseCase.execute(model, token, "cabinet-${model.id}.wav")
+                val normalized = prepareImpulseResponseUseCase.execute(downloaded)
                 val result = audioEngine.nativeLoadImpulseResponse(normalized.absolutePath)
                 if (!result.startsWith("IR LOADED")) throw RuntimeException(result)
                 val position = audioEngine.nativeGetNamBlockCount()
@@ -2718,9 +2678,8 @@ class MainActivity : AppCompatActivity() {
                 if (entries.size >= 8 && targetIndex == null) throw IllegalStateException("FX chain full (maximum 8)")
                 val slot = targetIndex ?: entries.size
                 val replacedPath = targetIndex?.let { entries[it].optString("path") }
-                val destination = File(filesDir, "fx-space-${model.id}.wav")
-                if (destination.exists()) destination.delete()
-                val normalized = normalizeImpulseResponseWav(downloadModel(model, token, destination))
+                val downloaded = downloadToneModelUseCase.execute(model, token, "fx-space-${model.id}.wav")
+                val normalized = prepareImpulseResponseUseCase.execute(downloaded)
                 val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, normalized.absolutePath)
                 if (!loaded.startsWith("FX LOADED")) throw IllegalStateException(loaded)
                 val entry = JSONObject()
@@ -2777,75 +2736,6 @@ class MainActivity : AppCompatActivity() {
                     moduleType = moduleType
                 )
             }
-        }
-
-        /** Normalize downloaded cabinets to the mono PCM16 WAV accepted by the IR loader. */
-        private fun normalizeImpulseResponseWav(source: File): File {
-            val bytes = source.readBytes()
-            require(bytes.size >= 12 && String(bytes, 0, 4, Charsets.US_ASCII) == "RIFF" &&
-                String(bytes, 8, 4, Charsets.US_ASCII) == "WAVE") { "Invalid WAV header" }
-            val view = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-            var format = 0
-            var channels = 0
-            var sampleRate = 0
-            var bits = 0
-            var dataOffset = -1
-            var dataSize = 0
-            var cursor = 12
-            while (cursor + 8 <= bytes.size) {
-                val chunk = String(bytes, cursor, 4, Charsets.US_ASCII)
-                val size = view.getInt(cursor + 4)
-                if (size < 0 || cursor + 8L + size > bytes.size) break
-                when (chunk) {
-                    "fmt " -> if (size >= 16) {
-                        format = view.getShort(cursor + 8).toInt() and 0xffff
-                        channels = view.getShort(cursor + 10).toInt() and 0xffff
-                        sampleRate = view.getInt(cursor + 12)
-                        bits = view.getShort(cursor + 22).toInt() and 0xffff
-                    }
-                    "data" -> {
-                        dataOffset = cursor + 8
-                        dataSize = size
-                        break
-                    }
-                }
-                cursor += 8 + size + (size and 1)
-            }
-            require(format == 1 || format == 3) { "Unsupported WAV format $format" }
-            require(channels > 0 && sampleRate > 0 && dataOffset >= 0) { "Incomplete WAV" }
-            require((format == 3 && bits == 32) || (format == 1 && bits in setOf(8, 16, 24, 32))) {
-                "Unsupported WAV encoding $format/$bits"
-            }
-            val bytesPerSample = bits / 8
-            val frameBytes = channels * bytesPerSample
-            val frames = dataSize / frameBytes
-            val output = ByteBuffer.allocate(44 + frames * 2).order(ByteOrder.LITTLE_ENDIAN)
-            output.put("RIFF".toByteArray(Charsets.US_ASCII)).putInt(36 + frames * 2)
-                .put("WAVEfmt ".toByteArray(Charsets.US_ASCII)).putInt(16)
-                .putShort(1).putShort(1).putInt(sampleRate).putInt(sampleRate * 2)
-                .putShort(2).putShort(16).put("data".toByteArray(Charsets.US_ASCII)).putInt(frames * 2)
-
-            fun sampleAsFloat(position: Int): Float = when {
-                format == 3 -> Float.fromBits(view.getInt(position))
-                bits == 8 -> ((bytes[position].toInt() and 0xff) - 128) / 128f
-                bits == 16 -> view.getShort(position) / 32768f
-                bits == 24 -> {
-                    val raw = (bytes[position].toInt() and 0xff) or
-                        ((bytes[position + 1].toInt() and 0xff) shl 8) or
-                        (bytes[position + 2].toInt() shl 16)
-                    (if (raw and 0x800000 != 0) raw or -0x1000000 else raw) / 8388608f
-                }
-                else -> view.getInt(position) / 2147483648f
-            }
-            for (frame in 0 until frames) {
-                var mixed = 0f
-                val base = dataOffset + frame * frameBytes
-                for (channel in 0 until channels) mixed += sampleAsFloat(base + channel * bytesPerSample)
-                output.putShort((mixed / channels).coerceIn(-1f, 1f).let { (it * 32767f).roundToInt().toShort() })
-            }
-            val normalized = File(filesDir, "${source.nameWithoutExtension}-pcm16.wav")
-            normalized.outputStream().use { it.write(output.array()) }
-            return normalized
         }
 
         fun addCabinetIr() {
@@ -4428,22 +4318,7 @@ class MainActivity : AppCompatActivity() {
             false
 
 
-        val verifier =
-            randomBase64Url(
-                32
-            )
-
-
-        val challenge =
-            sha256Base64Url(
-                verifier
-            )
-
-
-        val state =
-            randomBase64Url(
-                16
-            )
+        val authorization = prepareToneAuthorizationUseCase.execute()
 
 
         prefs
@@ -4451,14 +4326,6 @@ class MainActivity : AppCompatActivity() {
             .putString(
                 PREF_PENDING_IMPORT_MODE,
                 importMode
-            )
-            .putString(
-                PREF_VERIFIER,
-                verifier
-            )
-            .putString(
-                PREF_STATE,
-                state
             )
             .apply()
 
@@ -4494,7 +4361,7 @@ class MainActivity : AppCompatActivity() {
 
                 .appendQueryParameter(
                     "code_challenge",
-                    challenge
+                    authorization.codeChallenge
                 )
 
                 .appendQueryParameter(
@@ -4504,7 +4371,7 @@ class MainActivity : AppCompatActivity() {
 
                 .appendQueryParameter(
                     "state",
-                    state
+                    authorization.state
                 )
 
                 .appendQueryParameter(
@@ -4620,47 +4487,12 @@ class MainActivity : AppCompatActivity() {
             )
 
 
-        val storedState =
-            prefs.getString(
-                PREF_STATE,
-                null
-            )
-
-
-        val verifier =
-            prefs.getString(
-                PREF_VERIFIER,
-                null
-            )
-
-
-        if (
-            returnedState == null ||
-            returnedState != storedState
-        ) {
-
-            restoreCurrentModelAvailability(
-                "OAuth state mismatch."
-            )
-
-            return
-        }
-
-
         if (
             canceled &&
             toneId == null
         ) {
 
-            prefs
-                .edit()
-                .remove(
-                    PREF_STATE
-                )
-                .remove(
-                    PREF_VERIFIER
-                )
-                .apply()
+            toneSessionRepository.clearPendingAuthorization()
 
             restoreCurrentModelAvailability(
                 "TONE3000 selection canceled."
@@ -4670,13 +4502,10 @@ class MainActivity : AppCompatActivity() {
         }
 
 
-        if (
-            code == null ||
-            verifier == null
-        ) {
+        if (code == null) {
 
             restoreCurrentModelAvailability(
-                "OAuth callback sem code/verifier."
+                "OAuth callback sem code."
             )
 
             return
@@ -4718,48 +4547,22 @@ class MainActivity : AppCompatActivity() {
                 )
 
 
-                val tokenResponse = tone3000ApiRepository.exchangeAuthorizationCode(code, verifier)
-                prefs.edit()
-                    .putString(PREF_ACCESS_TOKEN, tokenResponse.accessToken)
-                    .putString(PREF_REFRESH_TOKEN, tokenResponse.refreshToken)
-                    .apply()
-                val token = tokenResponse.accessToken
-
-
-                prefs
-                    .edit()
-                    .remove(
-                        PREF_STATE
-                    )
-                    .remove(
-                        PREF_VERIFIER
-                    )
-                    .apply()
-
-
-                stage(
-                    "2/3 - FETCHING TONE..."
-                )
-
-
                 val selectedType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
                 prefs.edit()
                     .putString(PREF_SELECTED_ADD_TYPE, selectedType)
                     .putString(PREF_PENDING_TONE_TYPE, selectedType)
                     .apply()
-                val architecture = if (selectedType == "IR" || selectedType == "FX") null else 2
-                val tone = tone3000ApiRepository.getTone(toneId, token, architecture)
-
-
-                stage(if (architecture == null) "3/3 - FETCHING IMPULSE RESPONSE..." else "3/3 - FETCHING A2 CAPTURES...")
-
-
-                val models =
-                    tone3000ApiRepository.listModels(
-                        toneId,
-                        token,
-                        architecture
-                    )
+                val selection = completeToneSelectionUseCase.execute(
+                    code = code,
+                    returnedState = returnedState,
+                    toneId = toneId,
+                    moduleType = selectedType,
+                    onProgress = ::stage,
+                )
+                val token = selection.token.accessToken
+                val tone = selection.tone
+                val models = selection.models
+                val architecture = if (selection.moduleType == "IR" || selection.moduleType == "FX") null else 2
 
 
                 Log.i(
@@ -5312,35 +5115,18 @@ class MainActivity : AppCompatActivity() {
                 audioEngine.nativeStop()
 
 
-                pendingFile =
-                    File(
-                        filesDir,
-                        "pending-tone3000-model-${model.id}.nam"
-                    )
-
-
-                if (
-                    pendingFile.exists() &&
-                    !pendingFile.delete()
-                ) {
-
-                    throw RuntimeException(
-                        "Could not clear previous pending model file."
-                    )
-                }
-
-
                 val downloaded =
-                    downloadModel(
+                    downloadToneModelUseCase.execute(
                         model =
                             model,
 
                         token =
                             token,
 
-                        destination =
-                            pendingFile
+                        fileName =
+                            "pending-tone3000-model-${model.id}.nam"
                     )
+                pendingFile = downloaded
 
 
                 if (
@@ -5354,7 +5140,7 @@ class MainActivity : AppCompatActivity() {
 
 
                     val committedExtra =
-                        commitExtraDownloadedModel(
+                        commitExtraToneModelUseCase.execute(
                             pendingFile =
                                 downloaded,
 
@@ -5494,7 +5280,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     val previous = entries[replacementIndex]
-                    val committed = commitExtraDownloadedModel(
+                    val committed = commitExtraToneModelUseCase.execute(
                         pendingFile = downloaded,
                         modelId = model.id
                     )
@@ -5603,7 +5389,7 @@ class MainActivity : AppCompatActivity() {
                  * Until this moment the previous file remained untouched.
                  */
                 val committedFile =
-                    commitDownloadedModel(
+                    commitCurrentToneModelUseCase.execute(
                         downloaded
                     )
 
@@ -5729,231 +5515,6 @@ class MainActivity : AppCompatActivity() {
 
         }.start()
     }
-
-    private fun downloadModel(
-        model: OnlineModel,
-        token: String,
-        destination: File
-    ): File {
-
-        if (
-            destination.exists() &&
-            !destination.delete()
-        ) {
-
-            throw RuntimeException(
-                "Could not replace pending download file."
-            )
-        }
-
-
-        var currentUrl =
-            model.modelUrl
-
-
-        repeat(
-            5
-        ) {
-
-            val url =
-                URL(
-                    currentUrl
-                )
-
-
-            val connection =
-                url.openConnection()
-                        as HttpURLConnection
-
-
-            try {
-
-                connection.requestMethod =
-                    "GET"
-
-                connection.instanceFollowRedirects =
-                    false
-
-                connection.connectTimeout =
-                    15_000
-
-                connection.readTimeout =
-                    60_000
-
-
-                connection.setRequestProperty(
-                    "Connection",
-                    "close"
-                )
-
-
-                /*
-                 * Never forward the TONE3000 bearer token to an external
-                 * storage/CDN host after a redirect.
-                 */
-                if (
-                    url.host ==
-                    "www.tone3000.com" ||
-                    url.host ==
-                    "tone3000.com"
-                ) {
-
-                    connection.setRequestProperty(
-                        "Authorization",
-                        "Bearer $token"
-                    )
-                }
-
-
-                val responseCode =
-                    connection.responseCode
-
-
-                Log.i(
-                    API_TAG,
-                    "MODEL DOWNLOAD id=${model.id} HTTP $responseCode"
-                )
-
-
-                if (
-                    responseCode in
-                    300..399
-                ) {
-
-                    val location =
-                        connection.getHeaderField(
-                            "Location"
-                        )
-                            ?: throw RuntimeException(
-                                "Download redirect sem Location."
-                            )
-
-
-                    currentUrl =
-                        URL(
-                            url,
-                            location
-                        ).toString()
-
-
-                    return@repeat
-                }
-
-
-                if (
-                    responseCode !in
-                    200..299
-                ) {
-
-                    val error =
-                        readHttpResponse(
-                            connection,
-                            responseCode
-                        )
-
-
-                    throw RuntimeException(
-                        "Model download failed " +
-                                "HTTP $responseCode\n$error"
-                    )
-                }
-
-
-                connection
-                    .inputStream
-                    .use { input ->
-
-                        destination
-                            .outputStream()
-                            .use { output ->
-
-                                input.copyTo(
-                                    output
-                                )
-                            }
-                    }
-
-
-                if (
-                    destination.length() ==
-                    0L
-                ) {
-
-                    throw RuntimeException(
-                        "Downloaded model is empty."
-                    )
-                }
-
-
-                Log.i(
-                    API_TAG,
-                    "MODEL DOWNLOAD COMPLETE " +
-                            "id=${model.id} " +
-                            "bytes=${destination.length()}"
-                )
-
-
-                return destination
-
-            } finally {
-
-                connection.disconnect()
-            }
-        }
-
-
-        throw RuntimeException(
-            "Too many redirects downloading model."
-        )
-    }
-
-
-    private fun commitDownloadedModel(
-        pendingFile: File
-    ): File {
-
-        val destination =
-            File(
-                filesDir,
-                "current-tone3000-model.nam"
-            )
-
-
-        try {
-
-            Files.move(
-                pendingFile.toPath(),
-                destination.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE
-            )
-
-        } catch (
-            _: AtomicMoveNotSupportedException
-        ) {
-
-            Files.move(
-                pendingFile.toPath(),
-                destination.toPath(),
-                StandardCopyOption.REPLACE_EXISTING
-            )
-        }
-
-
-        if (
-            !destination.exists() ||
-            destination.length() == 0L
-        ) {
-
-            throw RuntimeException(
-                "Failed to commit selected model."
-            )
-        }
-
-
-        return destination
-    }
-
 
     private fun restoreCurrentModelAvailability(
         message: String
@@ -6144,97 +5705,6 @@ class MainActivity : AppCompatActivity() {
             )
 
             .apply()
-    }
-
-
-    // ========================================================
-    // PKCE
-    // ========================================================
-
-    private fun randomBase64Url(
-        bytes: Int
-    ): String {
-
-        val data =
-            ByteArray(
-                bytes
-            )
-
-
-        SecureRandom()
-            .nextBytes(
-                data
-            )
-
-
-        return Base64.encodeToString(
-            data,
-            Base64.URL_SAFE or
-                    Base64.NO_WRAP or
-                    Base64.NO_PADDING
-        )
-    }
-
-
-    private fun sha256Base64Url(
-        value: String
-    ): String {
-
-        val digest =
-            MessageDigest
-                .getInstance(
-                    "SHA-256"
-                )
-                .digest(
-                    value.toByteArray(
-                        StandardCharsets.UTF_8
-                    )
-                )
-
-
-        return Base64.encodeToString(
-            digest,
-            Base64.URL_SAFE or
-                    Base64.NO_WRAP or
-                    Base64.NO_PADDING
-        )
-    }
-
-
-    // ========================================================
-    // HTTP
-    // ========================================================
-
-    private fun readHttpResponse(
-        connection: HttpURLConnection,
-        responseCode: Int
-    ): String {
-
-        val stream =
-            if (
-                responseCode in
-                200..299
-            ) {
-
-                connection.inputStream
-
-            } else {
-
-                connection.errorStream
-            }
-
-
-        if (stream == null) {
-            return ""
-        }
-
-
-        return stream
-            .bufferedReader()
-            .use {
-
-                it.readText()
-            }
     }
 
 

@@ -19,12 +19,16 @@ PicoloActions (contrato tipado)
              C++: TinyALSA + NAM + IR + efeitos
 ```
 
-- A seleção TONE3000 usa Custom Tabs, PKCE e callback nativo; o app lista e
-  baixa captures em Kotlin. `Tone3000ApiRepository` concentra troca de token,
-  leitura de tones e paginação de modelos; `MainActivity` mantém o fluxo OAuth
-  e a persistência dos tokens.
+- A seleção TONE3000 usa Custom Tabs, PKCE e callback nativo. A Activity mantém
+  a navegação do browser e a leitura da URI; `PrepareToneAuthorizationUseCase`
+  gera o desafio PKCE e `CompleteToneSelectionUseCase` valida o estado, troca
+  o código, persiste tokens pela sessão e carrega tone/captures. `Tone3000ApiRepository`
+  implementa a API e o download autenticado; `ToneImportRepositoryImpl` cuida
+  dos arquivos locais, normalização WAV e commit dos modelos. Casos de uso
+  deixam essas operações atrás de contratos de domínio.
 - `NamChainRepository` lê e grava os blocos NAM adicionais no formato JSON
-  existente. O bloco principal ainda usa preferências legadas.
+  existente. O bloco principal ainda usa preferências legadas. A Activity ainda
+  aplica captures escolhidas ao motor e coordena add/replace das cadeias.
 - `FxChainRepository` lê e grava as cadeias de IR/FX e FX nativo, preservando
   o JSON atual; a Activity continua sincronizando as entradas com o motor JNI.
 - `PresetRepository` define o contrato de domínio; `PresetRepositoryImpl`
@@ -50,9 +54,10 @@ PicoloActions (contrato tipado)
   portanto é uma fronteira temporária, não a camada final. Os casos de uso de
   preset e roteamento já dependem de contratos de domínio e interfaces de
   engine, mantendo a implementação JNI atrás de `NativeAudioEngine`.
-- `MainActivity` ainda cuida de ciclo de vida, tela, persistência, OAuth,
-  rede, arquivos e reconstrução de cadeia. As próximas extrações devem
-  preservar as chaves de preferências e o comportamento de recuperação.
+- `MainActivity` ainda cuida de ciclo de vida, tela, seleção de captures e
+  integração das importações com a engine. OAuth, tráfego da API e operações
+  centrais de arquivo já passam por casos de uso/repositórios; a coordenação de
+  add/replace NAM, FX/IR e restauração após falha ainda deve sair do controller.
 
 ## Sequência de refatoração
 
@@ -60,9 +65,11 @@ PicoloActions (contrato tipado)
    armazenamento JSON dos blocos NAM adicionais e a leitura/organização dos
    presets; migrar a cadeia principal e os dados FX em mudanças separadas,
    mantendo compatibilidade com os formatos atuais.
-2. **Controlador da aplicação:** presets e roteamento de áudio já usam casos de
-   uso, contratos de repositório e interfaces de engine sem referências à
-   Activity. Próximos fluxos: importação de tons, OAuth e downloads.
+2. **Controlador da aplicação:** presets, roteamento e acesso OAuth/API já usam
+   casos de uso, contratos de repositório e interfaces de engine. O transporte
+   de arquivos e a importação local `.nam` também passam por repositórios e
+   casos de uso. Próximo: mover a coordenação de seleção, add/replace e
+   recuperação da engine para fluxos de aplicação independentes da Activity.
 3. **Limite JNI:** extraímos as declarações e a carga da biblioteca para
    `NativeAudioEngine`, junto com a atualização coordenada dos símbolos C++.
    Os casos de uso de preset e roteamento dependem de interfaces de engine. O
