@@ -2,7 +2,8 @@ package com.pedro.tone3000m1.data.repository
 
 import android.content.SharedPreferences
 import android.util.Log
-import com.pedro.tone3000m1.data.model.ExtraNamEntry
+import com.pedro.tone3000m1.domain.model.ExtraNamEntry
+import com.pedro.tone3000m1.domain.repository.ExtraNamChainRepository
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -13,8 +14,8 @@ class NamChainRepository(
     private val preferences: SharedPreferences,
     private val chainKey: String,
     private val primaryModelPathKey: String,
-) {
-    fun readExtraNamChain(): MutableList<ExtraNamEntry> {
+) : ExtraNamChainRepository {
+    override fun readExtraNamChain(): MutableList<ExtraNamEntry> {
         val raw = preferences.getString(chainKey, null) ?: return mutableListOf()
         return try {
             val items = JSONArray(raw)
@@ -36,7 +37,7 @@ class NamChainRepository(
         }
     }
 
-    fun persistExtraNamChain(entries: List<ExtraNamEntry>) {
+    override fun persistExtraNamChain(entries: List<ExtraNamEntry>) {
         val primaryPath = preferences.getString(primaryModelPathKey, null)
         val seenPaths = mutableSetOf<String>()
         val json = JSONArray()

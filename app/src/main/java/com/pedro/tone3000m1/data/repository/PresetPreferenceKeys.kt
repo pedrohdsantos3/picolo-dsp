@@ -7,6 +7,7 @@ internal object PresetPreferenceKeys {
     const val LAST_MODEL_SIZE = "last_model_size"
     const val LAST_TONE_ID = "last_tone_id"
     const val LAST_TONE_TITLE = "last_tone_title"
+    const val LAST_MODEL_TYPE = "last_model_type"
     const val CABINET_IR_PATH = "cabinet_ir_path"
     const val CABINET_IR_TITLE = "cabinet_ir_title"
     const val CABINET_IR_TYPE = "cabinet_ir_module_type"
@@ -40,6 +41,7 @@ internal object PresetPreferenceKeys {
     const val NAM_EQ_BAND5_DB = "nam_eq_band5_db"
     const val NAM_BYPASS = "nam_bypass"
     const val NAM_EQ_PRE = "nam_eq_pre"
+    const val NAM_EQ_ENABLED = "nam_eq_enabled"
     const val NAM_NORMALIZE = "nam_normalize"
     const val NAM_A2_FULL = "nam_a2_full"
 }

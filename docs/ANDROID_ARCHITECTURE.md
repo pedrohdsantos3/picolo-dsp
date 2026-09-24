@@ -27,10 +27,20 @@ PicoloActions (contrato tipado)
   dos arquivos locais, normalização WAV e commit dos modelos. Casos de uso
   deixam essas operações atrás de contratos de domínio.
 - `NamChainRepository` lê e grava os blocos NAM adicionais no formato JSON
-  existente. O bloco principal ainda usa preferências legadas. A Activity ainda
-  aplica captures escolhidas ao motor e coordena add/replace das cadeias.
-- `FxChainRepository` lê e grava as cadeias de IR/FX e FX nativo, preservando
-  o JSON atual; a Activity continua sincronizando as entradas com o motor JNI.
+  existente usando `ExtraNamEntry` do domínio. `AddExtraNamCaptureUseCase`
+  coordena o commit, a inclusão no motor, os defaults AMP/PEDAL e a persistência
+  de um bloco novo. `RebuildNamChainUseCase` restaura os blocos e controles pela
+  interface `NamChainRebuildEngine`; `ReplaceNamCaptureUseCase` valida e aplica
+  uma substituição antes do commit dos metadados da cadeia. `LoadPrimaryToneCaptureUseCase` só confirma a troca depois que a
+  interface `PrimaryToneCaptureEngine` aceita o arquivo e aplica os defaults do
+  módulo. `PrepareNamBlockReplacementUseCase` mantém controles do bloco ao
+  trocar capture e redefine os valores ao mudar entre AMP e PEDAL. A Activity
+  ainda coordena o rebuild nativo e a persistência do add/replace da cadeia.
+- `FxChainRepository` mapeia os JSONs legados de FX para modelos Kotlin
+  imutáveis (`FxImpulseEntry` e `FxNativeEntry`) e vice-versa. A Activity
+  converte esses modelos para JSON somente ao montar o snapshot de apresentação.
+  `ImportFxCaptureUseCase` coordena download, normalização, carga do slot,
+  persistência e aplicação dos controles iniciais no motor.
 - `PresetRepository` define o contrato de domínio; `PresetRepositoryImpl`
   concentra a leitura, gravação, ativação e organização dos slots usando as
   chaves legadas e os arquivos atuais. `SavePresetUseCase` coordena a gravação
@@ -43,6 +53,9 @@ PicoloActions (contrato tipado)
 - `NativeAudioEngine` concentra a carga da biblioteca e as declarações JNI;
   os nomes dos exports C++ acompanham essa classe. A Activity usa a fachada,
   mas ainda coordena parte dos comandos através do controller interno.
+- `CurrentToneRepositoryImpl` lê o caminho ativo, salva o modelo e aplica defaults NAM pelas chaves legadas. `RestorePreviousToneModelUseCase` valida o arquivo e pede à interface `ToneModelEngine` para restaurá-lo após uma troca malsucedida. `NativeAudioEngine` implementa essa interface sem expor JNI ao caso de uso.
+- `TonePackageCaptureRepositoryImpl` mantém o cache de captures de pacote e seu formato JSON de preferências fora da `MainActivity`. `LoadPackageCapturesUseCase` escolhe a arquitetura da API, combina resultados novos e em cache e atualiza o cache sem descartar captures omitidos por respostas parciais.
+- `ImportCabinetImpulseUseCase` coordena o download, normalização WAV, carga no motor e início do áudio. `CabinetImpulseRepositoryImpl` mantém as chaves e defaults legados de cabinet IR.
 - `ui/model/PicoloUiState.kt` mantém os modelos de apresentação e converte o
   snapshot nativo separado dos Composables.
 - `ui/actions/PicoloActions.kt` descreve as ações que a UI pode executar. Os
@@ -50,26 +63,26 @@ PicoloActions (contrato tipado)
 - `PicoloComposeViewModel` mantém estado de UI, mas recebe snapshots montados
   pela Activity através de `PicoloStateRepository`; o repositório centraliza
   a consulta periódica e o ViewModel coleta o fluxo sem polling no Composable.
-  `AudioAppController` ainda concentra comandos e depende da Activity,
-  portanto é uma fronteira temporária, não a camada final. Os casos de uso de
-  preset e roteamento já dependem de contratos de domínio e interfaces de
-  engine, mantendo a implementação JNI atrás de `NativeAudioEngine`.
-- `MainActivity` ainda cuida de ciclo de vida, tela, seleção de captures e
-  integração das importações com a engine. OAuth, tráfego da API e operações
-  centrais de arquivo já passam por casos de uso/repositórios; a coordenação de
-  add/replace NAM, FX/IR e restauração após falha ainda deve sair do controller.
+  `AudioAppController` ainda depende da Activity e a publicação do snapshot
+  ainda usa consulta periódica; os dois são limites temporários.
+- `MainActivity` cuida do ciclo de vida Android e é a única dona da tela Compose;
+  a árvore de Views antiga foi removida. OAuth, API, armazenamento dos presets,
+  cache de captures, restauração do modelo ativo e importação de FX/IR já passam
+  por limites próprios. O controller ainda coordena o rebuild e o commit de
+  add/replace NAM, além da publicação de estado.
 
 ## Sequência de refatoração
 
-1. **Modelagem e persistência:** extraímos o mapeamento do estado Compose, o
-   armazenamento JSON dos blocos NAM adicionais e a leitura/organização dos
-   presets; migrar a cadeia principal e os dados FX em mudanças separadas,
-   mantendo compatibilidade com os formatos atuais.
-2. **Controlador da aplicação:** presets, roteamento e acesso OAuth/API já usam
-   casos de uso, contratos de repositório e interfaces de engine. O transporte
-   de arquivos e a importação local `.nam` também passam por repositórios e
-   casos de uso. Próximo: mover a coordenação de seleção, add/replace e
-   recuperação da engine para fluxos de aplicação independentes da Activity.
+1. **Modelagem e persistência:** estado Compose, blocos NAM adicionais,
+   presets, dados de FX/IR, modelo ativo e cache de captures usam modelos Kotlin
+   nas fronteiras internas. Os formatos JSON e as chaves antigas continuam
+   compatíveis e têm cobertura instrumentada. A migração para DataStore fica
+   pendente enquanto a Activity ainda lê e grava preferências diretamente.
+2. **Controlador da aplicação:** presets, roteamento, OAuth/API, carga de
+  captures, validação do modelo principal, restauração e importação de FX/IR já
+  usam casos de uso e contratos. Os fluxos add/replace NAM e FX/IR já usam casos
+  de uso; a Activity ainda persiste os metadados do replace e atualiza os
+  componentes visuais após o resultado.
 3. **Limite JNI:** extraímos as declarações e a carga da biblioteca para
    `NativeAudioEngine`, junto com a atualização coordenada dos símbolos C++.
    Os casos de uso de preset e roteamento dependem de interfaces de engine. O
