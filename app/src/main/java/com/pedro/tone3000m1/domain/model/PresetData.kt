@@ -1,4 +1,4 @@
-package com.pedro.tone3000m1.data.model
+package com.pedro.tone3000m1.domain.model
 
 internal data class PresetData(
     val slot: Int,
@@ -16,6 +16,14 @@ internal data class PresetData(
     val eqLowDb: Float,
     val eqMidDb: Float,
     val eqHighDb: Float,
+    val namBypass: Boolean,
+    val namGainDb: Float,
+    val namInGainDb: Float,
+    val namMix: Float,
+    val namEqDb: List<Float>,
+    val namEqPre: Boolean,
+    val namNormalize: Boolean,
+    val namA2Full: Boolean,
     val extraNamChainJson: String,
     val cabinetIrPath: String?,
     val cabinetIrTitle: String,
@@ -26,4 +34,6 @@ internal data class PresetData(
     val cabinetIrInGain: Float,
     val cabinetIrOutGain: Float,
     val cabinetIrMix: Float,
+    val cabinetIrEqPre: Boolean,
+    val cabinetIrEqDb: List<Float>,
 )

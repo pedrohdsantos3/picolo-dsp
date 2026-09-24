@@ -1,7 +1,10 @@
 package com.pedro.tone3000m1
 
+import com.pedro.tone3000m1.domain.engine.AudioRoutingEngine
+import com.pedro.tone3000m1.domain.engine.PresetAudioEngine
+
 /** JNI boundary for the native audio engine. Keep blocking work off the audio callback. */
-internal class NativeAudioEngine {
+internal class NativeAudioEngine : AudioRoutingEngine, PresetAudioEngine {
     external fun nativeLoadModel(path: String): String
     external fun nativeLoadImpulseResponse(path: String): String
     external fun nativeSetImpulseResponseBypass(bypass: Boolean)
@@ -70,6 +73,40 @@ internal class NativeAudioEngine {
     external fun nativeScanUsbAudio(): String
     external fun nativeGetAudioDeviceInfo(): String
     external fun nativeGetStats(): String
+
+    override fun cycleInputChannel(): Int = nativeCycleInputChannel()
+
+    override fun cycleOutputPair(): Int = nativeCycleOutputPair()
+
+    override fun setInputChannel(channel: Int) = nativeSetInputChannel(channel)
+
+    override fun setOutputPair(pairIndex: Int) = nativeSetOutputPair(pairIndex)
+
+    override fun routingInfo(): String = nativeGetRoutingInfo()
+
+    override fun switchPresetGapless(
+        path: String,
+        inputGainDb: Float,
+        outputGainDb: Float,
+        inputChannel: Int,
+        outputPair: Int,
+        gateEnabled: Boolean,
+        gateThresholdDb: Float,
+        eqLowDb: Float,
+        eqMidDb: Float,
+        eqHighDb: Float,
+    ): String = nativeSwitchPresetGapless(
+        path,
+        inputGainDb,
+        outputGainDb,
+        inputChannel,
+        outputPair,
+        gateEnabled,
+        gateThresholdDb,
+        eqLowDb,
+        eqMidDb,
+        eqHighDb,
+    )
 
     private companion object {
         init {

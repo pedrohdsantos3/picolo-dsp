@@ -11,7 +11,8 @@ Jetpack Compose + PicoloComposeViewModel
         ↓ estado e ações
 PicoloActions (contrato tipado)
         ↓
-AudioAppController (adaptador ainda hospedado em MainActivity)
+        AudioAppController (adaptador ainda hospedado em MainActivity)
+        ├── casos de uso e contratos de domínio
         ├── repositórios: SharedPreferences / API / arquivos
         └── NativeAudioEngine (fachada JNI)
                     ↓
@@ -26,10 +27,15 @@ AudioAppController (adaptador ainda hospedado em MainActivity)
   existente. O bloco principal ainda usa preferências legadas.
 - `FxChainRepository` lê e grava as cadeias de IR/FX e FX nativo, preservando
   o JSON atual; a Activity continua sincronizando as entradas com o motor JNI.
-- `PresetRepository` concentra a leitura, os rótulos e a organização dos slots
-  de preset usando as chaves legadas e os arquivos atuais. A Activity ainda
-  coordena a cópia ao salvar e a troca no motor ao carregar; essas operações
-  são candidatas à próxima extração.
+- `PresetRepository` define o contrato de domínio; `PresetRepositoryImpl`
+  concentra a leitura, gravação, ativação e organização dos slots usando as
+  chaves legadas e os arquivos atuais. `SavePresetUseCase` coordena a gravação
+  e `LoadPresetUseCase` troca o modelo no motor antes de ativar suas
+  preferências. `PresetData` é o modelo imutável compartilhado entre domínio e
+  apresentação.
+- `AudioRoutingUseCase` coordena o contrato `AudioRoutingRepository` e sua
+  implementação persiste as rotas selecionadas e as restaura no motor. A
+  Activity ainda atualiza os elementos visuais após as ações de roteamento.
 - `NativeAudioEngine` concentra a carga da biblioteca e as declarações JNI;
   os nomes dos exports C++ acompanham essa classe. A Activity usa a fachada,
   mas ainda coordena parte dos comandos através do controller interno.
@@ -41,7 +47,9 @@ AudioAppController (adaptador ainda hospedado em MainActivity)
   pela Activity através de `PicoloStateRepository`; o repositório centraliza
   a consulta periódica e o ViewModel coleta o fluxo sem polling no Composable.
   `AudioAppController` ainda concentra comandos e depende da Activity,
-  portanto é uma fronteira temporária, não a camada final.
+  portanto é uma fronteira temporária, não a camada final. Os casos de uso de
+  preset e roteamento já dependem de contratos de domínio e interfaces de
+  engine, mantendo a implementação JNI atrás de `NativeAudioEngine`.
 - `MainActivity` ainda cuida de ciclo de vida, tela, persistência, OAuth,
   rede, arquivos e reconstrução de cadeia. As próximas extrações devem
   preservar as chaves de preferências e o comportamento de recuperação.
@@ -52,14 +60,13 @@ AudioAppController (adaptador ainda hospedado em MainActivity)
    armazenamento JSON dos blocos NAM adicionais e a leitura/organização dos
    presets; migrar a cadeia principal e os dados FX em mudanças separadas,
    mantendo compatibilidade com os formatos atuais.
-2. **Controlador da aplicação:** mover comandos e fluxos de
-   `AudioAppController` para casos de uso/repositórios independentes da
-   Activity. Começar por presets e roteamento de áudio, depois importação de
-   tons, OAuth e downloads.
+2. **Controlador da aplicação:** presets e roteamento de áudio já usam casos de
+   uso, contratos de repositório e interfaces de engine sem referências à
+   Activity. Próximos fluxos: importação de tons, OAuth e downloads.
 3. **Limite JNI:** extraímos as declarações e a carga da biblioteca para
    `NativeAudioEngine`, junto com a atualização coordenada dos símbolos C++.
-   O próximo refinamento é depender de uma interface de engine nos casos de
-   uso. O motor continua sem dependências Android e sem trabalho bloqueante no
+   Os casos de uso de preset e roteamento dependem de interfaces de engine. O
+   motor continua sem dependências Android e sem trabalho bloqueante no
    processamento.
 4. **Estado de tela:** substituir a consulta periódica do repositório por
    publicação de snapshots imutáveis quando as ações alterarem o estado. A
