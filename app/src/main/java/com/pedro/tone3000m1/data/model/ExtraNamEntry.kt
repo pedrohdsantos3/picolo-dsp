@@ -4,7 +4,7 @@ package com.pedro.tone3000m1.data.model
  * Persisted signal-chain entry.
  *
  * This is a data-layer model, not a view model: the same immutable value is
- * used by persistence, native-chain reconstruction and the browser bridge.
+ * used by persistence and native-chain reconstruction.
  */
 data class ExtraNamEntry(
     val toneId: String,

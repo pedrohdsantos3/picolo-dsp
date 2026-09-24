@@ -1,62 +1,67 @@
 # Arquitetura Android
 
-Este projeto mantém o processamento de áudio em C++/TinyALSA por causa da
-latência e do controle necessário sobre a interface USB. A organização Android
-segue uma migração incremental para a arquitetura recomendada pelo Android,
-sem colocar lógica de negócio ou operações bloqueantes no callback de áudio.
+O app usa Jetpack Compose para a interface e Kotlin para os fluxos de aplicação.
+O processamento em tempo real continua em C++/TinyALSA; chamadas de rede,
+I/O de arquivos e trabalho de UI ficam fora do callback de áudio.
 
-## Camadas
+## Limites atuais
 
 ```text
-UI (Jetpack Compose + ViewModel/StateFlow)
-        ↓ eventos e UiState
-Controle Kotlin existente (PluginBridge)
-        ↓ modelos próprios da aplicação
-Dados e integração (preferências, arquivos, OAuth/browser)
-        ↓ API estreita e síncrona no limite de áudio
-JNI / C++ (TinyALSA + NAM + IR + DSP)
+Jetpack Compose + PicoloComposeViewModel
+        ↓ estado e ações
+PicoloActions (contrato tipado)
+        ↓
+AudioAppController (adaptador ainda hospedado em MainActivity)
+        ↓
+SharedPreferences / arquivos / OAuth / downloads
+        ↓ API JNI
+C++: TinyALSA + NAM + IR + efeitos
 ```
 
-O Android recomenda separar UI e dados, usar estado imutável e fluxo
-unidirecional; uma camada de domínio é opcional e deve ser introduzida apenas
-quando evita duplicação ou concentra regras reutilizáveis.
+- A seleção TONE3000 usa Custom Tabs, PKCE e callback nativo; o app lista e
+  baixa captures em Kotlin. `Tone3000ApiRepository` concentra troca de token,
+  leitura de tones e paginação de modelos; `MainActivity` mantém o fluxo OAuth
+  e a persistência dos tokens.
+- `NamChainRepository` lê e grava os blocos NAM adicionais no formato JSON
+  existente. O bloco principal ainda usa preferências legadas.
+- `ui/model/PicoloUiState.kt` mantém os modelos de apresentação e converte o
+  snapshot nativo separado dos Composables.
+- `ui/actions/PicoloActions.kt` descreve as ações que a UI pode executar. Os
+  Composables dependem desse contrato, sem referenciar a Activity.
+- `PicoloComposeViewModel` mantém estado de UI, mas recebe snapshots montados
+  pela Activity através de `PicoloStateRepository`; o repositório centraliza
+  a consulta periódica e o ViewModel coleta o fluxo sem polling no Composable.
+  `AudioAppController` ainda concentra comandos e depende da Activity,
+  portanto é uma fronteira temporária, não a camada final.
+- `MainActivity` ainda cuida de ciclo de vida, tela, persistência, OAuth,
+  rede, arquivos e reconstrução de cadeia. As próximas extrações devem
+  preservar as chaves de preferências e o comportamento de recuperação.
 
-## Estado atual da migração
+## Sequência de refatoração
 
-- `data/model/ExtraNamEntry.kt` contém o modelo persistido da cadeia, fora da
-  `MainActivity`.
-- Jetpack Compose é a UI principal do app. `PicoloComposeViewModel` mantém um
-  `StateFlow` de tela e recebe snapshots da Activity; `PluginBridge` continua
-  concentrando ações de UI e comandos já existentes.
-- O WebView oficial fica restrito ao fluxo autenticado de seleção/importação
-  do TONE3000 e pode ser fechado para retornar ao Compose. As rotinas OAuth e
-  de download continuam na Activity nesta etapa.
-- A Activity ainda concentra preferências, arquivos e algumas rotinas de
-  negócio. A extração para repositórios/controlador Kotlin deve ser feita com
-  testes de regressão para não interromper o áudio ao vivo.
-- O thread de áudio continua totalmente nativo. Nenhuma chamada de rede,
-  leitura de arquivo, alocação ou chamada JNI deve ser adicionada ao caminho de
-  processamento por bloco.
+1. **Modelagem e persistência:** extraímos o mapeamento do estado Compose e o
+   armazenamento JSON dos blocos NAM adicionais; migrar a cadeia principal e
+   os dados FX em mudanças separadas, mantendo compatibilidade com presets.
+2. **Controlador da aplicação:** mover comandos e fluxos de
+   `AudioAppController` para casos de uso/repositórios independentes da
+   Activity. Começar por presets e roteamento de áudio, depois importação de
+   tons, OAuth e downloads.
+3. **Limite JNI:** agrupar chamadas JNI atrás de uma fachada `AudioEngine`
+   e retirar declarações nativas de `MainActivity`. Manter o motor de áudio
+   sem dependências Android e sem trabalho bloqueante no processamento.
+4. **Estado de tela:** substituir a consulta periódica do repositório por
+   publicação de snapshots imutáveis quando as ações alterarem o estado. A
+   UI já observa um fluxo pelo ViewModel; hoje o fluxo ainda consulta a
+   Activity a cada 700 ms porque as mutações e as chamadas JNI permanecem lá.
+5. **Preferências:** migrar gradualmente para DataStore somente após cada
+   repositório ter testes de compatibilidade para as chaves atuais e presets.
 
-## Próximas etapas de refatoração
+Cada etapa deve ser pequena o bastante para preservar o áudio ativo, os
+presets salvos, imports locais e a seleção TONE3000.
 
-1. Criar `SignalChainRepository` para encapsular SharedPreferences/JSON e
-   expor `StateFlow<SignalChainState>`.
-2. Criar `AudioEngine` como fachada Kotlin para a API JNI; manter os métodos
-   JNI agrupados em poucos arquivos, conforme as recomendações do NDK.
-3. Extrair `ToneLoadUseCase`, `PresetUseCase` e `AudioRoutingUseCase` para
-   remover regras de negócio da Activity.
-4. Substituir a atualização periódica de snapshots da UI por estado emitido
-   pelo repositório/controlador, mantendo operações pesadas fora da UI.
-5. Migrar preferências de configuração para DataStore no repositório, com
-   migração compatível e sem alterar os nomes atuais das chaves.
-6. Adicionar testes unitários para serialização, reordenação, tipos AMP/IR e
-   restauração de presets antes de cada extração maior.
+## Áudio em tempo real
 
-## Áudio de baixa latência
-
-As recomendações oficiais de Oboe/AAudio (modo low-latency, callback, 48 kHz,
-buffer duplo e ausência de operações bloqueantes) devem ser usadas como
-referência para uma futura camada de transporte. A implementação TinyALSA atual
-é mantida porque é requisito do projeto e deve continuar isolada atrás do
-backend nativo.
+A cadeia de áudio permanece isolada do Android UI. Nenhuma chamada de rede,
+leitura de arquivo, alocação ou chamada JNI deve entrar no callback de áudio.
+TinyALSA continua como backend requerido pelo projeto; trocar o transporte por
+Oboe/AAudio é uma decisão futura e independente da refatoração de camadas.

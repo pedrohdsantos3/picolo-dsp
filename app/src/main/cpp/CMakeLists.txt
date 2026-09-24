@@ -40,6 +40,41 @@ add_subdirectory(
         tinyalsa-build
 )
 
+# ChowDSP's official DSP modules, compiled as a standalone CMake library (no
+# JUCE plugin/UI target). BYOD processor adapters are implemented in the app's
+# realtime callback, while delay, pitch-shift, filter and FDN primitives are
+# taken directly from these GPLv3 modules.
+set(CHOWDSP_MODULES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/chowdsp_utils/modules")
+file(GLOB_RECURSE CHOWDSP_INCLUDE_DIRS LIST_DIRECTORIES true
+        "${CHOWDSP_MODULES_DIR}/common/*"
+        "${CHOWDSP_MODULES_DIR}/dsp/*"
+        "${CHOWDSP_MODULES_DIR}/music/*")
+list(FILTER CHOWDSP_INCLUDE_DIRS INCLUDE REGEX "/(chowdsp_[^/]+|third_party)/?$")
+add_library(chowdsp_dsp_modules STATIC
+        "${CHOWDSP_MODULES_DIR}/common/chowdsp_core/chowdsp_core.cpp"
+        "${CHOWDSP_MODULES_DIR}/dsp/chowdsp_dsp_utils/chowdsp_dsp_utils.cpp"
+        "${CHOWDSP_MODULES_DIR}/dsp/chowdsp_buffers/chowdsp_buffers.cpp")
+target_include_directories(chowdsp_dsp_modules PUBLIC
+        "${CHOWDSP_MODULES_DIR}/common"
+        "${CHOWDSP_MODULES_DIR}/dsp"
+        "${CHOWDSP_MODULES_DIR}/music"
+        ${CHOWDSP_INCLUDE_DIRS})
+target_compile_definitions(chowdsp_dsp_modules PUBLIC
+        CHOWDSP_NO_XSIMD=0
+        JUCE_MODULE_AVAILABLE_juce_core=0
+        JUCE_MODULE_AVAILABLE_juce_audio_basics=0
+        JUCE_MODULE_AVAILABLE_juce_dsp=0
+        JUCE_MODULE_AVAILABLE_chowdsp_core=1
+        JUCE_MODULE_AVAILABLE_chowdsp_simd=1
+        JUCE_MODULE_AVAILABLE_chowdsp_buffers=1
+        JUCE_MODULE_AVAILABLE_chowdsp_math=1
+        JUCE_MODULE_AVAILABLE_chowdsp_data_structures=1
+        JUCE_MODULE_AVAILABLE_chowdsp_dsp_data_structures=1
+        JUCE_MODULE_AVAILABLE_chowdsp_filters=1
+        JUCE_MODULE_AVAILABLE_chowdsp_dsp_utils=1
+        JUCE_MODULE_AVAILABLE_chowdsp_reverb=1)
+target_compile_features(chowdsp_dsp_modules PUBLIC cxx_std_20)
+
 
 # ============================================================
 # NeuralAmpModelerCore
@@ -176,6 +211,7 @@ target_link_libraries(
 
         tinyalsa
         namcore_objects
+        chowdsp_dsp_modules
 
         android
         log

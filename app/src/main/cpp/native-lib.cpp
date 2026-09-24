@@ -7,6 +7,7 @@
 #include <NAM/get_dsp.h>
 #include <NAM/slimmable.h>
 #include "ImpulseResponse.h"
+#include "ChowFxNative.h"
 
 #include <algorithm>
 #include <array>
@@ -1437,6 +1438,14 @@ namespace {
                 mNamEqBand5Db[slot].store(0.0f);
                 mNamEqEnabled[slot].store(true);
             }
+            for (unsigned int slot = 0; slot < MAX_FX_IR_BLOCKS; ++slot) {
+                mFxNativeBypass[slot].store(true);
+                mFxNativeMix[slot].store(0.35f);
+                mFxNativePosition[slot].store(static_cast<int>(MAX_NAM_BLOCKS));
+                mFxNativeParam1[slot].store(350.0f);
+                mFxNativeParam2[slot].store(0.35f);
+                mFxNativeParam3[slot].store(12.0f);
+            }
         }
 
         ~AudioEngine() {
@@ -1695,7 +1704,9 @@ namespace {
         std::string loadFxImpulseResponse(int slot, const std::string& path) {
             if (slot < 0 || slot >= static_cast<int>(MAX_FX_IR_BLOCKS)) return "FX LOAD FAILED\nInvalid FX slot";
             stop();
-            auto candidate = std::make_unique<dsp::ImpulseResponse>(path.c_str(), TARGET_RATE, 512);
+            // FX spaces keep the longer 2048-sample kernel, but use the
+            // standard -18 dB IR compensation while testing the wet level.
+            auto candidate = std::make_unique<dsp::ImpulseResponse>(path.c_str(), TARGET_RATE, 2048, -18.0f);
             if (candidate->GetWavState() != dsp::wav::LoadReturnCode::SUCCESS) return "FX LOAD FAILED\nInvalid or unsupported WAV file";
             mFxIrs[static_cast<size_t>(slot)] = std::move(candidate);
             mFxIrBypass[static_cast<size_t>(slot)].store(false, std::memory_order_relaxed);
@@ -1724,6 +1735,47 @@ namespace {
             if (slot >= 0 && slot < static_cast<int>(MAX_FX_IR_BLOCKS)) {
                 mFxIrPosition[static_cast<size_t>(slot)].store(std::clamp(namBlocksBefore, 0, static_cast<int>(MAX_NAM_BLOCKS)), std::memory_order_relaxed);
             }
+        }
+
+        void configureFxNative(int slot, int type, int namBlocksBefore) {
+            if (slot < 0 || slot >= static_cast<int>(MAX_FX_IR_BLOCKS)) return;
+            stop();
+            const auto index = static_cast<size_t>(slot);
+            const int selectedType = std::clamp(type, 0, 3);
+            mFxNative[index] = std::make_unique<picolo::FxNativeProcessor>(selectedType);
+            mFxNativeType[index].store(selectedType, std::memory_order_relaxed);
+            (void) namBlocksBefore;
+            mFxNativePosition[index].store(static_cast<int>(MAX_NAM_BLOCKS), std::memory_order_relaxed);
+            mFxNativeBypass[index].store(false, std::memory_order_relaxed);
+        }
+
+        void setFxNativeBypass(int slot, bool bypass) {
+            if (slot >= 0 && slot < static_cast<int>(MAX_FX_IR_BLOCKS)) mFxNativeBypass[static_cast<size_t>(slot)].store(bypass, std::memory_order_relaxed);
+        }
+
+        void setFxNativeMix(int slot, float mix) {
+            if (slot >= 0 && slot < static_cast<int>(MAX_FX_IR_BLOCKS)) mFxNativeMix[static_cast<size_t>(slot)].store(std::clamp(mix, 0.0f, 1.0f), std::memory_order_relaxed);
+        }
+
+        void setFxNativeParameter(int slot, int parameter, float value) {
+            if (slot < 0 || slot >= static_cast<int>(MAX_FX_IR_BLOCKS)) return;
+            const auto index = static_cast<size_t>(slot);
+            if (parameter == 0) mFxNativeParam1[index].store(std::clamp(value, 0.0f, 1200.0f), std::memory_order_relaxed);
+            else if (parameter == 1) mFxNativeParam2[index].store(std::clamp(value, 0.0f, 1.0e4f), std::memory_order_relaxed);
+            else if (parameter == 2) mFxNativeParam3[index].store(std::clamp(value, -12.0f, 12.0f), std::memory_order_relaxed);
+        }
+
+        void setFxNativePosition(int slot, int namBlocksBefore) {
+            (void) namBlocksBefore;
+            if (slot >= 0 && slot < static_cast<int>(MAX_FX_IR_BLOCKS)) mFxNativePosition[static_cast<size_t>(slot)].store(static_cast<int>(MAX_NAM_BLOCKS), std::memory_order_relaxed);
+        }
+
+        void clearFxNative(int slot) {
+            if (slot < 0 || slot >= static_cast<int>(MAX_FX_IR_BLOCKS)) return;
+            stop();
+            const auto index = static_cast<size_t>(slot);
+            mFxNative[index].reset();
+            mFxNativeBypass[index].store(true, std::memory_order_relaxed);
         }
 
         std::string switchPresetGapless(
@@ -5318,6 +5370,7 @@ namespace {
             );
 
             std::vector<float> postEqBuffer(frames);
+            std::vector<float> postEqRightBuffer(frames);
             std::vector<float> irDry(frames);
             std::vector<double> irInput(frames);
             double* irInputPointers[1] = {irInput.data()};
@@ -5607,6 +5660,24 @@ namespace {
                     double** fxOutput = fxIr->Process(irInputPointers, 1, frames);
                     for (unsigned int frame = 0; frame < frames; ++frame) {
                         buffer[frame] = static_cast<NAM_SAMPLE>(irDry[frame] * (1.0f - mix) + static_cast<float>(fxOutput[0][frame]) * mix);
+                    }
+                }
+            };
+
+            auto processFxNatives = [&](float* left, float* right) {
+                for (unsigned int slot = 0; slot < MAX_FX_IR_BLOCKS; ++slot) {
+                    const auto index = static_cast<size_t>(slot);
+                    if (mFxNativeBypass[index].load(std::memory_order_relaxed) || !mFxNative[index]) continue;
+                    const float mix = mFxNativeMix[index].load(std::memory_order_relaxed);
+                    const float p1 = mFxNativeParam1[index].load(std::memory_order_relaxed);
+                    const float p2 = mFxNativeParam2[index].load(std::memory_order_relaxed);
+                    const float p3 = mFxNativeParam3[index].load(std::memory_order_relaxed);
+                    for (unsigned int frame = 0; frame < frames; ++frame) {
+                        const float dryL = left[frame];
+                        const float dryR = right[frame];
+                        const auto wet = mFxNative[index]->processStereo(dryL, dryR, p1, p2, p3);
+                        left[frame] = dryL * (1.0f - mix) + wet[0] * mix;
+                        right[frame] = dryR * (1.0f - mix) + wet[1] * mix;
                     }
                 }
             };
@@ -6332,16 +6403,19 @@ namespace {
                     processOutputIr(reinterpret_cast<NAM_SAMPLE*>(postEqBuffer.data()));
                 }
                 processFxIrs(static_cast<int>(MAX_NAM_BLOCKS), reinterpret_cast<NAM_SAMPLE*>(postEqBuffer.data()));
+                std::copy(postEqBuffer.begin(), postEqBuffer.end(), postEqRightBuffer.begin());
+                processFxNatives(postEqBuffer.data(), postEqRightBuffer.data());
 
                 for (unsigned int frame = 0; frame < frames; ++frame) {
-                    const float output = postEqBuffer[frame] * outputGain;
+                    const float outputLeft = postEqBuffer[frame] * outputGain;
+                    const float outputRight = postEqRightBuffer[frame] * outputGain;
                     if (outputLeftChannel < mPlaybackChannels) {
                         writeSample(playbackBuffer.data(), frame, outputLeftChannel,
-                                    mPlaybackChannels, mPlaybackFormat, output);
+                                    mPlaybackChannels, mPlaybackFormat, outputLeft);
                     }
                     if (outputRightChannel < mPlaybackChannels) {
                         writeSample(playbackBuffer.data(), frame, outputRightChannel,
-                                    mPlaybackChannels, mPlaybackFormat, output);
+                                    mPlaybackChannels, mPlaybackFormat, outputRight);
                     }
                 }
 
@@ -6512,6 +6586,14 @@ namespace {
         std::array<std::atomic<bool>, MAX_FX_IR_BLOCKS> mFxIrBypass{};
         std::array<std::atomic<float>, MAX_FX_IR_BLOCKS> mFxIrMix{};
         std::array<std::atomic<int>, MAX_FX_IR_BLOCKS> mFxIrPosition{};
+        std::array<std::unique_ptr<picolo::FxNativeProcessor>, MAX_FX_IR_BLOCKS> mFxNative{};
+        std::array<std::atomic<int>, MAX_FX_IR_BLOCKS> mFxNativeType{};
+        std::array<std::atomic<bool>, MAX_FX_IR_BLOCKS> mFxNativeBypass{};
+        std::array<std::atomic<float>, MAX_FX_IR_BLOCKS> mFxNativeMix{};
+        std::array<std::atomic<int>, MAX_FX_IR_BLOCKS> mFxNativePosition{};
+        std::array<std::atomic<float>, MAX_FX_IR_BLOCKS> mFxNativeParam1{};
+        std::array<std::atomic<float>, MAX_FX_IR_BLOCKS> mFxNativeParam2{};
+        std::array<std::atomic<float>, MAX_FX_IR_BLOCKS> mFxNativeParam3{};
         std::atomic<bool> mOutputIrBypass{false};
         std::atomic<int> mOutputIrPosition{static_cast<int>(MAX_NAM_BLOCKS)};
         std::atomic<float> mOutputIrInGainDb{0.0f};
@@ -6951,6 +7033,54 @@ Java_com_pedro_tone3000m1_MainActivity_nativeSetFxImpulseResponsePosition(
         JNIEnv*, jobject, jint slot, jint namBlocksBefore
 ) {
     gEngine.setFxImpulseResponsePosition(static_cast<int>(slot), static_cast<int>(namBlocksBefore));
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeConfigureFxNative(
+        JNIEnv*, jobject, jint slot, jint type, jint namBlocksBefore
+) {
+    gEngine.configureFxNative(static_cast<int>(slot), static_cast<int>(type), static_cast<int>(namBlocksBefore));
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeClearFxNative(
+        JNIEnv*, jobject, jint slot
+) {
+    gEngine.clearFxNative(static_cast<int>(slot));
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetFxNativeBypass(
+        JNIEnv*, jobject, jint slot, jboolean bypass
+) {
+    gEngine.setFxNativeBypass(static_cast<int>(slot), bypass == JNI_TRUE);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetFxNativeMix(
+        JNIEnv*, jobject, jint slot, jfloat mix
+) {
+    gEngine.setFxNativeMix(static_cast<int>(slot), mix);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetFxNativeParameter(
+        JNIEnv*, jobject, jint slot, jint parameter, jfloat value
+) {
+    gEngine.setFxNativeParameter(static_cast<int>(slot), static_cast<int>(parameter), value);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_MainActivity_nativeSetFxNativePosition(
+        JNIEnv*, jobject, jint slot, jint namBlocksBefore
+) {
+    gEngine.setFxNativePosition(static_cast<int>(slot), static_cast<int>(namBlocksBefore));
 }
 
 extern "C"

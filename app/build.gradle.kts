@@ -3,17 +3,6 @@ plugins {
     alias(libs.plugins.compose.compiler)
 }
 
-// The authenticated TONE3000 catalog used by the Compose import flow is
-// bundled from the same React build as the JUCE plugin.
-val syncReactUiAssets by tasks.registering(Copy::class) {
-    from(rootProject.layout.projectDirectory.dir("plugin/webview"))
-    into(layout.projectDirectory.dir("src/main/assets/tone3000-official"))
-}
-
-tasks.named("preBuild").configure {
-    dependsOn(syncReactUiAssets)
-}
-
 android {
     namespace = "com.pedro.tone3000m1"
 
