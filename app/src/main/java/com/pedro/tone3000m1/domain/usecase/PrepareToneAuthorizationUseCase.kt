@@ -10,7 +10,7 @@ import java.util.Base64
 internal class PrepareToneAuthorizationUseCase(
     private val session: ToneSessionRepository,
 ) {
-    fun execute(): ToneAuthorizationChallenge {
+    suspend fun execute(): ToneAuthorizationChallenge {
         val verifier = randomUrlSafe(32)
         val state = randomUrlSafe(16)
         val challenge = Base64.getUrlEncoder().withoutPadding().encodeToString(

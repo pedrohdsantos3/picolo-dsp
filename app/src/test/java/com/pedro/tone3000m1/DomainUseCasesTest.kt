@@ -1,6 +1,8 @@
 package com.pedro.tone3000m1
 
 import com.pedro.tone3000m1.domain.model.ExtraNamEntry
+import com.pedro.tone3000m1.data.model.PicoloStateSnapshot
+import com.pedro.tone3000m1.data.repository.PicoloStateRepository
 import com.pedro.tone3000m1.domain.engine.PresetAudioEngine
 import com.pedro.tone3000m1.domain.engine.PrimaryToneCaptureEngine
 import com.pedro.tone3000m1.domain.engine.FxImpulseEngine
@@ -15,14 +17,18 @@ import java.io.File
 import java.security.MessageDigest
 import java.nio.file.Files
 import java.util.Base64
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
 
 class DomainUseCasesTest {
     @Test fun prepareAuthorization_persistsVerifierAndMatchingChallenge() {
         val session = FakeSession()
-        val challenge = PrepareToneAuthorizationUseCase(session).execute()
-        val pending = session.pendingAuthorization()!!
+        val (challenge, pending) = runBlocking {
+            PrepareToneAuthorizationUseCase(session).execute() to session.pendingAuthorization()!!
+        }
         assertEquals(challenge.state, pending.state)
         assertEquals(22, challenge.state.length)
         assertEquals(43, pending.verifier.length)
@@ -33,7 +39,7 @@ class DomainUseCasesTest {
     @Test fun completeToneSelection_rejectsMismatchedStateBeforeExchangingCode() {
         val session = FakeSession(PendingToneAuthorization("verifier", "expected"))
         val tones = FakeTones()
-        val error = failure { CompleteToneSelectionUseCase(tones, session).execute("code", "wrong", "id", "NAM") }
+        val error = suspendFailure { CompleteToneSelectionUseCase(tones, session).execute("code", "wrong", "id", "NAM") }
         assertEquals("OAuth state mismatch.", error.message)
         assertNull(tones.exchangedVerifier)
         assertEquals(0, session.savedTokenCount)
@@ -43,10 +49,12 @@ class DomainUseCasesTest {
         val session = FakeSession(PendingToneAuthorization("verifier", "state"))
         val tones = FakeTones()
         val progress = mutableListOf<String>()
-        val selection = CompleteToneSelectionUseCase(tones, session).execute("code", "state", "id", "ir", progress::add)
+        val selection = runBlocking { CompleteToneSelectionUseCase(tones, session).execute("code", "state", "id", "ir", progress::add) }
         assertEquals("verifier", tones.exchangedVerifier)
-        assertEquals("access", session.accessToken())
-        assertNull(session.pendingAuthorization())
+        runBlocking {
+            assertEquals("access", session.accessToken())
+            assertNull(session.pendingAuthorization())
+        }
         assertEquals(listOf(null, null), tones.architectures)
         assertEquals("IR", selection.moduleType)
         assertEquals(listOf("2/3 - FETCHING TONE...", "3/3 - FETCHING IMPULSE RESPONSE..."), progress)
@@ -56,7 +64,7 @@ class DomainUseCasesTest {
         val session = FakeSession(PendingToneAuthorization("verifier", "state"))
         val tones = FakeTones()
 
-        CompleteToneSelectionUseCase(tones, session).execute("code", "state", "id", "nam")
+        runBlocking { CompleteToneSelectionUseCase(tones, session).execute("code", "state", "id", "nam") }
 
         assertEquals(listOf(2, 2), tones.architectures)
     }
@@ -97,15 +105,15 @@ class DomainUseCasesTest {
             OnlineModel(2, "still cached", "medium", "cached-url"),
         )
         val repository = object : TonePackageCaptureRepository {
-            override fun save(toneId: String, moduleType: String, models: List<OnlineModel>) = Unit
-            override fun read(toneId: String, moduleType: String) = cached
+            override suspend fun save(toneId: String, moduleType: String, models: List<OnlineModel>) = Unit
+            override suspend fun read(toneId: String, moduleType: String) = cached
         }
         val fresh = listOf(
             OnlineModel(1, "refreshed name", "large", "new-url"),
             OnlineModel(3, "new capture", "small", "new-capture-url"),
         )
 
-        val merged = MergePackageCapturesUseCase(repository).execute("tone", "AMP", fresh)
+        val merged = runBlocking { MergePackageCapturesUseCase(repository).execute("tone", "AMP", fresh) }
 
         assertEquals(listOf(1L, 2L, 3L), merged.map { it.id })
         assertEquals("refreshed name", merged[0].name)
@@ -124,7 +132,7 @@ class DomainUseCasesTest {
             captures,
         )
 
-        val models = useCase.execute("tone-1", "NAM", "token")
+        val models = runBlocking { useCase.execute("tone-1", "NAM", "token") }
 
         assertEquals(listOf(2), tones.architectures)
         assertEquals("tone-1", tones.listedToneId)
@@ -137,11 +145,13 @@ class DomainUseCasesTest {
         val tones = FakeTones()
         val captures = FakePackageCaptures()
 
-        LoadPackageCapturesUseCase(
-            ListToneModelsUseCase(tones),
-            MergePackageCapturesUseCase(captures),
-            captures,
-        ).execute("tone-2", "FX", "token")
+        runBlocking {
+            LoadPackageCapturesUseCase(
+                ListToneModelsUseCase(tones),
+                MergePackageCapturesUseCase(captures),
+                captures,
+            ).execute("tone-2", "FX", "token")
+        }
 
         assertEquals(listOf(null), tones.architectures)
     }
@@ -155,6 +165,17 @@ class DomainUseCasesTest {
         assertEquals("Only .nam files are supported on Android", failure { useCase.execute("amp.txt", "data") }.message)
         assertEquals("Empty local file", failure { useCase.execute("amp.nam", " ") }.message)
         assertEquals(1, files.writeCount)
+    }
+
+    @Test fun picoloStateRepositoryPublishesStateChangesWithoutWaitingForMetricsTick() = runBlocking {
+        val repository = PicoloStateRepository(readStats = { "blocks=1" }, intervalMs = 60_000)
+        repository.publish("{\"running\":true}", "Audio active")
+        val snapshot = withTimeout(1_000) {
+            repository.observe().first { it.pluginState == "{\"running\":true}" }
+        }
+
+        assertEquals("Audio active", snapshot.status)
+        assertEquals("blocks=1", snapshot.stats)
     }
 
     @Test fun importFxCapture_downloadsLoadsAndPersistsNewEffect() {
@@ -533,13 +554,13 @@ class DomainUseCasesTest {
 private class FakeSession(private var pending: PendingToneAuthorization? = null) : ToneSessionRepository {
     private var tokens: OAuthTokenResponse? = null
     var savedTokenCount = 0
-    override fun saveTokens(tokens: OAuthTokenResponse) { this.tokens = tokens; savedTokenCount++ }
-    override fun saveAccessToken(token: String) = true
-    override fun accessToken() = tokens?.accessToken
-    override fun clearTokens() { tokens = null }
-    override fun savePendingAuthorization(verifier: String, state: String) { pending = PendingToneAuthorization(verifier, state) }
-    override fun pendingAuthorization() = pending
-    override fun clearPendingAuthorization() { pending = null }
+    override suspend fun saveTokens(tokens: OAuthTokenResponse) { this.tokens = tokens; savedTokenCount++ }
+    override suspend fun saveAccessToken(token: String) = true
+    override suspend fun accessToken() = tokens?.accessToken
+    override suspend fun clearTokens() { tokens = null }
+    override suspend fun savePendingAuthorization(verifier: String, state: String) { pending = PendingToneAuthorization(verifier, state) }
+    override suspend fun pendingAuthorization() = pending
+    override suspend fun clearPendingAuthorization() { pending = null }
 }
 
 private class FakeTones : Tone3000Repository {
@@ -681,8 +702,8 @@ private class FakePackageCaptures(
     private val cachedModels: List<OnlineModel> = emptyList(),
 ) : TonePackageCaptureRepository {
     var savedModels: List<OnlineModel>? = null
-    override fun save(toneId: String, moduleType: String, models: List<OnlineModel>) { savedModels = models }
-    override fun read(toneId: String, moduleType: String) = cachedModels
+    override suspend fun save(toneId: String, moduleType: String, models: List<OnlineModel>) { savedModels = models }
+    override suspend fun read(toneId: String, moduleType: String) = cachedModels
 }
 
 private class FakeFiles(private val target: File = File("pending.nam")) : ToneImportRepository {
@@ -725,3 +746,6 @@ private fun testPreset() = PresetData(1, "/model.nam", "Model", "small", null, n
     null, "", "", "IR", false, 0, 0f, 0f, 1f, false, List(6) { 0f })
 
 private fun failure(block: () -> Unit): Throwable = try { block(); error("Expected failure") } catch (error: Throwable) { error }
+private fun suspendFailure(block: suspend () -> Unit): Throwable = runBlocking {
+    try { block(); error("Expected failure") } catch (error: Throwable) { error }
+}

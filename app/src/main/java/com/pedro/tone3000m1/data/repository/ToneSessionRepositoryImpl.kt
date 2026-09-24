@@ -1,63 +1,68 @@
 package com.pedro.tone3000m1.data.repository
 
-import android.content.SharedPreferences
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import kotlinx.coroutines.flow.first
 import com.pedro.tone3000m1.domain.model.OAuthTokenResponse
 import com.pedro.tone3000m1.domain.model.PendingToneAuthorization
 import com.pedro.tone3000m1.domain.repository.ToneSessionRepository
 
 internal class ToneSessionRepositoryImpl(
-    private val preferences: SharedPreferences,
+    private val preferences: DataStore<Preferences>,
 ) : ToneSessionRepository {
-    override fun saveTokens(tokens: OAuthTokenResponse) {
-        preferences.edit()
-            .putString(ACCESS_TOKEN_KEY, tokens.accessToken)
-            .putString(REFRESH_TOKEN_KEY, tokens.refreshToken)
-            .apply()
+    override suspend fun saveTokens(tokens: OAuthTokenResponse) {
+        preferences.edit {
+            it[ACCESS_TOKEN] = tokens.accessToken
+            it[REFRESH_TOKEN] = tokens.refreshToken
+        }
     }
 
-    override fun saveAccessToken(token: String): Boolean {
+    override suspend fun saveAccessToken(token: String): Boolean {
         val value = token.trim()
         if (value.isBlank()) {
             clearTokens()
             return false
         }
-        preferences.edit().putString(ACCESS_TOKEN_KEY, value).apply()
+        preferences.edit { it[ACCESS_TOKEN] = value }
         return true
     }
 
-    override fun accessToken(): String? = preferences.getString(ACCESS_TOKEN_KEY, null)
+    override suspend fun accessToken(): String? = preferences.data.first()[ACCESS_TOKEN]
 
-    override fun clearTokens() {
-        preferences.edit()
-            .remove(ACCESS_TOKEN_KEY)
-            .remove(REFRESH_TOKEN_KEY)
-            .apply()
+    override suspend fun clearTokens() {
+        preferences.edit {
+            it.remove(ACCESS_TOKEN)
+            it.remove(REFRESH_TOKEN)
+        }
     }
 
-    override fun savePendingAuthorization(verifier: String, state: String) {
-        preferences.edit()
-            .putString(VERIFIER_KEY, verifier)
-            .putString(STATE_KEY, state)
-            .apply()
+    override suspend fun savePendingAuthorization(verifier: String, state: String) {
+        preferences.edit {
+            it[VERIFIER] = verifier
+            it[STATE] = state
+        }
     }
 
-    override fun pendingAuthorization(): PendingToneAuthorization? {
-        val verifier = preferences.getString(VERIFIER_KEY, null) ?: return null
-        val state = preferences.getString(STATE_KEY, null) ?: return null
+    override suspend fun pendingAuthorization(): PendingToneAuthorization? {
+        val data = preferences.data.first()
+        val verifier = data[VERIFIER] ?: return null
+        val state = data[STATE] ?: return null
         return PendingToneAuthorization(verifier, state)
     }
 
-    override fun clearPendingAuthorization() {
-        preferences.edit()
-            .remove(STATE_KEY)
-            .remove(VERIFIER_KEY)
-            .apply()
+    override suspend fun clearPendingAuthorization() {
+        preferences.edit {
+            it.remove(STATE)
+            it.remove(VERIFIER)
+        }
     }
 
     private companion object {
-        const val ACCESS_TOKEN_KEY = "access_token"
-        const val REFRESH_TOKEN_KEY = "refresh_token"
-        const val STATE_KEY = "oauth_state"
-        const val VERIFIER_KEY = "pkce_verifier"
+        val ACCESS_TOKEN = stringPreferencesKey("access_token")
+        val REFRESH_TOKEN = stringPreferencesKey("refresh_token")
+        val STATE = stringPreferencesKey("oauth_state")
+        val VERIFIER = stringPreferencesKey("pkce_verifier")
     }
 }

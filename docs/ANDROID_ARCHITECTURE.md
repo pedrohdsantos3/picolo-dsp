@@ -13,7 +13,7 @@ PicoloActions (contrato tipado)
         ↓
         AudioAppController (adaptador ainda hospedado em MainActivity)
         ├── casos de uso e contratos de domínio
-        ├── repositórios: SharedPreferences / API / arquivos
+        ├── repositórios: DataStore / SharedPreferences / API / arquivos
         └── NativeAudioEngine (fachada JNI)
                     ↓
              C++: TinyALSA + NAM + IR + efeitos
@@ -22,7 +22,9 @@ PicoloActions (contrato tipado)
 - A seleção TONE3000 usa Custom Tabs, PKCE e callback nativo. A Activity mantém
   a navegação do browser e a leitura da URI; `PrepareToneAuthorizationUseCase`
   gera o desafio PKCE e `CompleteToneSelectionUseCase` valida o estado, troca
-  o código, persiste tokens pela sessão e carrega tone/captures. `Tone3000ApiRepository`
+  o código, persiste tokens pela sessão e carrega tone/captures.
+  `ToneSessionRepositoryImpl` salva tokens e PKCE no Preferences DataStore.
+  `Tone3000ApiRepository`
   implementa a API e o download autenticado; `ToneImportRepositoryImpl` cuida
   dos arquivos locais, normalização WAV e commit dos modelos. Casos de uso
   deixam essas operações atrás de contratos de domínio.
@@ -31,11 +33,12 @@ PicoloActions (contrato tipado)
   coordena o commit, a inclusão no motor, os defaults AMP/PEDAL e a persistência
   de um bloco novo. `RebuildNamChainUseCase` restaura os blocos e controles pela
   interface `NamChainRebuildEngine`; `ReplaceNamCaptureUseCase` valida e aplica
-  uma substituição antes do commit dos metadados da cadeia. `LoadPrimaryToneCaptureUseCase` só confirma a troca depois que a
+  uma substituição antes do commit dos metadados da cadeia.
+  `LoadPrimaryToneCaptureUseCase` só confirma a troca depois que a
   interface `PrimaryToneCaptureEngine` aceita o arquivo e aplica os defaults do
   módulo. `PrepareNamBlockReplacementUseCase` mantém controles do bloco ao
   trocar capture e redefine os valores ao mudar entre AMP e PEDAL. A Activity
-  ainda coordena o rebuild nativo e a persistência do add/replace da cadeia.
+  ainda persiste os metadados finais do replace.
 - `FxChainRepository` mapeia os JSONs legados de FX para modelos Kotlin
   imutáveis (`FxImpulseEntry` e `FxNativeEntry`) e vice-versa. A Activity
   converte esses modelos para JSON somente ao montar o snapshot de apresentação.
@@ -54,22 +57,27 @@ PicoloActions (contrato tipado)
   os nomes dos exports C++ acompanham essa classe. A Activity usa a fachada,
   mas ainda coordena parte dos comandos através do controller interno.
 - `CurrentToneRepositoryImpl` lê o caminho ativo, salva o modelo e aplica defaults NAM pelas chaves legadas. `RestorePreviousToneModelUseCase` valida o arquivo e pede à interface `ToneModelEngine` para restaurá-lo após uma troca malsucedida. `NativeAudioEngine` implementa essa interface sem expor JNI ao caso de uso.
-- `TonePackageCaptureRepositoryImpl` mantém o cache de captures de pacote e seu formato JSON de preferências fora da `MainActivity`. `LoadPackageCapturesUseCase` escolhe a arquitetura da API, combina resultados novos e em cache e atualiza o cache sem descartar captures omitidos por respostas parciais.
+- `TonePackageCaptureRepositoryImpl` mantém o cache de captures de pacote no
+  Preferences DataStore. `AppPreferencesDataStore` migra apenas as chaves desse
+  cache e da sessão OAuth, deixando as outras preferências SharedPreferences
+  intactas.
+  `LoadPackageCapturesUseCase` escolhe a arquitetura da API, combina resultados
+  novos e em cache e atualiza o cache sem descartar captures omitidos por
+  respostas parciais.
 - `ImportCabinetImpulseUseCase` coordena o download, normalização WAV, carga no motor e início do áudio. `CabinetImpulseRepositoryImpl` mantém as chaves e defaults legados de cabinet IR.
 - `ui/model/PicoloUiState.kt` mantém os modelos de apresentação e converte o
   snapshot nativo separado dos Composables.
 - `ui/actions/PicoloActions.kt` descreve as ações que a UI pode executar. Os
   Composables dependem desse contrato, sem referenciar a Activity.
-- `PicoloComposeViewModel` mantém estado de UI, mas recebe snapshots montados
-  pela Activity através de `PicoloStateRepository`; o repositório centraliza
-  a consulta periódica e o ViewModel coleta o fluxo sem polling no Composable.
-  `AudioAppController` ainda depende da Activity e a publicação do snapshot
-  ainda usa consulta periódica; os dois são limites temporários.
+- `PicoloComposeViewModel` mantém estado de UI e coleta snapshots publicados
+  após comandos da UI e alterações no status. `PicoloStateRepository` consulta
+  periodicamente apenas as métricas contínuas de áudio necessárias aos
+  indicadores de desempenho. `AudioAppController` ainda depende da Activity.
 - `MainActivity` cuida do ciclo de vida Android e é a única dona da tela Compose;
   a árvore de Views antiga foi removida. OAuth, API, armazenamento dos presets,
-  cache de captures, restauração do modelo ativo e importação de FX/IR já passam
-  por limites próprios. O controller ainda coordena o rebuild e o commit de
-  add/replace NAM, além da publicação de estado.
+  cache de captures, restauração do modelo ativo e importação NAM/FX/IR já passam
+  por limites próprios. Alguns adaptadores de status e controles ainda ficam na
+  Activity.
 
 ## Sequência de refatoração
 
@@ -88,12 +96,14 @@ PicoloActions (contrato tipado)
    Os casos de uso de preset e roteamento dependem de interfaces de engine. O
    motor continua sem dependências Android e sem trabalho bloqueante no
    processamento.
-4. **Estado de tela:** substituir a consulta periódica do repositório por
-   publicação de snapshots imutáveis quando as ações alterarem o estado. A
-   UI já observa um fluxo pelo ViewModel; hoje o fluxo ainda consulta a
-   Activity a cada 700 ms porque as mutações e as chamadas JNI permanecem lá.
-5. **Preferências:** migrar gradualmente para DataStore somente após cada
-   repositório ter testes de compatibilidade para as chaves atuais e presets.
+4. **Estado de tela:** ações Compose e alterações no status publicam snapshots
+   imutáveis. A consulta periódica de 700 ms foi reduzida às métricas contínuas
+   do áudio necessárias aos indicadores de desempenho.
+5. **Preferências:** migração gradual para DataStore iniciada pelo cache de
+   captures e pela sessão OAuth, com cobertura instrumentada dos formatos
+   legados. As demais preferências ainda usam SharedPreferences e devem migrar
+   após extração e cobertura de compatibilidade dos repositórios
+   correspondentes.
 
 Cada etapa deve ser pequena o bastante para preservar o áudio ativo, os
 presets salvos, imports locais e a seleção TONE3000.

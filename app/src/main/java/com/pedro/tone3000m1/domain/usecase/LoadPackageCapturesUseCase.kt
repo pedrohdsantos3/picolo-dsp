@@ -10,7 +10,7 @@ internal class LoadPackageCapturesUseCase(
     private val mergePackageCaptures: MergePackageCapturesUseCase,
     private val cache: TonePackageCaptureRepository,
 ) {
-    fun execute(toneId: String, moduleType: String, token: String): List<OnlineModel> {
+    suspend fun execute(toneId: String, moduleType: String, token: String): List<OnlineModel> {
         val normalizedType = moduleType.uppercase(Locale.ROOT)
         val architecture = if (normalizedType == "FX" || normalizedType == "IR") null else 2
         val freshModels = listToneModels.execute(toneId, token, architecture)

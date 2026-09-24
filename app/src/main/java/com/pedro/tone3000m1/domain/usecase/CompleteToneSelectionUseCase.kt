@@ -9,7 +9,7 @@ internal class CompleteToneSelectionUseCase(
     private val tones: Tone3000Repository,
     private val session: ToneSessionRepository,
 ) {
-    fun execute(
+    suspend fun execute(
         code: String,
         returnedState: String?,
         toneId: String,

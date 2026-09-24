@@ -4,7 +4,17 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.pedro.tone3000m1.domain.model.OnlineModel
 import com.pedro.tone3000m1.domain.model.ExtraNamEntry
 import com.pedro.tone3000m1.domain.model.FxNativeEntry
+import com.pedro.tone3000m1.domain.model.OAuthTokenResponse
+import com.pedro.tone3000m1.domain.model.PendingToneAuthorization
 import org.json.JSONObject
+import org.json.JSONArray
+import androidx.datastore.preferences.core.stringPreferencesKey
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.util.UUID
@@ -22,13 +32,16 @@ class DataRepositoryCompatibilityTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private lateinit var preferenceName: String
     private lateinit var directory: File
+    private lateinit var dataStoreScope: CoroutineScope
 
     @Before fun setUp() {
         preferenceName = "preset-repository-test-${UUID.randomUUID()}"
         directory = File(context.cacheDir, preferenceName).apply { mkdirs() }
+        dataStoreScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 
     @After fun tearDown() {
+        dataStoreScope.cancel()
         context.getSharedPreferences(preferenceName, 0).edit().clear().commit()
         context.deleteSharedPreferences(preferenceName)
         directory.deleteRecursively()
@@ -187,21 +200,68 @@ class DataRepositoryCompatibilityTest {
         assertEquals(-15f, preferences.getFloat(PresetPreferenceKeys.NAM_GAIN_DB, 0f))
     }
 
-    @Test fun packageCaptureCacheKeepsExistingPreferenceKeyAndDeduplicatesModels() {
+    @Test fun packageCaptureCacheMigratesLegacyJsonAndDeduplicatesModels() = runBlocking {
         val preferences = context.getSharedPreferences(preferenceName, 0)
-        val repository = TonePackageCaptureRepositoryImpl(preferences)
+        val legacyKey = "package_capture_cache_NAM_tone-7"
+        preferences.edit()
+            .putString("unrelated_legacy_setting", "still-here")
+            .putString(
+                legacyKey,
+                JSONArray()
+                .put(JSONObject().put("id", 10).put("name", "first").put("size", "small").put("modelUrl", "first-url"))
+                .put(JSONObject().put("id", 10).put("name", "duplicate").put("size", "large").put("modelUrl", "duplicate-url"))
+                .toString(),
+            ).commit()
+        val store = AppPreferencesDataStore.create(
+            context,
+            legacyPreferencesName = preferenceName,
+            file = File(directory, "captures.preferences_pb"),
+            scope = dataStoreScope,
+        )
+        val repository = TonePackageCaptureRepositoryImpl(store)
         val models = listOf(
             OnlineModel(10, "first", "small", "first-url"),
             OnlineModel(10, "duplicate", "large", "duplicate-url"),
             OnlineModel(11, "second", "medium", "second-url"),
         )
 
+        assertEquals("first", repository.read("tone-7", "NAM").first().name)
         repository.save("tone-7", "amp", models)
 
-        assertTrue(preferences.contains("package_capture_cache_NAM_tone-7"))
         assertEquals(listOf(10L, 11L), repository.read("tone-7", "PEDAL").map { it.id })
         assertEquals("first", repository.read("tone-7", "NAM").first().name)
         assertEquals(emptyList<OnlineModel>(), repository.read("tone-7", "FX"))
+        assertTrue(store.data.first().contains(stringPreferencesKey(legacyKey)))
+        assertEquals("still-here", preferences.getString("unrelated_legacy_setting", null))
+    }
+
+    @Test fun toneSessionDataStoreMigratesTokensAndPkceWithoutMovingOtherPreferences() = runBlocking {
+        val preferences = context.getSharedPreferences(preferenceName, 0)
+        preferences.edit()
+            .putString("access_token", "legacy-access")
+            .putString("refresh_token", "legacy-refresh")
+            .putString("oauth_state", "legacy-state")
+            .putString("pkce_verifier", "legacy-verifier")
+            .putString("last_model_path", "/model.nam")
+            .commit()
+        val store = AppPreferencesDataStore.create(
+            context,
+            legacyPreferencesName = preferenceName,
+            file = File(directory, "session.preferences_pb"),
+            scope = dataStoreScope,
+        )
+        val repository = ToneSessionRepositoryImpl(store)
+
+        assertEquals("legacy-access", repository.accessToken())
+        assertEquals(PendingToneAuthorization("legacy-verifier", "legacy-state"), repository.pendingAuthorization())
+        repository.saveTokens(OAuthTokenResponse("new-access", "new-refresh"))
+        repository.clearPendingAuthorization()
+
+        val data = store.data.first()
+        assertEquals("new-access", data[stringPreferencesKey("access_token")])
+        assertEquals("new-refresh", data[stringPreferencesKey("refresh_token")])
+        assertEquals(null, repository.pendingAuthorization())
+        assertEquals("/model.nam", preferences.getString("last_model_path", null))
     }
 
     @Test fun readSupportsExistingSavedPresetPreferenceFormat() {

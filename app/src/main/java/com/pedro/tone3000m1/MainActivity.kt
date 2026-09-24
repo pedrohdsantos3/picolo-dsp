@@ -7,6 +7,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.Log
 import android.view.View
 import android.view.WindowManager
@@ -17,6 +19,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
@@ -26,7 +29,6 @@ import org.json.JSONObject
 import com.pedro.tone3000m1.domain.model.ExtraNamEntry
 import com.pedro.tone3000m1.domain.model.FxImpulseEntry
 import com.pedro.tone3000m1.domain.model.FxNativeEntry
-import com.pedro.tone3000m1.data.model.PicoloStateSnapshot
 import com.pedro.tone3000m1.data.repository.NamChainRepository
 import com.pedro.tone3000m1.data.repository.FxChainRepository
 import com.pedro.tone3000m1.data.repository.PresetRepositoryImpl
@@ -37,6 +39,7 @@ import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
 import com.pedro.tone3000m1.data.repository.ToneImportRepositoryImpl
 import com.pedro.tone3000m1.data.repository.ToneSessionRepositoryImpl
 import com.pedro.tone3000m1.data.repository.TonePackageCaptureRepositoryImpl
+import com.pedro.tone3000m1.data.repository.AppPreferencesDataStore
 import com.pedro.tone3000m1.data.repository.CurrentToneRepositoryImpl
 import com.pedro.tone3000m1.data.repository.CabinetImpulseRepositoryImpl
 import com.pedro.tone3000m1.domain.usecase.AudioRoutingUseCase
@@ -64,11 +67,15 @@ import com.pedro.tone3000m1.domain.usecase.PrepareImpulseResponseUseCase
 import com.pedro.tone3000m1.domain.usecase.PrepareToneAuthorizationUseCase
 import com.pedro.tone3000m1.domain.usecase.RestorePreviousToneModelUseCase
 import com.pedro.tone3000m1.ui.actions.PicoloActions
+import com.pedro.tone3000m1.ui.actions.StatePublishingPicoloActions
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
@@ -219,6 +226,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var composeView: ComposeView
 
     private lateinit var status: TextView
+    private var picoloStateRepository: PicoloStateRepository? = null
+    private val stateSnapshotVersion = AtomicLong(0L)
     private lateinit var currentModelText: TextView
     private lateinit var audioDeviceText: TextView
 
@@ -346,7 +355,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val toneSessionRepository by lazy {
-        ToneSessionRepositoryImpl(prefs)
+        ToneSessionRepositoryImpl(AppPreferencesDataStore.get(applicationContext))
     }
 
     private val currentToneRepository by lazy {
@@ -362,7 +371,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val tonePackageCaptureRepository by lazy {
-        TonePackageCaptureRepositoryImpl(prefs)
+        TonePackageCaptureRepositoryImpl(AppPreferencesDataStore.get(applicationContext))
     }
 
     private val mergePackageCapturesUseCase by lazy {
@@ -649,7 +658,13 @@ class MainActivity : AppCompatActivity() {
     private fun createUi() {
         // Compose is the only attached UI. These View instances remain as temporary
         // adapters for existing status and control code while that code moves out.
-        status = TextView(this)
+        status = TextView(this).apply {
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                override fun afterTextChanged(s: Editable?) { publishComposeState() }
+            })
+        }
         currentModelText = TextView(this)
         audioDeviceText = TextView(this)
         inputGainText = TextView(this)
@@ -677,33 +692,38 @@ class MainActivity : AppCompatActivity() {
 
         val composeViewModel = ViewModelProvider(this)[PicoloComposeViewModel::class.java]
         val composeActions = AudioAppController()
-        composeViewModel.observe(
-            PicoloStateRepository(readSnapshot = {
-                val (pluginState, stats) = withContext(Dispatchers.IO) {
-                    pluginStateJson() to composeActions.getStats()
-                }
-                PicoloStateSnapshot(
-                    pluginState = pluginState,
-                    status = withContext(Dispatchers.Main.immediate) {
-                        status.text?.toString().orEmpty()
-                    },
-                    stats = stats,
-                )
-            }),
-        )
+        val stateRepository = PicoloStateRepository(readStats = {
+            withContext(Dispatchers.IO) { composeActions.getStats() }
+        })
+        picoloStateRepository = stateRepository
+        composeViewModel.observe(stateRepository)
+        val publishingActions = StatePublishingPicoloActions(composeActions, ::publishComposeState)
         composeView = ComposeView(this).apply {
             setViewCompositionStrategy(
                 ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
             )
             setContent {
                 PicoloComposeApp(
-                    actions = composeActions,
+                    actions = publishingActions,
                     viewModel = composeViewModel,
                     onBrowse = { mode -> startTone3000SelectFlow(mode) },
                 )
             }
         }
         setContentView(composeView)
+        publishComposeState()
+    }
+
+    private fun publishComposeState() {
+        val repository = picoloStateRepository ?: return
+        val requestVersion = stateSnapshotVersion.incrementAndGet()
+        lifecycleScope.launch(Dispatchers.IO) {
+            val serializedState = pluginStateJson()
+            val statusText = withContext(Dispatchers.Main.immediate) { status.text?.toString().orEmpty() }
+            if (requestVersion == stateSnapshotVersion.get()) {
+                repository.publish(serializedState, statusText)
+            }
+        }
     }
 
 
@@ -1725,11 +1745,6 @@ class MainActivity : AppCompatActivity() {
             return "STOPPED"
         }
 
-        fun setAccessToken(token: String): Boolean {
-            return toneSessionRepository.saveAccessToken(token)
-        }
-
-
         fun toggleBypass(): Boolean {
 
             bypass =
@@ -1898,24 +1913,22 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
 
-            val token = toneSessionRepository.accessToken()
-            if (token.isNullOrBlank()) {
-                runOnUiThread {
-                    showPackageCaptureUnavailable("Sign in to TONE3000 to view this package's captures.")
-                }
-                return true
-            }
-
             runOnUiThread {
                 status.text = "Loading captures from:\n${source.toneTitle}"
             }
             Thread {
                 try {
-                    val models = loadPackageCapturesUseCase.execute(
-                        source.toneId,
-                        source.moduleType,
-                        token,
-                    )
+                    val token = runBlocking { toneSessionRepository.accessToken() }
+                    if (token.isNullOrBlank()) {
+                        runOnUiThread {
+                            showComposeUi()
+                            showPackageCaptureUnavailable("Sign in to TONE3000 to view this package's captures.")
+                        }
+                        return@Thread
+                    }
+                    val models = runBlocking {
+                        loadPackageCapturesUseCase.execute(source.toneId, source.moduleType, token)
+                    }
                     runOnUiThread {
                         showComposeUi()
                         if (models.isEmpty()) {
@@ -3629,9 +3642,6 @@ class MainActivity : AppCompatActivity() {
             false
 
 
-        val authorization = prepareToneAuthorizationUseCase.execute()
-
-
         prefs
             .edit()
             .putString(
@@ -3643,90 +3653,44 @@ class MainActivity : AppCompatActivity() {
 
         val selectedModuleType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
         prefs.edit().putString(PREF_PENDING_TONE_TYPE, selectedModuleType).apply()
-        val gears = when (selectedModuleType) {
-            "PEDAL" -> "pedal"
-            "FX" -> "space"
-            "IR" -> "cab"
-            else -> "amp-cab_amp"
-        }
-        val uri =
-            Uri.parse(
-                AUTHORIZE_URL
-            )
-                .buildUpon()
-
-                .appendQueryParameter(
-                    "client_id",
-                    PUBLISHABLE_KEY
-                )
-
-                .appendQueryParameter(
-                    "redirect_uri",
-                    REDIRECT_URI
-                )
-
-                .appendQueryParameter(
-                    "response_type",
-                    "code"
-                )
-
-                .appendQueryParameter(
-                    "code_challenge",
-                    authorization.codeChallenge
-                )
-
-                .appendQueryParameter(
-                    "code_challenge_method",
-                    "S256"
-                )
-
-                .appendQueryParameter(
-                    "state",
-                    authorization.state
-                )
-
-                .appendQueryParameter(
-                    "prompt",
-                    "select_tone"
-                )
-
-                .appendQueryParameter(
-                    "format",
-                    if (selectedModuleType == "IR" || selectedModuleType == "FX") "ir" else "nam"
-                )
-                .appendQueryParameter("gears", gears)
-                .apply {
-                    if (selectedModuleType != "IR" && selectedModuleType != "FX") {
-                        appendQueryParameter("architecture", "2")
-                    }
+        lifecycleScope.launch {
+            try {
+                val authorization = withContext(Dispatchers.IO) {
+                    prepareToneAuthorizationUseCase.execute()
                 }
+                val gears = when (selectedModuleType) {
+                    "PEDAL" -> "pedal"
+                    "FX" -> "space"
+                    "IR" -> "cab"
+                    else -> "amp-cab_amp"
+                }
+                val uri = Uri.parse(AUTHORIZE_URL).buildUpon()
+                    .appendQueryParameter("client_id", PUBLISHABLE_KEY)
+                    .appendQueryParameter("redirect_uri", REDIRECT_URI)
+                    .appendQueryParameter("response_type", "code")
+                    .appendQueryParameter("code_challenge", authorization.codeChallenge)
+                    .appendQueryParameter("code_challenge_method", "S256")
+                    .appendQueryParameter("state", authorization.state)
+                    .appendQueryParameter("prompt", "select_tone")
+                    .appendQueryParameter("format", if (selectedModuleType == "IR" || selectedModuleType == "FX") "ir" else "nam")
+                    .appendQueryParameter("gears", gears)
+                    .apply {
+                        if (selectedModuleType != "IR" && selectedModuleType != "FX") {
+                            appendQueryParameter("architecture", "2")
+                        }
+                    }
+                    .appendQueryParameter("menubar", "true")
+                    .appendQueryParameter("preview", "true")
+                    .build()
 
-                .appendQueryParameter(
-                    "menubar",
-                    "true"
-                )
-
-                .appendQueryParameter(
-                    "preview",
-                    "true"
-                )
-
-                .build()
-
-
-        status.text =
-            "Opening TONE3000...\n\n" +
-                    "Current model preserved until a new capture is loaded."
-
-
-        CustomTabsIntent
-            .Builder()
-            .setShowTitle(true)
-            .build()
-            .launchUrl(
-                this,
-                uri
-            )
+                status.text = "Opening TONE3000...\n\nCurrent model preserved until a new capture is loaded."
+                CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(this@MainActivity, uri)
+            } catch (error: Exception) {
+                Log.e(API_TAG, "Could not prepare TONE3000 authorization", error)
+                status.text = "Could not open TONE3000.\n${error.message}"
+                restoreCurrentModelAvailability("TONE3000 authorization setup failed.")
+            }
+        }
     }
 
     // ========================================================
@@ -3803,7 +3767,7 @@ class MainActivity : AppCompatActivity() {
             toneId == null
         ) {
 
-            toneSessionRepository.clearPendingAuthorization()
+            lifecycleScope.launch(Dispatchers.IO) { toneSessionRepository.clearPendingAuthorization() }
 
             restoreCurrentModelAvailability(
                 "TONE3000 selection canceled."
@@ -3863,16 +3827,19 @@ class MainActivity : AppCompatActivity() {
                     .putString(PREF_SELECTED_ADD_TYPE, selectedType)
                     .putString(PREF_PENDING_TONE_TYPE, selectedType)
                     .apply()
-                val selection = completeToneSelectionUseCase.execute(
-                    code = code,
-                    returnedState = returnedState,
-                    toneId = toneId,
-                    moduleType = selectedType,
-                    onProgress = ::stage,
-                )
+                val selection = runBlocking {
+                    completeToneSelectionUseCase.execute(
+                        code = code,
+                        returnedState = returnedState,
+                        toneId = toneId,
+                        moduleType = selectedType,
+                        onProgress = ::stage,
+                    )
+                }
                 val token = selection.token.accessToken
                 val tone = selection.tone
                 val models = selection.models
+                runBlocking { tonePackageCaptureRepository.save(toneId, selectedType, models) }
                 val architecture = if (selection.moduleType == "IR" || selection.moduleType == "FX") null else 2
 
 
@@ -3998,8 +3965,6 @@ class MainActivity : AppCompatActivity() {
         // in-editor selector must offer the same captures as the browser that
         // originally loaded this package, even if a later API query is partial.
         val selectedModuleType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
-        tonePackageCaptureRepository.save(toneId, selectedModuleType, models)
-
         if (models.isEmpty()) {
 
             restoreCurrentModelAvailability(
