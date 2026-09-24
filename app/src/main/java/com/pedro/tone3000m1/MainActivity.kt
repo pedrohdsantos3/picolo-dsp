@@ -30,13 +30,19 @@ import org.json.JSONArray
 import org.json.JSONObject
 import com.pedro.tone3000m1.data.model.ExtraNamEntry
 import com.pedro.tone3000m1.data.model.OnlineModel
-import com.pedro.tone3000m1.data.model.PresetData
 import com.pedro.tone3000m1.data.model.PicoloStateSnapshot
 import com.pedro.tone3000m1.data.repository.NamChainRepository
 import com.pedro.tone3000m1.data.repository.FxChainRepository
-import com.pedro.tone3000m1.data.repository.PresetRepository
+import com.pedro.tone3000m1.data.repository.PresetRepositoryImpl
+import com.pedro.tone3000m1.data.repository.AudioRoutingRepositoryImpl
+import com.pedro.tone3000m1.data.repository.PresetPreferenceKeys
 import com.pedro.tone3000m1.data.repository.PicoloStateRepository
 import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
+import com.pedro.tone3000m1.domain.usecase.AudioRoutingUseCase
+import com.pedro.tone3000m1.domain.usecase.LoadPresetUseCase
+import com.pedro.tone3000m1.domain.usecase.SavePresetUseCase
+import com.pedro.tone3000m1.domain.model.PresetData
+import com.pedro.tone3000m1.domain.repository.PresetRepository
 import com.pedro.tone3000m1.ui.actions.PicoloActions
 import java.io.File
 import java.io.FileOutputStream
@@ -93,19 +99,19 @@ class MainActivity : AppCompatActivity() {
             "refresh_token"
 
         private const val PREF_LAST_MODEL_PATH =
-            "last_model_path"
+            PresetPreferenceKeys.LAST_MODEL_PATH
 
         private const val PREF_LAST_MODEL_NAME =
-            "last_model_name"
+            PresetPreferenceKeys.LAST_MODEL_NAME
 
         private const val PREF_LAST_MODEL_SIZE =
-            "last_model_size"
+            PresetPreferenceKeys.LAST_MODEL_SIZE
 
         private const val PREF_LAST_TONE_ID =
-            "last_tone_id"
+            PresetPreferenceKeys.LAST_TONE_ID
 
         private const val PREF_LAST_TONE_TITLE =
-            "last_tone_title"
+            PresetPreferenceKeys.LAST_TONE_TITLE
 
         private const val PREF_LAST_TONE_IMAGE =
             "last_tone_image"
@@ -114,78 +120,78 @@ class MainActivity : AppCompatActivity() {
             "last_model_type"
 
         private const val PREF_CABINET_IR_PATH =
-            "cabinet_ir_path"
+            PresetPreferenceKeys.CABINET_IR_PATH
         private const val PREF_FX_CHAIN = "fx_ir_chain_json"
         private const val PREF_FX_NATIVE_CHAIN = "fx_native_chain_json"
 
         private const val PREF_CABINET_IR_IMAGE =
             "cabinet_ir_image"
 
-        private const val PREF_CABINET_IR_TITLE = "cabinet_ir_title"
-        private const val PREF_CABINET_IR_TYPE = "cabinet_ir_module_type"
-        private const val PREF_CABINET_IR_TONE_ID = "cabinet_ir_tone_id"
+        private const val PREF_CABINET_IR_TITLE = PresetPreferenceKeys.CABINET_IR_TITLE
+        private const val PREF_CABINET_IR_TYPE = PresetPreferenceKeys.CABINET_IR_TYPE
+        private const val PREF_CABINET_IR_TONE_ID = PresetPreferenceKeys.CABINET_IR_TONE_ID
 
         private const val PREF_CABINET_IR_BYPASS =
-            "cabinet_ir_bypass"
+            PresetPreferenceKeys.CABINET_IR_BYPASS
 
         private const val PREF_CABINET_IR_POSITION =
-            "cabinet_ir_position"
+            PresetPreferenceKeys.CABINET_IR_POSITION
 
-        private const val PREF_CABINET_IR_IN_GAIN = "cabinet_ir_in_gain_db"
-        private const val PREF_CABINET_IR_OUT_GAIN = "cabinet_ir_out_gain_db"
-        private const val PREF_CABINET_IR_MIX = "cabinet_ir_mix"
-        private const val PREF_CABINET_IR_EQ_PRE = "cabinet_ir_eq_pre"
-        private const val PREF_CABINET_IR_EQ_PREFIX = "cabinet_ir_eq_"
+        private const val PREF_CABINET_IR_IN_GAIN = PresetPreferenceKeys.CABINET_IR_IN_GAIN
+        private const val PREF_CABINET_IR_OUT_GAIN = PresetPreferenceKeys.CABINET_IR_OUT_GAIN
+        private const val PREF_CABINET_IR_MIX = PresetPreferenceKeys.CABINET_IR_MIX
+        private const val PREF_CABINET_IR_EQ_PRE = PresetPreferenceKeys.CABINET_IR_EQ_PRE
+        private const val PREF_CABINET_IR_EQ_PREFIX = PresetPreferenceKeys.CABINET_IR_EQ_PREFIX
 
         private const val PREF_INPUT_GAIN =
-            "input_gain_db"
+            PresetPreferenceKeys.INPUT_GAIN
 
         private const val PREF_OUTPUT_GAIN =
-            "output_gain_db"
+            PresetPreferenceKeys.OUTPUT_GAIN
 
         private const val PREF_INPUT_CHANNEL =
-            "input_channel"
+            PresetPreferenceKeys.INPUT_CHANNEL
 
         private const val PREF_OUTPUT_PAIR =
-            "output_pair"
+            PresetPreferenceKeys.OUTPUT_PAIR
 
-        private const val PREF_ACTIVE_PRESET_SLOT = "active_preset_slot"
+        private const val PREF_ACTIVE_PRESET_SLOT = PresetPreferenceKeys.ACTIVE_PRESET_SLOT
 
         private const val PREF_GATE_ENABLED =
-            "gate_enabled"
+            PresetPreferenceKeys.GATE_ENABLED
 
         private const val PREF_GATE_THRESHOLD =
-            "gate_threshold_db"
+            PresetPreferenceKeys.GATE_THRESHOLD
 
         private const val PREF_EQ_LOW =
-            "eq_low_db"
+            PresetPreferenceKeys.EQ_LOW
 
         private const val PREF_EQ_MID =
-            "eq_mid_db"
+            PresetPreferenceKeys.EQ_MID
 
         private const val PREF_EQ_HIGH =
-            "eq_high_db"
+            PresetPreferenceKeys.EQ_HIGH
 
         private const val PREF_EQ_ENABLED = "eq_enabled"
 
         private const val PREF_EXTRA_NAM_CHAIN =
-            "extra_nam_chain"
+            PresetPreferenceKeys.EXTRA_NAM_CHAIN
 
-        private const val PREF_NAM_GAIN_DB = "nam_gain_db"
-        private const val PREF_NAM_IN_GAIN_DB = "nam_in_gain_db"
-        private const val PREF_NAM_MIX = "nam_mix"
-        private const val PREF_NAM_EQ_LOW_DB = "nam_eq_low_db"
-        private const val PREF_NAM_EQ_MID_DB = "nam_eq_mid_db"
-        private const val PREF_NAM_EQ_HIGH_DB = "nam_eq_high_db"
-        private const val PREF_NAM_EQ_BAND3_DB = "nam_eq_band3_db"
-        private const val PREF_NAM_EQ_BAND4_DB = "nam_eq_band4_db"
-        private const val PREF_NAM_EQ_BAND5_DB = "nam_eq_band5_db"
-        private const val PREF_NAM_BYPASS = "nam_bypass"
-        private const val PREF_NAM_EQ_PRE = "nam_eq_pre"
+        private const val PREF_NAM_GAIN_DB = PresetPreferenceKeys.NAM_GAIN_DB
+        private const val PREF_NAM_IN_GAIN_DB = PresetPreferenceKeys.NAM_IN_GAIN_DB
+        private const val PREF_NAM_MIX = PresetPreferenceKeys.NAM_MIX
+        private const val PREF_NAM_EQ_LOW_DB = PresetPreferenceKeys.NAM_EQ_LOW_DB
+        private const val PREF_NAM_EQ_MID_DB = PresetPreferenceKeys.NAM_EQ_MID_DB
+        private const val PREF_NAM_EQ_HIGH_DB = PresetPreferenceKeys.NAM_EQ_HIGH_DB
+        private const val PREF_NAM_EQ_BAND3_DB = PresetPreferenceKeys.NAM_EQ_BAND3_DB
+        private const val PREF_NAM_EQ_BAND4_DB = PresetPreferenceKeys.NAM_EQ_BAND4_DB
+        private const val PREF_NAM_EQ_BAND5_DB = PresetPreferenceKeys.NAM_EQ_BAND5_DB
+        private const val PREF_NAM_BYPASS = PresetPreferenceKeys.NAM_BYPASS
+        private const val PREF_NAM_EQ_PRE = PresetPreferenceKeys.NAM_EQ_PRE
         private const val PREF_NAM_EQ_ENABLED = "nam_eq_enabled"
         private const val PREF_CABINET_IR_EQ_ENABLED = "cabinet_ir_eq_enabled"
-        private const val PREF_NAM_NORMALIZE = "nam_normalize"
-        private const val PREF_NAM_A2_FULL = "nam_a2_full"
+        private const val PREF_NAM_NORMALIZE = PresetPreferenceKeys.NAM_NORMALIZE
+        private const val PREF_NAM_A2_FULL = PresetPreferenceKeys.NAM_A2_FULL
         private const val PREF_EXPERIMENT_DEFAULTS_APPLIED = "experiment_defaults_applied_v1"
 
         private const val PREF_PENDING_IMPORT_MODE =
@@ -299,8 +305,27 @@ class MainActivity : AppCompatActivity() {
         FxChainRepository(prefs, PREF_FX_CHAIN, PREF_FX_NATIVE_CHAIN)
     }
 
-    private val presetRepository by lazy {
-        PresetRepository(prefs, filesDir, PRESET_COUNT, MAX_NAM_BLOCKS)
+    private val presetRepository: PresetRepository by lazy {
+        PresetRepositoryImpl(prefs, filesDir, PRESET_COUNT, MAX_NAM_BLOCKS)
+    }
+
+    private val audioRoutingUseCase by lazy {
+        AudioRoutingUseCase(
+            AudioRoutingRepositoryImpl(
+                preferences = prefs,
+                engine = audioEngine,
+                inputChannelKey = PREF_INPUT_CHANNEL,
+                outputPairKey = PREF_OUTPUT_PAIR,
+            ),
+        )
+    }
+
+    private val savePresetUseCase by lazy {
+        SavePresetUseCase(presetRepository)
+    }
+
+    private val loadPresetUseCase by lazy {
+        LoadPresetUseCase(presetRepository, audioEngine)
     }
 
     private val tone3000ApiRepository by lazy {
@@ -645,18 +670,7 @@ class MainActivity : AppCompatActivity() {
                     "NEXT INPUT"
 
                 setOnClickListener {
-
-                    val selected =
-                        audioEngine.nativeCycleInputChannel()
-
-                    prefs
-                        .edit()
-                        .putInt(
-                            PREF_INPUT_CHANNEL,
-                            selected
-                        )
-                        .apply()
-
+                    audioRoutingUseCase.cycleInput()
                     refreshRoutingUi()
                 }
             }
@@ -669,18 +683,7 @@ class MainActivity : AppCompatActivity() {
                     "NEXT OUTPUT PAIR"
 
                 setOnClickListener {
-
-                    val selected =
-                        audioEngine.nativeCycleOutputPair()
-
-                    prefs
-                        .edit()
-                        .putInt(
-                            PREF_OUTPUT_PAIR,
-                            selected
-                        )
-                        .apply()
-
+                    audioRoutingUseCase.cycleOutput()
                     refreshRoutingUi()
                 }
             }
@@ -1010,7 +1013,7 @@ class MainActivity : AppCompatActivity() {
                             PREF_EQ_LOW,
 
                         nativeSetter =
-                            ::nativeSetEqLowDb
+                            audioEngine::nativeSetEqLowDb
                     )
                 )
             }
@@ -1045,7 +1048,7 @@ class MainActivity : AppCompatActivity() {
                             PREF_EQ_MID,
 
                         nativeSetter =
-                            ::nativeSetEqMidDb
+                            audioEngine::nativeSetEqMidDb
                     )
                 )
             }
@@ -1080,7 +1083,7 @@ class MainActivity : AppCompatActivity() {
                             PREF_EQ_HIGH,
 
                         nativeSetter =
-                            ::nativeSetEqHighDb
+                            audioEngine::nativeSetEqHighDb
                     )
                 )
             }
@@ -1254,7 +1257,7 @@ class MainActivity : AppCompatActivity() {
         val composeViewModel = ViewModelProvider(this)[PicoloComposeViewModel::class.java]
         val composeActions = AudioAppController()
         composeViewModel.observe(
-            PicoloStateRepository {
+            PicoloStateRepository(readSnapshot = {
                 val (pluginState, stats) = withContext(Dispatchers.IO) {
                     pluginStateJson() to composeActions.getStats()
                 }
@@ -1265,7 +1268,7 @@ class MainActivity : AppCompatActivity() {
                     },
                     stats = stats,
                 )
-            },
+            }),
         )
         composeView = ComposeView(this).apply {
             setViewCompositionStrategy(
@@ -2262,7 +2265,7 @@ class MainActivity : AppCompatActivity() {
             setEqFromPlugin(
                 PREF_EQ_LOW,
                 db,
-                ::nativeSetEqLowDb,
+                audioEngine::nativeSetEqLowDb,
                 eqLowSlider
             )
         }
@@ -2275,7 +2278,7 @@ class MainActivity : AppCompatActivity() {
             setEqFromPlugin(
                 PREF_EQ_MID,
                 db,
-                ::nativeSetEqMidDb,
+                audioEngine::nativeSetEqMidDb,
                 eqMidSlider
             )
         }
@@ -2288,7 +2291,7 @@ class MainActivity : AppCompatActivity() {
             setEqFromPlugin(
                 PREF_EQ_HIGH,
                 db,
-                ::nativeSetEqHighDb,
+                audioEngine::nativeSetEqHighDb,
                 eqHighSlider
             )
         }
@@ -2351,51 +2354,14 @@ class MainActivity : AppCompatActivity() {
 
 
         fun cycleInput(): Int {
-
-            val selected =
-                audioEngine.nativeCycleInputChannel()
-
-
-            prefs
-                .edit()
-                .putInt(
-                    PREF_INPUT_CHANNEL,
-                    selected
-                )
-                .apply()
-
-
-            runOnUiThread {
-
-                refreshRoutingUi()
-            }
-
-
+            val selected = audioRoutingUseCase.cycleInput()
+            runOnUiThread { refreshRoutingUi() }
             return selected
         }
 
-
         override fun cycleOutput(): Int {
-
-            val selected =
-                audioEngine.nativeCycleOutputPair()
-
-
-            prefs
-                .edit()
-                .putInt(
-                    PREF_OUTPUT_PAIR,
-                    selected
-                )
-                .apply()
-
-
-            runOnUiThread {
-
-                refreshRoutingUi()
-            }
-
-
+            val selected = audioRoutingUseCase.cycleOutput()
+            runOnUiThread { refreshRoutingUi() }
             return selected
         }
 
@@ -3563,38 +3529,12 @@ class MainActivity : AppCompatActivity() {
     // ========================================================
 
     private fun restoreRoutingSettings() {
-
-        val inputChannel =
-            prefs.getInt(
-                PREF_INPUT_CHANNEL,
-                0
-            )
-
-        val outputPair =
-            prefs.getInt(
-                PREF_OUTPUT_PAIR,
-                0
-            )
-
-
-        audioEngine.nativeSetInputChannel(
-            inputChannel
-        )
-
-        audioEngine.nativeSetOutputPair(
-            outputPair
-        )
-
-
+        audioRoutingUseCase.restoreSavedRoutes()
         refreshRoutingUi()
     }
 
-
     private fun refreshRoutingUi() {
-
-        routingText.text =
-            "\n" +
-                    audioEngine.nativeGetRoutingInfo()
+        routingText.text = "\n" + audioRoutingUseCase.routingInfo()
     }
 
 
@@ -3635,9 +3575,7 @@ class MainActivity : AppCompatActivity() {
 
                 if (!applyingPresetUi) {
 
-                    audioEngine.nativeSetter(
-                        db
-                    )
+                    nativeSetter(db)
                 }
 
 
@@ -3795,10 +3733,6 @@ class MainActivity : AppCompatActivity() {
     // PRESETS
     // ========================================================
 
-    private fun presetKey(slot: Int, field: String): String = presetRepository.key(slot, field)
-
-    private fun presetFile(slot: Int): File = presetRepository.file(slot)
-
     private fun readPreset(slot: Int): PresetData? = presetRepository.read(slot)
 
     private fun presetLabel(slot: Int): String = presetRepository.label(slot)
@@ -3897,367 +3831,22 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    private fun savePreset(
-        slot: Int
-    ) {
-
-        val currentPath =
-            prefs.getString(
-                PREF_LAST_MODEL_PATH,
-                null
-            )
-                ?: run {
-
-                    status.text =
-                        "PRESET SAVE FAILED\n\nNo current model path."
-
-                    return
-                }
-
-
-        val source =
-            File(
-                currentPath
-            )
-
-
-        if (!source.exists()) {
-
-            status.text =
-                "PRESET SAVE FAILED\n\nCurrent model file does not exist."
-
-            return
-        }
-
-
-        status.text =
-            "Saving preset $slot..."
-
+    private fun savePreset(slot: Int) {
+        status.text = "Saving preset $slot..."
 
         Thread {
-
             try {
-
-                val destination =
-                    presetFile(
-                        slot
-                    )
-
-
-                source
-                    .inputStream()
-                    .use { input ->
-
-                        destination
-                            .outputStream()
-                            .use { output ->
-
-                                input.copyTo(
-                                    output
-                                )
-                            }
-                    }
-
-
-                if (
-                    !destination.exists() ||
-                    destination.length() == 0L
-                ) {
-
-                    throw RuntimeException(
-                        "Preset NAM copy is empty."
-                    )
-                }
-
-                val currentCabinetPath = prefs.getString(PREF_CABINET_IR_PATH, null)
-                val cabinetPresetPath = currentCabinetPath?.let { cabinetPath ->
-                    val cabinetSource = File(cabinetPath)
-                    if (!cabinetSource.exists()) {
-                        null
-                    } else {
-                        val cabinetDestination = File(filesDir, "preset-$slot-cabinet.wav")
-                        cabinetSource.inputStream().use { input ->
-                            cabinetDestination.outputStream().use { output -> input.copyTo(output) }
-                        }
-                        if (cabinetDestination.exists() && cabinetDestination.length() > 0L) {
-                            cabinetDestination.absolutePath
-                        } else {
-                            null
-                        }
-                    }
-                }
-
-
-                val modelName =
-                    prefs.getString(
-                        PREF_LAST_MODEL_NAME,
-                        source.name
-                    ) ?: source.name
-
-
-                val modelSize =
-                    prefs.getString(
-                        PREF_LAST_MODEL_SIZE,
-                        "unknown"
-                    ) ?: "unknown"
-
-
-                val toneId =
-                    prefs.getString(
-                        PREF_LAST_TONE_ID,
-                        null
-                    )
-
-
-                val toneTitle =
-                    prefs.getString(
-                        PREF_LAST_TONE_TITLE,
-                        null
-                    )
-
-
-                prefs
-                    .edit()
-                    .putInt(PREF_ACTIVE_PRESET_SLOT, slot)
-
-                    .putBoolean(
-                        presetKey(
-                            slot,
-                            "saved"
-                        ),
-                        true
-                    )
-
-                    .putString(
-                        presetKey(
-                            slot,
-                            "model_path"
-                        ),
-                        destination.absolutePath
-                    )
-
-                    .putString(
-                        presetKey(
-                            slot,
-                            "model_name"
-                        ),
-                        modelName
-                    )
-
-                    .putString(
-                        presetKey(
-                            slot,
-                            "model_size"
-                        ),
-                        modelSize
-                    )
-
-                    .putString(
-                        presetKey(
-                            slot,
-                            "tone_id"
-                        ),
-                        toneId
-                    )
-
-                    .putString(
-                        presetKey(
-                            slot,
-                            "tone_title"
-                        ),
-                        toneTitle
-                    )
-
-                    .putFloat(
-                        presetKey(
-                            slot,
-                            "input_gain_db"
-                        ),
-                        prefs.getFloat(
-                            PREF_INPUT_GAIN,
-                            0.0f
-                        )
-                    )
-
-                    .putFloat(
-                        presetKey(
-                            slot,
-                            "output_gain_db"
-                        ),
-                        prefs.getFloat(
-                            PREF_OUTPUT_GAIN,
-                            0.0f
-                        )
-                    )
-
-                    .putInt(
-                        presetKey(
-                            slot,
-                            "input_channel"
-                        ),
-                        prefs.getInt(
-                            PREF_INPUT_CHANNEL,
-                            0
-                        )
-                    )
-
-                    .putInt(
-                        presetKey(
-                            slot,
-                            "output_pair"
-                        ),
-                        prefs.getInt(
-                            PREF_OUTPUT_PAIR,
-                            0
-                        )
-                    )
-
-                    .putBoolean(
-                        presetKey(
-                            slot,
-                            "gate_enabled"
-                        ),
-                        prefs.getBoolean(
-                            PREF_GATE_ENABLED,
-                            false
-                        )
-                    )
-
-                    .putFloat(
-                        presetKey(
-                            slot,
-                            "gate_threshold_db"
-                        ),
-                        prefs.getFloat(
-                            PREF_GATE_THRESHOLD,
-                            -65.0f
-                        )
-                    )
-
-                    .putFloat(
-                        presetKey(
-                            slot,
-                            "eq_low_db"
-                        ),
-                        prefs.getFloat(
-                            PREF_EQ_LOW,
-                            0.0f
-                        )
-                    )
-
-                    .putFloat(
-                        presetKey(
-                            slot,
-                            "eq_mid_db"
-                        ),
-                        prefs.getFloat(
-                            PREF_EQ_MID,
-                            0.0f
-                        )
-                    )
-
-                    .putFloat(
-                        presetKey(
-                            slot,
-                            "eq_high_db"
-                        ),
-                        prefs.getFloat(
-                            PREF_EQ_HIGH,
-                            0.0f
-                        )
-                    )
-
-                    .putString(
-                        presetKey(slot, "extra_nam_chain"),
-                        prefs.getString(PREF_EXTRA_NAM_CHAIN, "[]") ?: "[]"
-                    )
-                    .putString(
-                        presetKey(slot, "cabinet_ir_path"),
-                        cabinetPresetPath
-                    )
-                    .putString(presetKey(slot, "cabinet_ir_title"), prefs.getString(PREF_CABINET_IR_TITLE, "") ?: "")
-                    .putString(presetKey(slot, "cabinet_ir_tone_id"), prefs.getString(PREF_CABINET_IR_TONE_ID, "") ?: "")
-                    .putString(presetKey(slot, "cabinet_ir_module_type"), prefs.getString(PREF_CABINET_IR_TYPE, "IR") ?: "IR")
-                    .putBoolean(
-                        presetKey(slot, "cabinet_ir_bypass"),
-                        prefs.getBoolean(PREF_CABINET_IR_BYPASS, false)
-                    )
-                    .putInt(
-                        presetKey(slot, "cabinet_ir_position"),
-                        prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS)
-                    )
-                    .putFloat(
-                        presetKey(slot, "cabinet_ir_in_gain"),
-                        prefs.getFloat(PREF_CABINET_IR_IN_GAIN, 0.0f)
-                    )
-                    .putFloat(
-                        presetKey(slot, "cabinet_ir_out_gain"),
-                        prefs.getFloat(PREF_CABINET_IR_OUT_GAIN, 0.0f)
-                    )
-                    .putFloat(
-                        presetKey(slot, "cabinet_ir_mix"),
-                        prefs.getFloat(PREF_CABINET_IR_MIX, 1.0f)
-                    )
-                    .putBoolean(presetKey(slot, "nam_bypass"), prefs.getBoolean(PREF_NAM_BYPASS, bypass))
-                    .putFloat(presetKey(slot, "nam_gain_db"), prefs.getFloat(PREF_NAM_GAIN_DB, -15.0f))
-                    .putFloat(presetKey(slot, "nam_in_gain_db"), prefs.getFloat(PREF_NAM_IN_GAIN_DB, 0.0f))
-                    .putFloat(presetKey(slot, "nam_mix"), prefs.getFloat(PREF_NAM_MIX, 1.0f))
-                    .putFloat(presetKey(slot, "nam_eq_low_db"), prefs.getFloat(PREF_NAM_EQ_LOW_DB, 0.0f))
-                    .putFloat(presetKey(slot, "nam_eq_mid_db"), prefs.getFloat(PREF_NAM_EQ_MID_DB, 0.0f))
-                    .putFloat(presetKey(slot, "nam_eq_high_db"), prefs.getFloat(PREF_NAM_EQ_HIGH_DB, 0.0f))
-                    .putFloat(presetKey(slot, "nam_eq_band3_db"), prefs.getFloat(PREF_NAM_EQ_BAND3_DB, 0.0f))
-                    .putFloat(presetKey(slot, "nam_eq_band4_db"), prefs.getFloat(PREF_NAM_EQ_BAND4_DB, 0.0f))
-                    .putFloat(presetKey(slot, "nam_eq_band5_db"), prefs.getFloat(PREF_NAM_EQ_BAND5_DB, 0.0f))
-                    .putBoolean(presetKey(slot, "nam_eq_pre"), prefs.getBoolean(PREF_NAM_EQ_PRE, false))
-                    .putBoolean(presetKey(slot, "nam_normalize"), prefs.getBoolean(PREF_NAM_NORMALIZE, true))
-                    .putBoolean(presetKey(slot, "nam_a2_full"), prefs.getBoolean(PREF_NAM_A2_FULL, false))
-                    .putBoolean(presetKey(slot, "cabinet_ir_eq_pre"), prefs.getBoolean(PREF_CABINET_IR_EQ_PRE, false))
-                    .putFloat(presetKey(slot, "cabinet_ir_eq_0"), prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + 0, 0.0f))
-                    .putFloat(presetKey(slot, "cabinet_ir_eq_1"), prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + 1, 0.0f))
-                    .putFloat(presetKey(slot, "cabinet_ir_eq_2"), prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + 2, 0.0f))
-                    .putFloat(presetKey(slot, "cabinet_ir_eq_3"), prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + 3, 0.0f))
-                    .putFloat(presetKey(slot, "cabinet_ir_eq_4"), prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + 4, 0.0f))
-                    .putFloat(presetKey(slot, "cabinet_ir_eq_5"), prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + 5, 0.0f))
-
-                    .apply()
-
-
+                val savedLabel = savePresetUseCase.execute(slot, bypass)
                 runOnUiThread {
-
-                    refreshPresetUi(
-                        slot
-                    )
-
-                    status.text =
-                        "PRESET $slot SAVED\n\n" +
-                                presetLabel(
-                                    slot
-                                )
+                    refreshPresetUi(slot)
+                    status.text = "PRESET $slot SAVED\n\n$savedLabel"
                 }
-
-
-            } catch (
-                e: Exception
-            ) {
-
-                Log.e(
-                    API_TAG,
-                    "Preset save failed",
-                    e
-                )
-
-
+            } catch (error: Exception) {
+                Log.e(API_TAG, "Preset save failed", error)
                 runOnUiThread {
-
-                    status.text =
-                        "PRESET SAVE FAILED\n\n" +
-                                (
-                                        e.message
-                                            ?: e.toString()
-                                        )
+                    status.text = "PRESET SAVE FAILED\n\n${error.message ?: error}"
                 }
             }
-
         }.start()
     }
 
@@ -4353,147 +3942,7 @@ class MainActivity : AppCompatActivity() {
 
             try {
 
-                val result =
-                    audioEngine.nativeSwitchPresetGapless(
-                        preset.modelPath,
-                        preset.inputGainDb,
-                        preset.outputGainDb,
-                        preset.inputChannel,
-                        preset.outputPair,
-                        preset.gateEnabled,
-                        preset.gateThresholdDb,
-                        preset.eqLowDb,
-                        preset.eqMidDb,
-                        preset.eqHighDb
-                    )
-
-
-                val switchAccepted =
-                    result.startsWith(
-                        "PRESET SWITCH QUEUED"
-                    ) ||
-                            result.startsWith(
-                                "PRESET LOADED"
-                            ) ||
-                            result.startsWith(
-                                "MODEL LOADED"
-                            )
-
-
-                if (!switchAccepted) {
-
-                    throw RuntimeException(
-                        result
-                    )
-                }
-
-
-                prefs
-                    .edit()
-                    .putInt(PREF_ACTIVE_PRESET_SLOT, slot)
-
-                    .putString(
-                        PREF_LAST_MODEL_PATH,
-                        preset.modelPath
-                    )
-
-                    .putString(
-                        PREF_LAST_MODEL_NAME,
-                        preset.modelName
-                    )
-
-                    .putString(
-                        PREF_LAST_MODEL_SIZE,
-                        preset.modelSize
-                    )
-
-                    .putString(
-                        PREF_LAST_TONE_ID,
-                        preset.toneId
-                    )
-
-                    .putString(
-                        PREF_LAST_TONE_TITLE,
-                        preset.toneTitle
-                    )
-
-                    .putFloat(
-                        PREF_INPUT_GAIN,
-                        preset.inputGainDb
-                    )
-
-                    .putFloat(
-                        PREF_OUTPUT_GAIN,
-                        preset.outputGainDb
-                    )
-
-                    .putInt(
-                        PREF_INPUT_CHANNEL,
-                        preset.inputChannel
-                    )
-
-                    .putInt(
-                        PREF_OUTPUT_PAIR,
-                        preset.outputPair
-                    )
-
-                    .putBoolean(
-                        PREF_GATE_ENABLED,
-                        preset.gateEnabled
-                    )
-
-                    .putFloat(
-                        PREF_GATE_THRESHOLD,
-                        preset.gateThresholdDb
-                    )
-
-                    .putFloat(
-                        PREF_EQ_LOW,
-                        preset.eqLowDb
-                    )
-
-                    .putFloat(
-                        PREF_EQ_MID,
-                        preset.eqMidDb
-                    )
-
-                    .putFloat(
-                        PREF_EQ_HIGH,
-                        preset.eqHighDb
-                    )
-
-                    .putString(PREF_EXTRA_NAM_CHAIN, preset.extraNamChainJson)
-                    .putString(PREF_CABINET_IR_PATH, preset.cabinetIrPath)
-                    .putString(PREF_CABINET_IR_TITLE, preset.cabinetIrTitle)
-                    .putString(PREF_CABINET_IR_TONE_ID, preset.cabinetIrToneId)
-                    .putString(PREF_CABINET_IR_TYPE, preset.cabinetIrModuleType)
-                    .putBoolean(PREF_CABINET_IR_BYPASS, preset.cabinetIrBypass)
-                    .putInt(PREF_CABINET_IR_POSITION, preset.cabinetIrPosition)
-                    .putFloat(PREF_CABINET_IR_IN_GAIN, preset.cabinetIrInGain)
-                    .putFloat(PREF_CABINET_IR_OUT_GAIN, preset.cabinetIrOutGain)
-                    .putFloat(PREF_CABINET_IR_MIX, preset.cabinetIrMix)
-                    .putBoolean(PREF_NAM_BYPASS, prefs.getBoolean(presetKey(slot, "nam_bypass"), false))
-                    .putFloat(PREF_NAM_GAIN_DB, prefs.getFloat(presetKey(slot, "nam_gain_db"), -15.0f))
-                    .putFloat(PREF_NAM_IN_GAIN_DB, prefs.getFloat(presetKey(slot, "nam_in_gain_db"), 0.0f))
-                    .putFloat(PREF_NAM_MIX, prefs.getFloat(presetKey(slot, "nam_mix"), 1.0f))
-                    .putFloat(PREF_NAM_EQ_LOW_DB, prefs.getFloat(presetKey(slot, "nam_eq_low_db"), 0.0f))
-                    .putFloat(PREF_NAM_EQ_MID_DB, prefs.getFloat(presetKey(slot, "nam_eq_mid_db"), 0.0f))
-                    .putFloat(PREF_NAM_EQ_HIGH_DB, prefs.getFloat(presetKey(slot, "nam_eq_high_db"), 0.0f))
-                    .putFloat(PREF_NAM_EQ_BAND3_DB, prefs.getFloat(presetKey(slot, "nam_eq_band3_db"), 0.0f))
-                    .putFloat(PREF_NAM_EQ_BAND4_DB, prefs.getFloat(presetKey(slot, "nam_eq_band4_db"), 0.0f))
-                    .putFloat(PREF_NAM_EQ_BAND5_DB, prefs.getFloat(presetKey(slot, "nam_eq_band5_db"), 0.0f))
-                    .putBoolean(PREF_NAM_EQ_PRE, prefs.getBoolean(presetKey(slot, "nam_eq_pre"), false))
-                    .putBoolean(PREF_NAM_NORMALIZE, prefs.getBoolean(presetKey(slot, "nam_normalize"), true))
-                    .putBoolean(PREF_NAM_A2_FULL, prefs.getBoolean(presetKey(slot, "nam_a2_full"), false))
-                    .putBoolean(PREF_CABINET_IR_EQ_PRE, prefs.getBoolean(presetKey(slot, "cabinet_ir_eq_pre"), false))
-                    .putFloat(PREF_CABINET_IR_EQ_PREFIX + 0, prefs.getFloat(presetKey(slot, "cabinet_ir_eq_0"), 0.0f))
-                    .putFloat(PREF_CABINET_IR_EQ_PREFIX + 1, prefs.getFloat(presetKey(slot, "cabinet_ir_eq_1"), 0.0f))
-                    .putFloat(PREF_CABINET_IR_EQ_PREFIX + 2, prefs.getFloat(presetKey(slot, "cabinet_ir_eq_2"), 0.0f))
-                    .putFloat(PREF_CABINET_IR_EQ_PREFIX + 3, prefs.getFloat(presetKey(slot, "cabinet_ir_eq_3"), 0.0f))
-                    .putFloat(PREF_CABINET_IR_EQ_PREFIX + 4, prefs.getFloat(presetKey(slot, "cabinet_ir_eq_4"), 0.0f))
-                    .putFloat(PREF_CABINET_IR_EQ_PREFIX + 5, prefs.getFloat(presetKey(slot, "cabinet_ir_eq_5"), 0.0f))
-
-                    .apply()
+                val result = loadPresetUseCase.execute(preset).engineResult
 
                 val restoredChain = rebuildNativeNamChain(readNamChainEntries())
                 val irPath = preset.cabinetIrPath
@@ -4504,8 +3953,8 @@ class MainActivity : AppCompatActivity() {
                     audioEngine.nativeSetImpulseResponseInGainDb(preset.cabinetIrInGain)
                     audioEngine.nativeSetImpulseResponseOutGainDb(preset.cabinetIrOutGain)
                     audioEngine.nativeSetImpulseResponseMix(preset.cabinetIrMix)
-                    audioEngine.nativeSetImpulseResponseEqPre(presetCabinetEqPre(preset.slot))
-                    for (band in 0 until 6) audioEngine.nativeSetImpulseResponseEqDb(band, presetCabinetEq(preset.slot, band))
+                    audioEngine.nativeSetImpulseResponseEqPre(preset.cabinetIrEqPre)
+                    preset.cabinetIrEqDb.forEachIndexed(audioEngine::nativeSetImpulseResponseEqDb)
                 } else {
                     audioEngine.nativeClearImpulseResponse()
                 }
@@ -4666,13 +4115,6 @@ class MainActivity : AppCompatActivity() {
 
         }.start()
     }
-
-    private fun presetCabinetEqPre(slot: Int): Boolean =
-        prefs.getBoolean(presetKey(slot, "cabinet_ir_eq_pre"), false)
-
-    private fun presetCabinetEq(slot: Int, band: Int): Float =
-        prefs.getFloat(presetKey(slot, "cabinet_ir_eq_$band"), 0.0f)
-
 
     // ========================================================
     // GAIN
