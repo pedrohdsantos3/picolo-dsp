@@ -26,6 +26,10 @@ AudioAppController (adaptador ainda hospedado em MainActivity)
   existente. O bloco principal ainda usa preferências legadas.
 - `FxChainRepository` lê e grava as cadeias de IR/FX e FX nativo, preservando
   o JSON atual; a Activity continua sincronizando as entradas com o motor JNI.
+- `PresetRepository` concentra a leitura, os rótulos e a organização dos slots
+  de preset usando as chaves legadas e os arquivos atuais. A Activity ainda
+  coordena a cópia ao salvar e a troca no motor ao carregar; essas operações
+  são candidatas à próxima extração.
 - `NativeAudioEngine` concentra a carga da biblioteca e as declarações JNI;
   os nomes dos exports C++ acompanham essa classe. A Activity usa a fachada,
   mas ainda coordena parte dos comandos através do controller interno.
@@ -44,9 +48,10 @@ AudioAppController (adaptador ainda hospedado em MainActivity)
 
 ## Sequência de refatoração
 
-1. **Modelagem e persistência:** extraímos o mapeamento do estado Compose e o
-   armazenamento JSON dos blocos NAM adicionais; migrar a cadeia principal e
-   os dados FX em mudanças separadas, mantendo compatibilidade com presets.
+1. **Modelagem e persistência:** extraímos o mapeamento do estado Compose, o
+   armazenamento JSON dos blocos NAM adicionais e a leitura/organização dos
+   presets; migrar a cadeia principal e os dados FX em mudanças separadas,
+   mantendo compatibilidade com os formatos atuais.
 2. **Controlador da aplicação:** mover comandos e fluxos de
    `AudioAppController` para casos de uso/repositórios independentes da
    Activity. Começar por presets e roteamento de áudio, depois importação de

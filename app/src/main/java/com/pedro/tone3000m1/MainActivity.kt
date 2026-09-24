@@ -30,9 +30,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import com.pedro.tone3000m1.data.model.ExtraNamEntry
 import com.pedro.tone3000m1.data.model.OnlineModel
+import com.pedro.tone3000m1.data.model.PresetData
 import com.pedro.tone3000m1.data.model.PicoloStateSnapshot
 import com.pedro.tone3000m1.data.repository.NamChainRepository
 import com.pedro.tone3000m1.data.repository.FxChainRepository
+import com.pedro.tone3000m1.data.repository.PresetRepository
 import com.pedro.tone3000m1.data.repository.PicoloStateRepository
 import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
 import com.pedro.tone3000m1.ui.actions.PicoloActions
@@ -295,6 +297,10 @@ class MainActivity : AppCompatActivity() {
 
     private val fxChainRepository by lazy {
         FxChainRepository(prefs, PREF_FX_CHAIN, PREF_FX_NATIVE_CHAIN)
+    }
+
+    private val presetRepository by lazy {
+        PresetRepository(prefs, filesDir, PRESET_COUNT, MAX_NAM_BLOCKS)
     }
 
     private val tone3000ApiRepository by lazy {
@@ -3494,53 +3500,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         fun renamePreset(slot: Int, name: String): Boolean {
-            if (slot !in 1..PRESET_COUNT) return false
-            prefs.edit().putString(presetKey(slot, "custom_label"), name.trim()).apply()
-            return true
+            return presetRepository.rename(slot, name)
         }
 
         fun deletePreset(slot: Int): Boolean {
-            if (slot !in 1..PRESET_COUNT) return false
-            val prefix = "preset_${slot}_"
-            prefs.edit().apply {
-                prefs.all.keys.filter { it.startsWith(prefix) }.forEach { remove(it) }
-            }.apply()
-            listOf(
-                presetFile(slot),
-                File(filesDir, "preset-$slot-cabinet.wav")
-            ).forEach { file -> if (file.exists()) file.delete() }
-            return true
+            return presetRepository.delete(slot)
         }
 
         fun movePreset(slot: Int, delta: Int): Boolean {
-            val target = slot + delta.coerceIn(-1, 1)
-            if (slot !in 1..PRESET_COUNT || target !in 1..PRESET_COUNT || slot == target) return false
-            val firstPrefix = "preset_${slot}_"
-            val secondPrefix = "preset_${target}_"
-            val first = prefs.all.filterKeys { it.startsWith(firstPrefix) }
-                .mapKeys { it.key.removePrefix(firstPrefix) }
-            val second = prefs.all.filterKeys { it.startsWith(secondPrefix) }
-                .mapKeys { it.key.removePrefix(secondPrefix) }
-            prefs.edit().apply {
-                (first.keys + second.keys).forEach { field ->
-                    remove(presetKey(slot, field))
-                    remove(presetKey(target, field))
-                }
-                first.forEach { (field, value) -> putPresetValue(presetKey(target, field), value) }
-                second.forEach { (field, value) -> putPresetValue(presetKey(slot, field), value) }
-            }.apply()
-            return true
-        }
-
-        private fun android.content.SharedPreferences.Editor.putPresetValue(key: String, value: Any?) {
-            when (value) {
-                is String -> putString(key, value)
-                is Boolean -> putBoolean(key, value)
-                is Int -> putInt(key, value)
-                is Long -> putLong(key, value)
-                is Float -> putFloat(key, value)
-                is Set<*> -> putStringSet(key, value.filterIsInstance<String>().toSet())
-            }
+            return presetRepository.move(slot, delta)
         }
 
 
@@ -3827,277 +3795,13 @@ class MainActivity : AppCompatActivity() {
     // PRESETS
     // ========================================================
 
-    private data class PresetData(
-        val slot: Int,
-        val modelPath: String,
-        val modelName: String,
-        val modelSize: String,
-        val toneId: String?,
-        val toneTitle: String?,
-        val inputGainDb: Float,
-        val outputGainDb: Float,
-        val inputChannel: Int,
-        val outputPair: Int,
-        val gateEnabled: Boolean,
-        val gateThresholdDb: Float,
-        val eqLowDb: Float,
-        val eqMidDb: Float,
-        val eqHighDb: Float,
-        val extraNamChainJson: String,
-        val cabinetIrPath: String?,
-        val cabinetIrTitle: String,
-        val cabinetIrToneId: String,
-        val cabinetIrModuleType: String,
-        val cabinetIrBypass: Boolean,
-        val cabinetIrPosition: Int,
-        val cabinetIrInGain: Float,
-        val cabinetIrOutGain: Float,
-        val cabinetIrMix: Float
-    )
+    private fun presetKey(slot: Int, field: String): String = presetRepository.key(slot, field)
 
+    private fun presetFile(slot: Int): File = presetRepository.file(slot)
 
-    private fun presetKey(
-        slot: Int,
-        field: String
-    ): String {
+    private fun readPreset(slot: Int): PresetData? = presetRepository.read(slot)
 
-        return "preset_${slot}_$field"
-    }
-
-
-    private fun presetFile(
-        slot: Int
-    ): File {
-
-        return File(
-            filesDir,
-            "preset-$slot.nam"
-        )
-    }
-
-
-    private fun readPreset(
-        slot: Int
-    ): PresetData? {
-
-        val saved =
-            prefs.getBoolean(
-                presetKey(
-                    slot,
-                    "saved"
-                ),
-                false
-            )
-
-
-        if (!saved) {
-            return null
-        }
-
-
-        val path =
-            prefs.getString(
-                presetKey(
-                    slot,
-                    "model_path"
-                ),
-                null
-            )
-                ?: return null
-
-
-        val file =
-            File(
-                path
-            )
-
-
-        if (!file.exists()) {
-            return null
-        }
-
-
-        return PresetData(
-            slot =
-                slot,
-
-            modelPath =
-                path,
-
-            modelName =
-                prefs.getString(
-                    presetKey(
-                        slot,
-                        "model_name"
-                    ),
-                    file.name
-                ) ?: file.name,
-
-            modelSize =
-                prefs.getString(
-                    presetKey(
-                        slot,
-                        "model_size"
-                    ),
-                    "unknown"
-                ) ?: "unknown",
-
-            toneId =
-                prefs.getString(
-                    presetKey(
-                        slot,
-                        "tone_id"
-                    ),
-                    null
-                ),
-
-            toneTitle =
-                prefs.getString(
-                    presetKey(
-                        slot,
-                        "tone_title"
-                    ),
-                    null
-                ),
-
-            inputGainDb =
-                prefs.getFloat(
-                    presetKey(
-                        slot,
-                        "input_gain_db"
-                    ),
-                    0.0f
-                ),
-
-            outputGainDb =
-                prefs.getFloat(
-                    presetKey(
-                        slot,
-                        "output_gain_db"
-                    ),
-                    0.0f
-                ),
-
-            inputChannel =
-                prefs.getInt(
-                    presetKey(
-                        slot,
-                        "input_channel"
-                    ),
-                    0
-                ),
-
-            outputPair =
-                prefs.getInt(
-                    presetKey(
-                        slot,
-                        "output_pair"
-                    ),
-                    0
-                ),
-
-            gateEnabled =
-                prefs.getBoolean(
-                    presetKey(
-                        slot,
-                        "gate_enabled"
-                    ),
-                    false
-                ),
-
-            gateThresholdDb =
-                prefs.getFloat(
-                    presetKey(
-                        slot,
-                        "gate_threshold_db"
-                    ),
-                    -65.0f
-                ),
-
-            eqLowDb =
-                prefs.getFloat(
-                    presetKey(
-                        slot,
-                        "eq_low_db"
-                    ),
-                    0.0f
-                ),
-
-            eqMidDb =
-                prefs.getFloat(
-                    presetKey(
-                        slot,
-                        "eq_mid_db"
-                    ),
-                    0.0f
-                ),
-
-            eqHighDb =
-                prefs.getFloat(
-                    presetKey(
-                        slot,
-                        "eq_high_db"
-                    ),
-                    0.0f
-                )
-        ,
-            extraNamChainJson = prefs.getString(presetKey(slot, "extra_nam_chain"), "[]") ?: "[]",
-            cabinetIrPath = prefs.getString(presetKey(slot, "cabinet_ir_path"), null),
-            cabinetIrTitle = prefs.getString(presetKey(slot, "cabinet_ir_title"), "") ?: "",
-            cabinetIrToneId = prefs.getString(presetKey(slot, "cabinet_ir_tone_id"), "") ?: "",
-            cabinetIrModuleType = prefs.getString(presetKey(slot, "cabinet_ir_module_type"), "IR") ?: "IR",
-            cabinetIrBypass = prefs.getBoolean(presetKey(slot, "cabinet_ir_bypass"), false),
-            cabinetIrPosition = prefs.getInt(presetKey(slot, "cabinet_ir_position"), MAX_NAM_BLOCKS),
-            cabinetIrInGain = prefs.getFloat(presetKey(slot, "cabinet_ir_in_gain"), 0.0f),
-            cabinetIrOutGain = prefs.getFloat(presetKey(slot, "cabinet_ir_out_gain"), 0.0f),
-            cabinetIrMix = prefs.getFloat(presetKey(slot, "cabinet_ir_mix"), 1.0f)
-        )
-    }
-
-
-    private fun presetLabel(
-        slot: Int
-    ): String {
-
-        prefs.getString(presetKey(slot, "custom_label"), null)
-            ?.takeIf { it.isNotBlank() }
-            ?.let { return it }
-
-        val preset =
-            readPreset(
-                slot
-            )
-
-
-        if (preset == null) {
-            return "Preset $slot • EMPTY"
-        }
-
-
-        return buildString {
-
-            append(
-                "Preset $slot • "
-            )
-
-            if (
-                !preset.toneTitle.isNullOrBlank()
-            ) {
-
-                append(
-                    preset.toneTitle
-                )
-
-                append(
-                    " • "
-                )
-            }
-
-            append(
-                preset.modelName
-            )
-        }
-    }
+    private fun presetLabel(slot: Int): String = presetRepository.label(slot)
 
 
     private fun refreshPresetUi(
