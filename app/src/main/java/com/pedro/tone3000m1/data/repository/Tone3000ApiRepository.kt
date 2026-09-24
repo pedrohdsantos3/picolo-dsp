@@ -2,29 +2,24 @@ package com.pedro.tone3000m1.data.repository
 
 import android.os.SystemClock
 import android.util.Log
-import com.pedro.tone3000m1.data.model.OnlineModel
+import com.pedro.tone3000m1.domain.model.OAuthTokenResponse
+import com.pedro.tone3000m1.domain.model.OnlineModel
+import com.pedro.tone3000m1.domain.model.Tone3000Tone
+import com.pedro.tone3000m1.domain.repository.Tone3000Repository
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-
-internal data class OAuthTokenResponse(
-    val accessToken: String,
-    val refreshToken: String,
-)
-
-internal data class Tone3000Tone(
-    val title: String,
-)
 
 /** Synchronous TONE3000 API calls. Call from an I/O thread. */
 internal class Tone3000ApiRepository(
     private val apiBase: String,
     private val clientId: String,
     private val redirectUri: String,
-) {
-    fun exchangeAuthorizationCode(code: String, verifier: String): OAuthTokenResponse {
+) : Tone3000Repository {
+    override fun exchangeAuthorizationCode(code: String, verifier: String): OAuthTokenResponse {
         val fields = linkedMapOf(
             "grant_type" to "authorization_code",
             "code" to code,
@@ -66,7 +61,7 @@ internal class Tone3000ApiRepository(
         }
     }
 
-    fun getTone(toneId: String, token: String, architecture: Int? = 2): Tone3000Tone {
+    override fun getTone(toneId: String, token: String, architecture: Int?): Tone3000Tone {
         val url = "$apiBase/api/v1/tones/${urlEncode(toneId)}" +
             (architecture?.let { "?architecture=$it" } ?: "")
         val started = SystemClock.elapsedRealtime()
@@ -93,7 +88,7 @@ internal class Tone3000ApiRepository(
         }
     }
 
-    fun listModels(toneId: String, token: String, architecture: Int? = 2): List<OnlineModel> {
+    override fun listModels(toneId: String, token: String, architecture: Int?): List<OnlineModel> {
         val result = mutableListOf<OnlineModel>()
         var page = 1
         var totalPages = 1
@@ -150,6 +145,54 @@ internal class Tone3000ApiRepository(
         return result.distinctBy { it.id }
     }
 
+    override fun downloadModel(model: OnlineModel, token: String, destination: File): File {
+        if (destination.exists() && !destination.delete()) {
+            throw RuntimeException("Could not replace pending download file.")
+        }
+
+        var currentUrl = model.modelUrl
+        repeat(MAX_DOWNLOAD_REDIRECTS) {
+            val url = URL(currentUrl)
+            val connection = url.openConnection() as HttpURLConnection
+            try {
+                connection.requestMethod = "GET"
+                connection.instanceFollowRedirects = false
+                connection.connectTimeout = 15_000
+                connection.readTimeout = 60_000
+                connection.setRequestProperty("Connection", "close")
+
+                // Never forward the API token to a third party CDN on redirects.
+                if (url.host == API_HOST || url.host == API_APEX_HOST) {
+                    connection.setRequestProperty("Authorization", "Bearer $token")
+                }
+
+                val responseCode = connection.responseCode
+                Log.i(TAG, "MODEL DOWNLOAD id=${model.id} HTTP $responseCode")
+                if (responseCode in 300..399) {
+                    val location = connection.getHeaderField("Location")
+                        ?: throw RuntimeException("Download redirect sem Location.")
+                    currentUrl = URL(url, location).toString()
+                    return@repeat
+                }
+                if (responseCode !in 200..299) {
+                    throw RuntimeException(
+                        "Model download failed HTTP $responseCode\n${readResponse(connection, responseCode)}",
+                    )
+                }
+
+                connection.inputStream.use { input ->
+                    destination.outputStream().use { output -> input.copyTo(output) }
+                }
+                if (destination.length() == 0L) throw RuntimeException("Downloaded model is empty.")
+                Log.i(TAG, "MODEL DOWNLOAD COMPLETE id=${model.id} bytes=${destination.length()}")
+                return destination
+            } finally {
+                connection.disconnect()
+            }
+        }
+        throw RuntimeException("Too many redirects downloading model.")
+    }
+
     private fun urlEncode(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8.name())
 
@@ -160,5 +203,8 @@ internal class Tone3000ApiRepository(
 
     private companion object {
         const val TAG = "Tone3000Api"
+        const val API_HOST = "www.tone3000.com"
+        const val API_APEX_HOST = "tone3000.com"
+        const val MAX_DOWNLOAD_REDIRECTS = 5
     }
 }

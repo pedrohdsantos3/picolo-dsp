@@ -3,34 +3,32 @@ package com.pedro.tone3000m1
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.util.Base64
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.Log
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
-import com.pedro.tone3000m1.data.model.ExtraNamEntry
-import com.pedro.tone3000m1.data.model.OnlineModel
-import com.pedro.tone3000m1.data.model.PicoloStateSnapshot
+import com.pedro.tone3000m1.domain.model.ExtraNamEntry
+import com.pedro.tone3000m1.domain.model.FxImpulseEntry
+import com.pedro.tone3000m1.domain.model.FxNativeEntry
 import com.pedro.tone3000m1.data.repository.NamChainRepository
 import com.pedro.tone3000m1.data.repository.FxChainRepository
 import com.pedro.tone3000m1.data.repository.PresetRepositoryImpl
@@ -38,27 +36,46 @@ import com.pedro.tone3000m1.data.repository.AudioRoutingRepositoryImpl
 import com.pedro.tone3000m1.data.repository.PresetPreferenceKeys
 import com.pedro.tone3000m1.data.repository.PicoloStateRepository
 import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
+import com.pedro.tone3000m1.data.repository.ToneImportRepositoryImpl
+import com.pedro.tone3000m1.data.repository.ToneSessionRepositoryImpl
+import com.pedro.tone3000m1.data.repository.TonePackageCaptureRepositoryImpl
+import com.pedro.tone3000m1.data.repository.AppPreferencesDataStore
+import com.pedro.tone3000m1.data.repository.CurrentToneRepositoryImpl
+import com.pedro.tone3000m1.data.repository.CabinetImpulseRepositoryImpl
 import com.pedro.tone3000m1.domain.usecase.AudioRoutingUseCase
 import com.pedro.tone3000m1.domain.usecase.LoadPresetUseCase
 import com.pedro.tone3000m1.domain.usecase.SavePresetUseCase
 import com.pedro.tone3000m1.domain.model.PresetData
+import com.pedro.tone3000m1.domain.model.OnlineModel
 import com.pedro.tone3000m1.domain.repository.PresetRepository
+import com.pedro.tone3000m1.domain.usecase.CompleteToneSelectionUseCase
+import com.pedro.tone3000m1.domain.usecase.CommitCurrentToneModelUseCase
+import com.pedro.tone3000m1.domain.usecase.CommitExtraToneModelUseCase
+import com.pedro.tone3000m1.domain.usecase.DownloadToneModelUseCase
+import com.pedro.tone3000m1.domain.usecase.ImportLocalNamFileUseCase
+import com.pedro.tone3000m1.domain.usecase.ListToneModelsUseCase
+import com.pedro.tone3000m1.domain.usecase.LoadPackageCapturesUseCase
+import com.pedro.tone3000m1.domain.usecase.LoadPrimaryToneCaptureUseCase
+import com.pedro.tone3000m1.domain.usecase.ImportFxCaptureUseCase
+import com.pedro.tone3000m1.domain.usecase.ImportCabinetImpulseUseCase
+import com.pedro.tone3000m1.domain.usecase.AddExtraNamCaptureUseCase
+import com.pedro.tone3000m1.domain.usecase.RebuildNamChainUseCase
+import com.pedro.tone3000m1.domain.usecase.ReplaceNamCaptureUseCase
+import com.pedro.tone3000m1.domain.usecase.PrepareNamBlockReplacementUseCase
+import com.pedro.tone3000m1.domain.usecase.MergePackageCapturesUseCase
+import com.pedro.tone3000m1.domain.usecase.PrepareImpulseResponseUseCase
+import com.pedro.tone3000m1.domain.usecase.PrepareToneAuthorizationUseCase
+import com.pedro.tone3000m1.domain.usecase.RestorePreviousToneModelUseCase
 import com.pedro.tone3000m1.ui.actions.PicoloActions
+import com.pedro.tone3000m1.ui.actions.StatePublishingPicoloActions
 import java.io.File
 import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
-import java.nio.charset.StandardCharsets
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
-import java.security.MessageDigest
-import java.security.SecureRandom
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
@@ -86,18 +103,6 @@ class MainActivity : AppCompatActivity() {
         private const val PREFS =
             "tone3000"
 
-        private const val PREF_VERIFIER =
-            "pkce_verifier"
-
-        private const val PREF_STATE =
-            "oauth_state"
-
-        private const val PREF_ACCESS_TOKEN =
-            "access_token"
-
-        private const val PREF_REFRESH_TOKEN =
-            "refresh_token"
-
         private const val PREF_LAST_MODEL_PATH =
             PresetPreferenceKeys.LAST_MODEL_PATH
 
@@ -116,8 +121,7 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_LAST_TONE_IMAGE =
             "last_tone_image"
 
-        private const val PREF_LAST_MODEL_TYPE =
-            "last_model_type"
+        private const val PREF_LAST_MODEL_TYPE = PresetPreferenceKeys.LAST_MODEL_TYPE
 
         private const val PREF_CABINET_IR_PATH =
             PresetPreferenceKeys.CABINET_IR_PATH
@@ -188,7 +192,7 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_NAM_EQ_BAND5_DB = PresetPreferenceKeys.NAM_EQ_BAND5_DB
         private const val PREF_NAM_BYPASS = PresetPreferenceKeys.NAM_BYPASS
         private const val PREF_NAM_EQ_PRE = PresetPreferenceKeys.NAM_EQ_PRE
-        private const val PREF_NAM_EQ_ENABLED = "nam_eq_enabled"
+        private const val PREF_NAM_EQ_ENABLED = PresetPreferenceKeys.NAM_EQ_ENABLED
         private const val PREF_CABINET_IR_EQ_ENABLED = "cabinet_ir_eq_enabled"
         private const val PREF_NAM_NORMALIZE = PresetPreferenceKeys.NAM_NORMALIZE
         private const val PREF_NAM_A2_FULL = PresetPreferenceKeys.NAM_A2_FULL
@@ -219,11 +223,11 @@ class MainActivity : AppCompatActivity() {
     // UI
     // ========================================================
 
-    private lateinit var legacyScrollView: ScrollView
-    private lateinit var rootLayout: FrameLayout
     private lateinit var composeView: ComposeView
 
     private lateinit var status: TextView
+    private var picoloStateRepository: PicoloStateRepository? = null
+    private val stateSnapshotVersion = AtomicLong(0L)
     private lateinit var currentModelText: TextView
     private lateinit var audioDeviceText: TextView
 
@@ -305,6 +309,24 @@ class MainActivity : AppCompatActivity() {
         FxChainRepository(prefs, PREF_FX_CHAIN, PREF_FX_NATIVE_CHAIN)
     }
 
+    private val importFxCaptureUseCase by lazy {
+        ImportFxCaptureUseCase(
+            downloadToneModelUseCase,
+            prepareImpulseResponseUseCase,
+            fxChainRepository,
+            audioEngine,
+        )
+    }
+
+    private val importCabinetImpulseUseCase by lazy {
+        ImportCabinetImpulseUseCase(
+            downloadToneModelUseCase,
+            prepareImpulseResponseUseCase,
+            CabinetImpulseRepositoryImpl(prefs),
+            audioEngine,
+        )
+    }
+
     private val presetRepository: PresetRepository by lazy {
         PresetRepositoryImpl(prefs, filesDir, PRESET_COUNT, MAX_NAM_BLOCKS)
     }
@@ -330,6 +352,101 @@ class MainActivity : AppCompatActivity() {
 
     private val tone3000ApiRepository by lazy {
         Tone3000ApiRepository(API_BASE, PUBLISHABLE_KEY, REDIRECT_URI)
+    }
+
+    private val toneSessionRepository by lazy {
+        ToneSessionRepositoryImpl(AppPreferencesDataStore.get(applicationContext))
+    }
+
+    private val currentToneRepository by lazy {
+        CurrentToneRepositoryImpl(prefs)
+    }
+
+    private val activeToneRepository by lazy {
+        currentToneRepository
+    }
+
+    private val restorePreviousToneModelUseCase by lazy {
+        RestorePreviousToneModelUseCase(currentToneRepository, audioEngine)
+    }
+
+    private val tonePackageCaptureRepository by lazy {
+        TonePackageCaptureRepositoryImpl(AppPreferencesDataStore.get(applicationContext))
+    }
+
+    private val mergePackageCapturesUseCase by lazy {
+        MergePackageCapturesUseCase(tonePackageCaptureRepository)
+    }
+
+    private val loadPackageCapturesUseCase by lazy {
+        LoadPackageCapturesUseCase(
+            listToneModelsUseCase,
+            mergePackageCapturesUseCase,
+            tonePackageCaptureRepository,
+        )
+    }
+
+    private val toneImportRepository by lazy {
+        ToneImportRepositoryImpl(filesDir)
+    }
+
+    private val prepareToneAuthorizationUseCase by lazy {
+        PrepareToneAuthorizationUseCase(toneSessionRepository)
+    }
+
+    private val completeToneSelectionUseCase by lazy {
+        CompleteToneSelectionUseCase(tone3000ApiRepository, toneSessionRepository)
+    }
+
+    private val listToneModelsUseCase by lazy {
+        ListToneModelsUseCase(tone3000ApiRepository)
+    }
+
+    private val downloadToneModelUseCase by lazy {
+        DownloadToneModelUseCase(tone3000ApiRepository, toneImportRepository)
+    }
+
+    private val importLocalNamFileUseCase by lazy {
+        ImportLocalNamFileUseCase(toneImportRepository)
+    }
+
+    private val prepareImpulseResponseUseCase by lazy {
+        PrepareImpulseResponseUseCase(toneImportRepository)
+    }
+
+    private val commitCurrentToneModelUseCase by lazy {
+        CommitCurrentToneModelUseCase(toneImportRepository)
+    }
+
+    private val loadPrimaryToneCaptureUseCase by lazy {
+        LoadPrimaryToneCaptureUseCase(
+            commitCurrentToneModelUseCase,
+            activeToneRepository,
+            audioEngine,
+        )
+    }
+
+    private val prepareNamBlockReplacementUseCase by lazy {
+        PrepareNamBlockReplacementUseCase()
+    }
+
+    private val commitExtraToneModelUseCase by lazy {
+        CommitExtraToneModelUseCase(toneImportRepository)
+    }
+
+    private val addExtraNamCaptureUseCase by lazy {
+        AddExtraNamCaptureUseCase(commitExtraToneModelUseCase, namChainRepository, audioEngine)
+    }
+
+    private val rebuildNamChainUseCase by lazy { RebuildNamChainUseCase(audioEngine) }
+
+    private val replaceNamCaptureUseCase by lazy {
+        ReplaceNamCaptureUseCase(
+            commitExtraToneModelUseCase,
+            prepareNamBlockReplacementUseCase,
+            rebuildNamChainUseCase,
+            audioEngine,
+        )
     }
 
 
@@ -539,761 +656,74 @@ class MainActivity : AppCompatActivity() {
     // ========================================================
 
     private fun createUi() {
-
-        val container =
-            LinearLayout(this).apply {
-
-                orientation =
-                    LinearLayout.VERTICAL
-
-                setPadding(
-                    32,
-                    32,
-                    32,
-                    32
-                )
-            }
-
-
-        val returnToAppButton =
-            Button(this).apply {
-
-                text =
-                    "RETURN TO APP UI"
-
-                setOnClickListener {
-
-                    showComposeUi()
-                }
-            }
-
-
-        val title =
-            TextView(this).apply {
-
-                text =
-                    "PicoloDSP"
-
-                textSize =
-                    26f
-            }
-
-
-        val subtitle =
-            TextView(this).apply {
-
-                text =
-                    "\nTinyALSA + NAM A2\n"
-
-                textSize =
-                    17f
-            }
-
-
-        currentModelText =
-            TextView(this).apply {
-
-                text =
-                    "Capture: none\n"
-
-                textSize =
-                    18f
-            }
-
-
-        audioDeviceText =
-            TextView(this).apply {
-
-                text =
-                    "Audio interface: auto detect\n"
-
-                textSize =
-                    16f
-            }
-
-
-        val scanButton =
-            Button(this).apply {
-
-                text =
-                    "SCAN USB AUDIO"
-
-                setOnClickListener {
-
-                    status.text =
-                        audioEngine.nativeScanUsbAudio()
-                }
-            }
-
-
-        val browseButton =
-            Button(this).apply {
-
-                text =
-                    "BROWSE TONE3000"
-
-                setOnClickListener {
-
-                    startTone3000SelectFlow("replace")
-                }
-            }
-
-
-        val reloadButton =
-            Button(this).apply {
-
-                text =
-                    "RELOAD CURRENT NAM"
-
-                setOnClickListener {
-
-                    restoreLastModel()
-                }
-            }
-
-
-        routingText =
-            TextView(this).apply {
-
-                text =
-                    "\nROUTING\nInput: 1 (pending)\nOutput: 1-2 (pending)"
-
-                textSize =
-                    16f
-            }
-
-
-        inputRouteButton =
-            Button(this).apply {
-
-                text =
-                    "NEXT INPUT"
-
-                setOnClickListener {
-                    audioRoutingUseCase.cycleInput()
-                    refreshRoutingUi()
-                }
-            }
-
-
-        outputRouteButton =
-            Button(this).apply {
-
-                text =
-                    "NEXT OUTPUT PAIR"
-
-                setOnClickListener {
-                    audioRoutingUseCase.cycleOutput()
-                    refreshRoutingUi()
-                }
-            }
-
-
-        presetText =
-            TextView(this).apply {
-
-                text =
-                    "\nPRESET\nActive: none"
-
-                textSize =
-                    16f
-            }
-
-
-        savePresetButton =
-            Button(this).apply {
-
-                text =
-                    "SAVE PRESET"
-
-                setOnClickListener {
-
-                    showSavePresetDialog()
-                }
-            }
-
-
-        loadPresetButton =
-            Button(this).apply {
-
-                text =
-                    "LOAD PRESET"
-
-                setOnClickListener {
-
-                    showLoadPresetDialog()
-                }
-            }
-
-
-        inputGainText =
-            TextView(this).apply {
-
-                text =
-                    "\nInput Gain: 0.0 dB"
-            }
-
-
-        inputGainSlider =
-            SeekBar(this).apply {
-
-                max =
-                    96
-
-                progress =
-                    48
-
-                setOnSeekBarChangeListener(
-                    object :
-                        SeekBar.OnSeekBarChangeListener {
-
-                        override fun onProgressChanged(
-                            seekBar: SeekBar?,
-                            progress: Int,
-                            fromUser: Boolean
-                        ) {
-
-                            val gain =
-                                -24.0f +
-                                        progress *
-                                        0.5f
-
-                            inputGainText.text =
-                                String.format(
-                                    Locale.US,
-                                    "\nInput Gain: %.1f dB",
-                                    gain
-                                )
-
-                            if (!applyingPresetUi) {
-
-                                audioEngine.nativeSetInputGainDb(
-                                    gain
-                                )
-                            }
-
-                            if (fromUser) {
-
-                                prefs
-                                    .edit()
-                                    .putFloat(
-                                        PREF_INPUT_GAIN,
-                                        gain
-                                    )
-                                    .apply()
-                            }
-                        }
-
-                        override fun onStartTrackingTouch(
-                            seekBar: SeekBar?
-                        ) {
-                        }
-
-                        override fun onStopTrackingTouch(
-                            seekBar: SeekBar?
-                        ) {
-                        }
-                    }
-                )
-            }
-
-
-        outputGainText =
-            TextView(this).apply {
-
-                text =
-                    "\nOutput Gain: 0.0 dB"
-            }
-
-
-        outputGainSlider =
-            SeekBar(this).apply {
-
-                max =
-                    72
-
-                progress =
-                    48
-
-                setOnSeekBarChangeListener(
-                    object :
-                        SeekBar.OnSeekBarChangeListener {
-
-                        override fun onProgressChanged(
-                            seekBar: SeekBar?,
-                            progress: Int,
-                            fromUser: Boolean
-                        ) {
-
-                            val gain =
-                                -24.0f +
-                                        progress *
-                                        0.5f
-
-                            outputGainText.text =
-                                String.format(
-                                    Locale.US,
-                                    "\nOutput Gain: %.1f dB",
-                                    gain
-                                )
-
-                            if (!applyingPresetUi) {
-
-                                audioEngine.nativeSetOutputGainDb(
-                                    gain
-                                )
-                            }
-
-                            if (fromUser) {
-
-                                prefs
-                                    .edit()
-                                    .putFloat(
-                                        PREF_OUTPUT_GAIN,
-                                        gain
-                                    )
-                                    .apply()
-                            }
-                        }
-
-                        override fun onStartTrackingTouch(
-                            seekBar: SeekBar?
-                        ) {
-                        }
-
-                        override fun onStopTrackingTouch(
-                            seekBar: SeekBar?
-                        ) {
-                        }
-                    }
-                )
-            }
-
-
-        dspChainText =
-            TextView(this).apply {
-
-                text =
-                    "\nDSP CHAIN\nGate → NAM → EQ"
-
-                textSize =
-                    16f
-            }
-
-
-        gateButton =
-            Button(this).apply {
-
-                text =
-                    "GATE: OFF"
-
-                setOnClickListener {
-
-                    gateEnabled =
-                        !gateEnabled
-
-                    audioEngine.nativeSetGateEnabled(
-                        gateEnabled
-                    )
-
-                    prefs
-                        .edit()
-                        .putBoolean(
-                            PREF_GATE_ENABLED,
-                            gateEnabled
-                        )
-                        .apply()
-
-                    refreshDspChainUi()
-                }
-            }
-
-
-        gateThresholdText =
-            TextView(this).apply {
-
-                text =
-                    "\nGate Threshold: -65.0 dB"
-            }
-
-
-        gateThresholdSlider =
-            SeekBar(this).apply {
-
-                max =
-                    140
-
-                progress =
-                    50
-
-                setOnSeekBarChangeListener(
-                    object :
-                        SeekBar.OnSeekBarChangeListener {
-
-                        override fun onProgressChanged(
-                            seekBar: SeekBar?,
-                            progress: Int,
-                            fromUser: Boolean
-                        ) {
-
-                            val db =
-                                -90.0f +
-                                        progress *
-                                        0.5f
-
-
-                            gateThresholdText.text =
-                                String.format(
-                                    Locale.US,
-                                    "\nGate Threshold: %.1f dB",
-                                    db
-                                )
-
-
-                            if (!applyingPresetUi) {
-
-                                audioEngine.nativeSetGateThresholdDb(
-                                    db
-                                )
-                            }
-
-
-                            if (fromUser) {
-
-                                prefs
-                                    .edit()
-                                    .putFloat(
-                                        PREF_GATE_THRESHOLD,
-                                        db
-                                    )
-                                    .apply()
-                            }
-                        }
-
-                        override fun onStartTrackingTouch(
-                            seekBar: SeekBar?
-                        ) {
-                        }
-
-                        override fun onStopTrackingTouch(
-                            seekBar: SeekBar?
-                        ) {
-                        }
-                    }
-                )
-            }
-
-
-        eqLowText =
-            TextView(this).apply {
-
-                text =
-                    "\nEQ Low 120 Hz: 0.0 dB"
-            }
-
-
-        eqLowSlider =
-            SeekBar(this).apply {
-
-                max =
-                    48
-
-                progress =
-                    24
-
-                setOnSeekBarChangeListener(
-                    eqSeekListener(
-                        label =
-                            eqLowText,
-
-                        prefix =
-                            "EQ Low 120 Hz",
-
-                        prefKey =
-                            PREF_EQ_LOW,
-
-                        nativeSetter =
-                            audioEngine::nativeSetEqLowDb
-                    )
-                )
-            }
-
-
-        eqMidText =
-            TextView(this).apply {
-
-                text =
-                    "\nEQ Mid 750 Hz: 0.0 dB"
-            }
-
-
-        eqMidSlider =
-            SeekBar(this).apply {
-
-                max =
-                    48
-
-                progress =
-                    24
-
-                setOnSeekBarChangeListener(
-                    eqSeekListener(
-                        label =
-                            eqMidText,
-
-                        prefix =
-                            "EQ Mid 750 Hz",
-
-                        prefKey =
-                            PREF_EQ_MID,
-
-                        nativeSetter =
-                            audioEngine::nativeSetEqMidDb
-                    )
-                )
-            }
-
-
-        eqHighText =
-            TextView(this).apply {
-
-                text =
-                    "\nEQ High 4 kHz: 0.0 dB"
-            }
-
-
-        eqHighSlider =
-            SeekBar(this).apply {
-
-                max =
-                    48
-
-                progress =
-                    24
-
-                setOnSeekBarChangeListener(
-                    eqSeekListener(
-                        label =
-                            eqHighText,
-
-                        prefix =
-                            "EQ High 4 kHz",
-
-                        prefKey =
-                            PREF_EQ_HIGH,
-
-                        nativeSetter =
-                            audioEngine::nativeSetEqHighDb
-                    )
-                )
-            }
-
-
-        startButton =
-            Button(this).apply {
-
-                text =
-                    "START NAM AUDIO"
-
-                isEnabled =
-                    false
-
-                setOnClickListener {
-
-                    syncFxNativeChain(readFxNativeChain(), reset = true)
-
-                    val result =
-                        audioEngine.nativeStart()
-
-                    status.text =
-                        result
-
-                    audioDeviceText.text =
-                        audioEngine.nativeGetAudioDeviceInfo()
-
-                    refreshRoutingUi()
-                }
-            }
-
-
-        bypassButton =
-            Button(this).apply {
-
-                text =
-                    "MODE: NAM"
-
-                setOnClickListener {
-
-                    bypass =
-                        !bypass
-
-                    audioEngine.nativeSetBypass(
-                        bypass
-                    )
-
-                    prefs.edit().putBoolean(PREF_NAM_BYPASS, bypass).apply()
-
-                    updateBypassButton()
-                }
-            }
-
-
-        val performanceButton =
-            Button(this).apply {
-
-                text =
-                    "NAM PERFORMANCE"
-
-                setOnClickListener {
-
-                    status.text =
-                        audioEngine.nativeGetStats()
-                }
-            }
-
-
-        val stopButton =
-            Button(this).apply {
-
-                text =
-                    "STOP AUDIO"
-
-                setOnClickListener {
-
-                    audioEngine.nativeStop()
-
-                    status.text =
-                        "STOPPED"
-
-                    refreshRoutingUi()
-                }
-            }
-
-
-        status =
-            TextView(this).apply {
-
-                text =
-                    "Initializing..."
-
-                textSize =
-                    16f
-
-                setTextIsSelectable(
-                    true
-                )
-            }
-
-
-        container.addView(returnToAppButton)
-        container.addView(title)
-        container.addView(subtitle)
-
-        container.addView(currentModelText)
-        container.addView(audioDeviceText)
-
-        container.addView(scanButton)
-        container.addView(browseButton)
-        container.addView(reloadButton)
-
-        container.addView(routingText)
-        container.addView(inputRouteButton)
-        container.addView(outputRouteButton)
-
-        container.addView(presetText)
-        container.addView(savePresetButton)
-        container.addView(loadPresetButton)
-
-        container.addView(inputGainText)
-        container.addView(inputGainSlider)
-
-        container.addView(outputGainText)
-        container.addView(outputGainSlider)
-
-        container.addView(dspChainText)
-        container.addView(gateButton)
-        container.addView(gateThresholdText)
-        container.addView(gateThresholdSlider)
-
-        container.addView(eqLowText)
-        container.addView(eqLowSlider)
-        container.addView(eqMidText)
-        container.addView(eqMidSlider)
-        container.addView(eqHighText)
-        container.addView(eqHighSlider)
-
-        container.addView(startButton)
-        container.addView(bypassButton)
-        container.addView(performanceButton)
-        container.addView(stopButton)
-
-        container.addView(status)
-
-
-        legacyScrollView =
-            ScrollView(this).apply {
-
-                visibility =
-                    View.GONE
-
-                addView(
-                    container
-                )
-            }
-
-
-        rootLayout =
-            FrameLayout(this)
-
-
-        rootLayout.addView(
-            legacyScrollView,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
+        // Compose is the only attached UI. These View instances remain as temporary
+        // adapters for existing status and control code while that code moves out.
+        status = TextView(this).apply {
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                override fun afterTextChanged(s: Editable?) { publishComposeState() }
+            })
+        }
+        currentModelText = TextView(this)
+        audioDeviceText = TextView(this)
+        inputGainText = TextView(this)
+        outputGainText = TextView(this)
+        routingText = TextView(this)
+        inputRouteButton = Button(this)
+        outputRouteButton = Button(this)
+        presetText = TextView(this)
+        savePresetButton = Button(this)
+        loadPresetButton = Button(this)
+        inputGainSlider = SeekBar(this)
+        outputGainSlider = SeekBar(this)
+        dspChainText = TextView(this)
+        gateButton = Button(this)
+        gateThresholdText = TextView(this)
+        gateThresholdSlider = SeekBar(this)
+        eqLowText = TextView(this)
+        eqMidText = TextView(this)
+        eqHighText = TextView(this)
+        eqLowSlider = SeekBar(this)
+        eqMidSlider = SeekBar(this)
+        eqHighSlider = SeekBar(this)
+        startButton = Button(this)
+        bypassButton = Button(this)
 
         val composeViewModel = ViewModelProvider(this)[PicoloComposeViewModel::class.java]
         val composeActions = AudioAppController()
-        composeViewModel.observe(
-            PicoloStateRepository(readSnapshot = {
-                val (pluginState, stats) = withContext(Dispatchers.IO) {
-                    pluginStateJson() to composeActions.getStats()
-                }
-                PicoloStateSnapshot(
-                    pluginState = pluginState,
-                    status = withContext(Dispatchers.Main.immediate) {
-                        status.text?.toString().orEmpty()
-                    },
-                    stats = stats,
-                )
-            }),
-        )
+        val stateRepository = PicoloStateRepository(readStats = {
+            withContext(Dispatchers.IO) { composeActions.getStats() }
+        })
+        picoloStateRepository = stateRepository
+        composeViewModel.observe(stateRepository)
+        val publishingActions = StatePublishingPicoloActions(composeActions, ::publishComposeState)
         composeView = ComposeView(this).apply {
             setViewCompositionStrategy(
                 ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
             )
             setContent {
                 PicoloComposeApp(
-                    actions = composeActions,
+                    actions = publishingActions,
                     viewModel = composeViewModel,
                     onBrowse = { mode -> startTone3000SelectFlow(mode) },
                 )
             }
         }
-        rootLayout.addView(
-            composeView,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
+        setContentView(composeView)
+        publishComposeState()
+    }
 
-        setContentView(
-            rootLayout
-        )
-        showComposeUi()
+    private fun publishComposeState() {
+        val repository = picoloStateRepository ?: return
+        val requestVersion = stateSnapshotVersion.incrementAndGet()
+        lifecycleScope.launch(Dispatchers.IO) {
+            val serializedState = pluginStateJson()
+            val statusText = withContext(Dispatchers.Main.immediate) { status.text?.toString().orEmpty() }
+            if (requestVersion == stateSnapshotVersion.get()) {
+                repository.publish(serializedState, statusText)
+            }
+        }
     }
 
 
@@ -1346,24 +776,33 @@ class MainActivity : AppCompatActivity() {
         return result
     }
 
-    private fun readFxChain(): MutableList<JSONObject> = fxChainRepository.readImpulseChain()
+    private fun readFxChain(): MutableList<FxImpulseEntry> = fxChainRepository.readImpulseChain()
 
-    private fun persistFxChain(entries: List<JSONObject>) = fxChainRepository.persistImpulseChain(entries)
+    private fun persistFxChain(entries: List<FxImpulseEntry>) = fxChainRepository.persistImpulseChain(entries)
 
-    private fun readFxNativeChain(): MutableList<JSONObject> = fxChainRepository.readNativeChain()
+    private fun readFxNativeChain(): MutableList<FxNativeEntry> = fxChainRepository.readNativeChain()
 
-    private fun persistFxNativeChain(entries: List<JSONObject>) = fxChainRepository.persistNativeChain(entries)
+    private fun persistFxNativeChain(entries: List<FxNativeEntry>) = fxChainRepository.persistNativeChain(entries)
 
-    private fun syncFxNativeChain(entries: List<JSONObject>, reset: Boolean = false) {
+    private fun FxImpulseEntry.toUiJson() = JSONObject()
+        .put("toneId", toneId).put("title", title).put("image", image)
+        .put("modelId", modelId).put("modelName", modelName).put("path", path)
+        .put("bypass", bypass).put("mix", mix).put("position", position)
+
+    private fun FxNativeEntry.toUiJson() = JSONObject()
+        .put("effect", effect).put("bypass", bypass).put("mix", mix)
+        .put("param1", param1).put("param2", param2).put("param3", param3)
+
+    private fun syncFxNativeChain(entries: List<FxNativeEntry>, reset: Boolean = false) {
         if (reset) for (slot in 0 until 8) audioEngine.nativeClearFxNative(slot)
         entries.forEachIndexed { slot, item ->
-            val type = item.optInt("effect", 0).coerceIn(0, 3)
+            val type = item.effect.coerceIn(0, 3)
             if (reset) audioEngine.nativeConfigureFxNative(slot, type, MAX_NAM_BLOCKS)
-            audioEngine.nativeSetFxNativeBypass(slot, item.optBoolean("bypass", false))
-            audioEngine.nativeSetFxNativeMix(slot, item.optDouble("mix", 0.35).toFloat())
-            audioEngine.nativeSetFxNativeParameter(slot, 0, item.optDouble("param1", when (type) { 0, 1 -> 350.0; 2 -> 1500.0; else -> 150.0 }).toFloat())
-            audioEngine.nativeSetFxNativeParameter(slot, 1, item.optDouble("param2", when (type) { 0, 1 -> 0.35; 2 -> 0.5; else -> 5000.0 }).toFloat())
-            audioEngine.nativeSetFxNativeParameter(slot, 2, item.optDouble("param3", 12.0).toFloat())
+            audioEngine.nativeSetFxNativeBypass(slot, item.bypass)
+            audioEngine.nativeSetFxNativeMix(slot, item.mix)
+            audioEngine.nativeSetFxNativeParameter(slot, 0, item.param1)
+            audioEngine.nativeSetFxNativeParameter(slot, 1, item.param2)
+            audioEngine.nativeSetFxNativeParameter(slot, 2, item.param3)
             audioEngine.nativeSetFxNativePosition(slot, MAX_NAM_BLOCKS)
         }
     }
@@ -1371,7 +810,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun persistNamChainEntries(entries: List<ExtraNamEntry>) {
         if (entries.isEmpty()) {
-            clearPersistedModel()
+            activeToneRepository.clear()
             persistExtraNamChain(emptyList())
             bypass = false
             prefs.edit()
@@ -1428,8 +867,8 @@ class MainActivity : AppCompatActivity() {
         audioEngine.nativeSetImpulseResponsePosition(cabinetPosition)
         val fxEntries = readFxChain()
         fxEntries.forEachIndexed { index, fx ->
-            val position = fx.optInt("position", entries.size).coerceIn(0, entries.size)
-            fx.put("position", position)
+            val position = fx.position.coerceIn(0, entries.size)
+            fxEntries[index] = fx.copy(position = position)
             audioEngine.nativeSetFxImpulseResponsePosition(index, position)
         }
         persistFxChain(fxEntries)
@@ -1437,51 +876,7 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun rebuildNativeNamChain(entries: List<ExtraNamEntry>): String {
-        val wasRunning = audioEngine.nativeIsRunning()
-        audioEngine.nativeClearNamChain()
-
-        entries.forEachIndexed { index, entry ->
-            val result = if (index == 0) {
-                audioEngine.nativeLoadModel(entry.path)
-            } else {
-                audioEngine.nativeAddChainModel(entry.path)
-            }
-
-            val loaded = if (index == 0) {
-                result.startsWith("MODEL LOADED")
-            } else {
-                result.startsWith("CHAIN NAM ADDED")
-            }
-
-            if (!loaded) {
-                return result
-            }
-
-            audioEngine.nativeSetChainNamBypass(index, entry.bypass)
-            audioEngine.nativeSetChainNamGainDb(index, entry.gainDb)
-            audioEngine.nativeSetChainNamInGainDb(index, entry.inGainDb)
-            audioEngine.nativeSetChainNamMix(index, entry.mix)
-            audioEngine.nativeSetChainNamEqDb(index, 0, entry.eqLowDb)
-            audioEngine.nativeSetChainNamEqDb(index, 1, entry.eqMidDb)
-            audioEngine.nativeSetChainNamEqDb(index, 2, entry.eqHighDb)
-            audioEngine.nativeSetChainNamEqDb(index, 3, entry.eqBand3Db)
-            audioEngine.nativeSetChainNamEqDb(index, 4, entry.eqBand4Db)
-            audioEngine.nativeSetChainNamEqDb(index, 5, entry.eqBand5Db)
-            audioEngine.nativeSetChainNamEqPre(index, entry.eqPre)
-            audioEngine.nativeSetChainNamEqEnabled(index, entry.eqEnabled)
-            audioEngine.nativeSetChainNamNormalize(index, entry.normalize && entry.moduleType != "PEDAL")
-            audioEngine.nativeSetChainNamQuality(index, entry.a2Full && entry.moduleType == "AMP")
-        }
-
-        if (wasRunning) {
-            val audioResult = audioEngine.nativeStart()
-            if (!audioResult.startsWith("AUDIO ACTIVE")) {
-                return audioResult
-            }
-        }
-
-        return "NAM CHAIN READY\nblocks=${entries.size}" +
-                if (wasRunning) "\nAUDIO ACTIVE" else ""
+        return rebuildNamChainUseCase.execute(entries)
     }
 
 
@@ -1608,57 +1003,6 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    private fun commitExtraDownloadedModel(
-        pendingFile: File,
-        modelId: Long
-    ): File {
-
-        val destination =
-            File(
-                filesDir,
-                "chain-nam-" +
-                        System.currentTimeMillis() +
-                        "-" +
-                        modelId +
-                        ".nam"
-            )
-
-
-        try {
-
-            Files.move(
-                pendingFile.toPath(),
-                destination.toPath(),
-                StandardCopyOption.ATOMIC_MOVE
-            )
-
-        } catch (
-            _: AtomicMoveNotSupportedException
-        ) {
-
-            Files.move(
-                pendingFile.toPath(),
-                destination.toPath()
-            )
-        }
-
-
-        if (
-            !destination.exists() ||
-            destination.length() ==
-            0L
-        ) {
-
-            throw RuntimeException(
-                "Failed to commit extra NAM block."
-            )
-        }
-
-
-        return destination
-    }
-
-
     private fun clearExtraNamChain() {
 
         Thread {
@@ -1702,11 +1046,7 @@ class MainActivity : AppCompatActivity() {
     // ========================================================
 
     private fun showComposeUi() {
-        legacyScrollView.visibility =
-            View.GONE
-
-        composeView.visibility =
-            View.VISIBLE
+        composeView.visibility = View.VISIBLE
     }
 
 
@@ -1967,8 +1307,8 @@ class MainActivity : AppCompatActivity() {
         val signalChain = JSONArray()
         val fxChain = readFxChain()
         val fxNativeChain = readFxNativeChain()
-        result.put("fxChain", JSONArray().also { array -> fxChain.forEach { array.put(it) } })
-        result.put("fxNativeChain", JSONArray().also { array -> fxNativeChain.forEach { array.put(it) } })
+        result.put("fxChain", JSONArray().also { array -> fxChain.forEach { array.put(it.toUiJson()) } })
+        result.put("fxNativeChain", JSONArray().also { array -> fxNativeChain.forEach { array.put(it.toUiJson()) } })
         val irLoaded = cabinetPath != null && File(cabinetPath).exists()
         val irPosition = prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS)
             .coerceIn(0, namChain.length())
@@ -1980,14 +1320,14 @@ class MainActivity : AppCompatActivity() {
                     .put("name", cabinetPath?.let { File(it).name } ?: "Cabinet IR"))
             }
             fxChain.forEachIndexed { index, fx ->
-                if (fx.optInt("position", namChain.length()) == position) {
+                if (fx.position == position) {
                     signalChain.put(JSONObject()
                         .put("type", "FX")
                         .put("fxIndex", index)
                         .put("position", position)
-                        .put("name", fx.optString("title", "Space FX"))
-                        .put("bypass", fx.optBoolean("bypass", false))
-                        .put("mix", fx.optDouble("mix", 0.5)))
+                        .put("name", fx.title)
+                        .put("bypass", fx.bypass)
+                        .put("mix", fx.mix.toDouble()))
                 }
             }
             if (position < namChain.length()) signalChain.put(namChain.getJSONObject(position).put("type", "NAM"))
@@ -1995,7 +1335,7 @@ class MainActivity : AppCompatActivity() {
         // FXNative is intentionally a stereo post section: it cannot be
         // inserted before a NAM or either cabinet/space convolution stage.
         fxNativeChain.forEachIndexed { index, item ->
-            val effect = item.optInt("effect", 0).coerceIn(0, 3)
+            val effect = item.effect.coerceIn(0, 3)
             val names = arrayOf("ChowMatrix Delay", "BYOD BBD Delay", "BYOD Smooth Reverb", "BYOD Shimmer Reverb")
             signalChain.put(JSONObject()
                 .put("type", "FX_NATIVE")
@@ -2003,11 +1343,11 @@ class MainActivity : AppCompatActivity() {
                 .put("effect", effect)
                 .put("position", MAX_NAM_BLOCKS)
                 .put("name", names[effect])
-                .put("bypass", item.optBoolean("bypass", false))
-                .put("mix", item.optDouble("mix", 0.35))
-                .put("param1", item.optDouble("param1", when (effect) { 0, 1 -> 350.0; 2 -> 1500.0; else -> 150.0 }))
-                .put("param2", item.optDouble("param2", when (effect) { 0, 1 -> 0.35; 2 -> 0.5; else -> 5000.0 }))
-                .put("param3", item.optDouble("param3", 12.0)))
+                .put("bypass", item.bypass)
+                .put("mix", item.mix.toDouble())
+                .put("param1", item.param1.toDouble())
+                .put("param2", item.param2.toDouble())
+                .put("param3", item.param3.toDouble()))
         }
         result.put("signalChain", signalChain)
 
@@ -2405,20 +1745,6 @@ class MainActivity : AppCompatActivity() {
             return "STOPPED"
         }
 
-        fun setAccessToken(token: String): Boolean {
-            val value = token.trim()
-            if (value.isBlank()) {
-                prefs.edit()
-                    .remove(PREF_ACCESS_TOKEN)
-                    .remove(PREF_REFRESH_TOKEN)
-                    .apply()
-                return false
-            }
-            prefs.edit().putString(PREF_ACCESS_TOKEN, value).apply()
-            return true
-        }
-
-
         fun toggleBypass(): Boolean {
 
             bypass =
@@ -2496,14 +1822,9 @@ class MainActivity : AppCompatActivity() {
                 if (files.length() == 0) return JSONObject().put("error", "No local file").toString()
                 val source = files.getJSONObject(0)
                 val name = source.optString("name", "$title.nam")
-                if (!name.lowercase(Locale.US).endsWith(".nam")) {
-                    return JSONObject().put("error", "Only .nam files are supported on Android").toString()
-                }
                 val encoded = source.optString("data")
-                if (encoded.isBlank()) return JSONObject().put("error", "Empty local file").toString()
-                val safeName = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
-                val destination = File(filesDir, "local-${System.currentTimeMillis()}-$safeName")
-                destination.writeBytes(Base64.decode(encoded, Base64.DEFAULT))
+                val importedFile = importLocalNamFileUseCase.execute(name, encoded)
+                val destination = importedFile.file
 
                 val entries = readNamChainEntries().toMutableList()
                 val requested = targetBlockId.removePrefix("nam-").toIntOrNull()
@@ -2516,7 +1837,7 @@ class MainActivity : AppCompatActivity() {
                     toneId = "local-${destination.name}",
                     toneTitle = title,
                     modelId = 0L,
-                    modelName = name.removeSuffix(".nam"),
+                            modelName = importedFile.originalName.removeSuffix(".nam"),
                     size = "unknown",
                     path = destination.absolutePath,
                     bypass = false,
@@ -2563,10 +1884,10 @@ class MainActivity : AppCompatActivity() {
                     readFxChain().getOrNull(index)?.let { entry ->
                         PackageCaptureSource(
                             blockId = blockId,
-                            toneId = entry.optString("toneId"),
-                            toneTitle = entry.optString("title", "Space FX"),
+                            toneId = entry.toneId,
+                            toneTitle = entry.title,
                             moduleType = "FX",
-                            imageUrl = entry.optString("image"),
+                            imageUrl = entry.image,
                             importMode = "replace-fx:$index",
                         )
                     }
@@ -2592,23 +1913,22 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
 
-            val token = prefs.getString(PREF_ACCESS_TOKEN, null)
-            if (token.isNullOrBlank()) {
-                runOnUiThread {
-                    showPackageCaptureUnavailable("Sign in to TONE3000 to view this package's captures.")
-                }
-                return true
-            }
-
             runOnUiThread {
                 status.text = "Loading captures from:\n${source.toneTitle}"
             }
             Thread {
                 try {
-                    val architecture = if (source.moduleType == "FX" || source.moduleType == "IR") null else 2
-                    val freshModels = tone3000ApiRepository.listModels(source.toneId, token, architecture)
-                    val models = mergePackageCaptures(source.toneId, source.moduleType, freshModels)
-                    if (models.isNotEmpty()) cachePackageCaptures(source.toneId, source.moduleType, models)
+                    val token = runBlocking { toneSessionRepository.accessToken() }
+                    if (token.isNullOrBlank()) {
+                        runOnUiThread {
+                            showComposeUi()
+                            showPackageCaptureUnavailable("Sign in to TONE3000 to view this package's captures.")
+                        }
+                        return@Thread
+                    }
+                    val models = runBlocking {
+                        loadPackageCapturesUseCase.execute(source.toneId, source.moduleType, token)
+                    }
                     runOnUiThread {
                         showComposeUi()
                         if (models.isEmpty()) {
@@ -2666,37 +1986,7 @@ class MainActivity : AppCompatActivity() {
             moduleType: String
         ) {
             try {
-                val destination = File(filesDir, "cabinet-${model.id}.wav")
-                if (destination.exists()) destination.delete()
-                val downloaded = downloadModel(model, token, destination)
-                val normalized = normalizeImpulseResponseWav(downloaded)
-                val result = audioEngine.nativeLoadImpulseResponse(normalized.absolutePath)
-                if (!result.startsWith("IR LOADED")) throw RuntimeException(result)
-                val position = audioEngine.nativeGetNamBlockCount()
-                audioEngine.nativeSetImpulseResponsePosition(position)
-                audioEngine.nativeSetImpulseResponseBypass(false)
-                audioEngine.nativeSetImpulseResponseInGainDb(0.0f)
-                audioEngine.nativeSetImpulseResponseOutGainDb(0.0f)
-                audioEngine.nativeSetImpulseResponseMix(if (moduleType == "FX") 0.5f else 1.0f)
-                audioEngine.nativeSetImpulseResponseEqPre(false)
-                audioEngine.nativeSetImpulseResponseEqEnabled(true)
-                for (band in 0 until 6) audioEngine.nativeSetImpulseResponseEqDb(band, 0.0f)
-                prefs.edit()
-                    .putString(PREF_CABINET_IR_PATH, normalized.absolutePath)
-                    .putString(PREF_CABINET_IR_IMAGE, imageUrl)
-                    .putString(PREF_CABINET_IR_TITLE, toneTitle)
-                    .putString(PREF_CABINET_IR_TONE_ID, toneId)
-                    .putString(PREF_CABINET_IR_TYPE, moduleType)
-                    .putInt(PREF_CABINET_IR_POSITION, position)
-                    .putBoolean(PREF_CABINET_IR_BYPASS, false)
-                    .putFloat(PREF_CABINET_IR_IN_GAIN, 0.0f)
-                    .putFloat(PREF_CABINET_IR_OUT_GAIN, 0.0f)
-                    .putFloat(PREF_CABINET_IR_MIX, if (moduleType == "FX") 0.5f else 1.0f)
-                    .putBoolean(PREF_CABINET_IR_EQ_PRE, false)
-                    .putBoolean(PREF_CABINET_IR_EQ_ENABLED, true)
-                    .apply { for (band in 0 until 6) putFloat(PREF_CABINET_IR_EQ_PREFIX + band, 0.0f) }
-                    .apply()
-                val audio = audioEngine.nativeStart()
+                val audio = importCabinetImpulseUseCase.execute(toneId, toneTitle, imageUrl, model, token, moduleType)
                 prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
                 runOnUiThread {
                     status.text = "CABINET IR READY\n\n$toneTitle\n${model.name}\n$audio"
@@ -2710,42 +2000,28 @@ class MainActivity : AppCompatActivity() {
         private fun downloadAndLoadFx(
             toneId: String, toneTitle: String, imageUrl: String, model: OnlineModel, token: String
         ) {
-            try {
-                val entries = readFxChain()
-                val targetIndex = prefs.getString(PREF_PENDING_IMPORT_MODE, "add")
-                    ?.removePrefix("replace-fx:")?.toIntOrNull()
-                    ?.takeIf { it in entries.indices }
-                if (entries.size >= 8 && targetIndex == null) throw IllegalStateException("FX chain full (maximum 8)")
-                val slot = targetIndex ?: entries.size
-                val replacedPath = targetIndex?.let { entries[it].optString("path") }
-                val destination = File(filesDir, "fx-space-${model.id}.wav")
-                if (destination.exists()) destination.delete()
-                val normalized = normalizeImpulseResponseWav(downloadModel(model, token, destination))
-                val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, normalized.absolutePath)
-                if (!loaded.startsWith("FX LOADED")) throw IllegalStateException(loaded)
-                val entry = JSONObject()
-                    .put("toneId", toneId).put("title", toneTitle).put("image", imageUrl)
-                    .put("modelId", model.id).put("modelName", model.name)
-                    .put("path", normalized.absolutePath).put("bypass", false).put("mix", 0.5)
-                    .put("position", audioEngine.nativeGetNamBlockCount())
-                if (targetIndex == null) entries.add(entry) else entries[targetIndex] = entry
-                persistFxChain(entries)
-                audioEngine.nativeSetFxImpulseResponseBypass(slot, false)
-                audioEngine.nativeSetFxImpulseResponseMix(slot, 0.5f)
-                audioEngine.nativeSetFxImpulseResponsePosition(slot, entry.optInt("position"))
-                if (!replacedPath.isNullOrBlank() && replacedPath != normalized.absolutePath) {
-                    try { File(replacedPath).delete() } catch (_: Exception) { }
+            val requestedReplacementIndex = prefs.getString(PREF_PENDING_IMPORT_MODE, "add")
+                ?.removePrefix("replace-fx:")?.toIntOrNull()
+            Thread {
+                try {
+                    val imported = importFxCaptureUseCase.execute(
+                        toneId = toneId,
+                        toneTitle = toneTitle,
+                        imageUrl = imageUrl,
+                        model = model,
+                        token = token,
+                        requestedReplacementIndex = requestedReplacementIndex,
+                    )
+                    prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
+                    runOnUiThread {
+                        status.text = "FX READY\n\n$toneTitle\n${model.name}\n${imported.audioResult}"
+                        showComposeUi()
+                    }
+                } catch (error: Exception) {
+                    Log.e(API_TAG, "FX import failed", error)
+                    runOnUiThread { status.text = "FX LOAD FAILED\n${error.message}" }
                 }
-                val audio = audioEngine.nativeStart()
-                prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
-                runOnUiThread {
-                    status.text = "FX READY\n\n$toneTitle\n${model.name}\n$audio"
-                    showComposeUi()
-                }
-            } catch (error: Exception) {
-                Log.e(API_TAG, "FX import failed", error)
-                runOnUiThread { status.text = "FX LOAD FAILED\n${error.message}" }
-            }
+            }.start()
         }
 
         fun loadSelectedCabinet(
@@ -2777,75 +2053,6 @@ class MainActivity : AppCompatActivity() {
                     moduleType = moduleType
                 )
             }
-        }
-
-        /** Normalize downloaded cabinets to the mono PCM16 WAV accepted by the IR loader. */
-        private fun normalizeImpulseResponseWav(source: File): File {
-            val bytes = source.readBytes()
-            require(bytes.size >= 12 && String(bytes, 0, 4, Charsets.US_ASCII) == "RIFF" &&
-                String(bytes, 8, 4, Charsets.US_ASCII) == "WAVE") { "Invalid WAV header" }
-            val view = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-            var format = 0
-            var channels = 0
-            var sampleRate = 0
-            var bits = 0
-            var dataOffset = -1
-            var dataSize = 0
-            var cursor = 12
-            while (cursor + 8 <= bytes.size) {
-                val chunk = String(bytes, cursor, 4, Charsets.US_ASCII)
-                val size = view.getInt(cursor + 4)
-                if (size < 0 || cursor + 8L + size > bytes.size) break
-                when (chunk) {
-                    "fmt " -> if (size >= 16) {
-                        format = view.getShort(cursor + 8).toInt() and 0xffff
-                        channels = view.getShort(cursor + 10).toInt() and 0xffff
-                        sampleRate = view.getInt(cursor + 12)
-                        bits = view.getShort(cursor + 22).toInt() and 0xffff
-                    }
-                    "data" -> {
-                        dataOffset = cursor + 8
-                        dataSize = size
-                        break
-                    }
-                }
-                cursor += 8 + size + (size and 1)
-            }
-            require(format == 1 || format == 3) { "Unsupported WAV format $format" }
-            require(channels > 0 && sampleRate > 0 && dataOffset >= 0) { "Incomplete WAV" }
-            require((format == 3 && bits == 32) || (format == 1 && bits in setOf(8, 16, 24, 32))) {
-                "Unsupported WAV encoding $format/$bits"
-            }
-            val bytesPerSample = bits / 8
-            val frameBytes = channels * bytesPerSample
-            val frames = dataSize / frameBytes
-            val output = ByteBuffer.allocate(44 + frames * 2).order(ByteOrder.LITTLE_ENDIAN)
-            output.put("RIFF".toByteArray(Charsets.US_ASCII)).putInt(36 + frames * 2)
-                .put("WAVEfmt ".toByteArray(Charsets.US_ASCII)).putInt(16)
-                .putShort(1).putShort(1).putInt(sampleRate).putInt(sampleRate * 2)
-                .putShort(2).putShort(16).put("data".toByteArray(Charsets.US_ASCII)).putInt(frames * 2)
-
-            fun sampleAsFloat(position: Int): Float = when {
-                format == 3 -> Float.fromBits(view.getInt(position))
-                bits == 8 -> ((bytes[position].toInt() and 0xff) - 128) / 128f
-                bits == 16 -> view.getShort(position) / 32768f
-                bits == 24 -> {
-                    val raw = (bytes[position].toInt() and 0xff) or
-                        ((bytes[position + 1].toInt() and 0xff) shl 8) or
-                        (bytes[position + 2].toInt() shl 16)
-                    (if (raw and 0x800000 != 0) raw or -0x1000000 else raw) / 8388608f
-                }
-                else -> view.getInt(position) / 2147483648f
-            }
-            for (frame in 0 until frames) {
-                var mixed = 0f
-                val base = dataOffset + frame * frameBytes
-                for (channel in 0 until channels) mixed += sampleAsFloat(base + channel * bytesPerSample)
-                output.putShort((mixed / channels).coerceIn(-1f, 1f).let { (it * 32767f).roundToInt().toShort() })
-            }
-            val normalized = File(filesDir, "${source.nameWithoutExtension}-pcm16.wav")
-            normalized.outputStream().use { it.write(output.array()) }
-            return normalized
         }
 
         fun addCabinetIr() {
@@ -2904,18 +2111,18 @@ class MainActivity : AppCompatActivity() {
                 val removed = entries.removeAt(fxIndex)
                 for (slot in 0 until 8) audioEngine.nativeClearFxImpulseResponse(slot)
                 entries.forEachIndexed { slot, item ->
-                    val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, item.optString("path"))
+                    val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, item.path)
                     if (!loaded.startsWith("FX LOADED")) {
                         runOnUiThread { status.text = "FX CHAIN RELOAD FAILED\n$loaded" }
                         return@Thread
                     }
-                    audioEngine.nativeSetFxImpulseResponseBypass(slot, item.optBoolean("bypass", false))
-                    audioEngine.nativeSetFxImpulseResponseMix(slot, item.optDouble("mix", 0.5).toFloat())
+                    audioEngine.nativeSetFxImpulseResponseBypass(slot, item.bypass)
+                    audioEngine.nativeSetFxImpulseResponseMix(slot, item.mix)
                     val namCount = audioEngine.nativeGetNamBlockCount()
-                    audioEngine.nativeSetFxImpulseResponsePosition(slot, item.optInt("position", namCount).coerceIn(0, namCount))
+                    audioEngine.nativeSetFxImpulseResponsePosition(slot, item.position.coerceIn(0, namCount))
                 }
                 persistFxChain(entries)
-                try { File(removed.optString("path")).delete() } catch (_: Exception) { }
+                try { File(removed.path).delete() } catch (_: Exception) { }
                 val hasModules = audioEngine.nativeGetNamBlockCount() > 0 || entries.isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null
                 val audio = if (wasRunning && hasModules) audioEngine.nativeStart() else ""
                 runOnUiThread { status.text = "FX REMOVED\n$audio" }
@@ -2925,7 +2132,7 @@ class MainActivity : AppCompatActivity() {
         override fun setFxBypass(fxIndex: Int, bypassed: Boolean) {
             val entries = readFxChain()
             val item = entries.getOrNull(fxIndex) ?: return
-            item.put("bypass", bypassed)
+            entries[fxIndex] = item.copy(bypass = bypassed)
             persistFxChain(entries)
             audioEngine.nativeSetFxImpulseResponseBypass(fxIndex, bypassed)
         }
@@ -2934,7 +2141,7 @@ class MainActivity : AppCompatActivity() {
             val entries = readFxChain()
             val item = entries.getOrNull(fxIndex) ?: return
             val value = mix.toFloat().coerceIn(0f, 1f)
-            item.put("mix", value.toDouble())
+            entries[fxIndex] = item.copy(mix = value)
             persistFxChain(entries)
             audioEngine.nativeSetFxImpulseResponseMix(fxIndex, value)
         }
@@ -2947,10 +2154,11 @@ class MainActivity : AppCompatActivity() {
             }
             val wasRunning = audioEngine.nativeIsRunning()
             val selected = effect.coerceIn(0, 3)
-            val entry = JSONObject().put("effect", selected).put("bypass", false).put("mix", 0.35)
-                .put("param1", when (selected) { 0, 1 -> 350.0; 2 -> 1500.0; else -> 150.0 })
-                .put("param2", when (selected) { 0, 1 -> 0.35; 2 -> 0.5; else -> 5000.0 })
-                .put("param3", 12.0)
+            val entry = FxNativeEntry(
+                effect = selected,
+                param1 = when (selected) { 0, 1 -> 350f; 2 -> 1500f; else -> 150f },
+                param2 = when (selected) { 0, 1 -> 0.35f; 2 -> 0.5f; else -> 5000f },
+            )
             entries.add(entry)
             persistFxNativeChain(entries)
             syncFxNativeChain(entries, reset = true)
@@ -2972,7 +2180,7 @@ class MainActivity : AppCompatActivity() {
         override fun setFxNativeBypass(nativeIndex: Int, bypassed: Boolean) {
             val entries = readFxNativeChain()
             val entry = entries.getOrNull(nativeIndex) ?: return
-            entry.put("bypass", bypassed)
+            entries[nativeIndex] = entry.copy(bypass = bypassed)
             persistFxNativeChain(entries)
             audioEngine.nativeSetFxNativeBypass(nativeIndex, bypassed)
         }
@@ -2981,7 +2189,7 @@ class MainActivity : AppCompatActivity() {
             val entries = readFxNativeChain()
             val entry = entries.getOrNull(nativeIndex) ?: return
             val value = mix.toFloat().coerceIn(0f, 1f)
-            entry.put("mix", value.toDouble())
+            entries[nativeIndex] = entry.copy(mix = value)
             persistFxNativeChain(entries)
             audioEngine.nativeSetFxNativeMix(nativeIndex, value)
         }
@@ -2989,7 +2197,7 @@ class MainActivity : AppCompatActivity() {
         override fun setFxNativeParameter(nativeIndex: Int, parameter: Int, value: Double) {
             val entries = readFxNativeChain()
             val entry = entries.getOrNull(nativeIndex) ?: return
-            val effect = entry.optInt("effect", 0)
+            val effect = entry.effect
             val normalized = when (parameter) {
                 0 -> value.toFloat().coerceIn(if (effect < 2) 20f else if (effect == 2) 500f else 50f,
                     if (effect < 2) 2000f else if (effect == 2) 5000f else 250f)
@@ -2997,7 +2205,11 @@ class MainActivity : AppCompatActivity() {
                     if (effect < 2) 0.94f else if (effect == 2) 1f else 10000f)
                 else -> value.toFloat().coerceIn(-12f, 12f)
             }
-            entry.put("param${parameter + 1}", normalized.toDouble())
+            entries[nativeIndex] = when (parameter) {
+                0 -> entry.copy(param1 = normalized)
+                1 -> entry.copy(param2 = normalized)
+                else -> entry.copy(param3 = normalized)
+            }
             persistFxNativeChain(entries)
             audioEngine.nativeSetFxNativeParameter(nativeIndex, parameter, normalized)
         }
@@ -3007,10 +2219,12 @@ class MainActivity : AppCompatActivity() {
             val entry = entries.getOrNull(nativeIndex) ?: return
             val wasRunning = audioEngine.nativeIsRunning()
             val selected = effect.coerceIn(0, 3)
-            entry.put("effect", selected)
-            entry.put("param1", when (selected) { 0, 1 -> 350.0; 2 -> 1500.0; else -> 150.0 })
-            entry.put("param2", when (selected) { 0, 1 -> 0.35; 2 -> 0.5; else -> 5000.0 })
-            entry.put("param3", 12.0)
+            entries[nativeIndex] = entry.copy(
+                effect = selected,
+                param1 = when (selected) { 0, 1 -> 350f; 2 -> 1500f; else -> 150f },
+                param2 = when (selected) { 0, 1 -> 0.35f; 2 -> 0.5f; else -> 5000f },
+                param3 = 12f,
+            )
             persistFxNativeChain(entries)
             syncFxNativeChain(entries, reset = true)
             if (wasRunning) audioEngine.nativeStart()
@@ -3183,12 +2397,12 @@ class MainActivity : AppCompatActivity() {
                     audioEngine.nativeSetImpulseResponsePosition(cabinetPosition)
                     for (slot in 0 until 8) audioEngine.nativeClearFxImpulseResponse(slot)
                     reorderedFx.forEachIndexed { slot, item ->
-                        val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, item.optString("path"))
+                        val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, item.path)
                         if (!loaded.startsWith("FX LOADED")) return false
-                        item.put("position", fxPositions[requestedFxIndices.getOrNull(slot)] ?: reordered.size)
-                        audioEngine.nativeSetFxImpulseResponseBypass(slot, item.optBoolean("bypass", false))
-                        audioEngine.nativeSetFxImpulseResponseMix(slot, item.optDouble("mix", 0.5).toFloat())
-                        audioEngine.nativeSetFxImpulseResponsePosition(slot, item.optInt("position").coerceIn(0, reordered.size))
+                        reorderedFx[slot] = item.copy(position = fxPositions[requestedFxIndices.getOrNull(slot)] ?: reordered.size)
+                        audioEngine.nativeSetFxImpulseResponseBypass(slot, item.bypass)
+                        audioEngine.nativeSetFxImpulseResponseMix(slot, item.mix)
+                        audioEngine.nativeSetFxImpulseResponsePosition(slot, item.position.coerceIn(0, reordered.size))
                     }
                     persistFxChain(reorderedFx)
                     val audio = if (wasRunning && (reordered.isNotEmpty() || reorderedFx.isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null)) audioEngine.nativeStart() else ""
@@ -3216,7 +2430,7 @@ class MainActivity : AppCompatActivity() {
                 audioEngine.nativeClearNamChain()
                 audioEngine.nativeClearImpulseResponse()
                 for (slot in 0 until 8) audioEngine.nativeClearFxImpulseResponse(slot)
-                clearPersistedModel()
+                activeToneRepository.clear()
                 persistExtraNamChain(emptyList())
                 audioEngine.nativeSetEqLowDb(0.0f)
                 audioEngine.nativeSetEqMidDb(0.0f)
@@ -4227,7 +3441,7 @@ class MainActivity : AppCompatActivity() {
 
         if (!file.exists()) {
 
-            clearPersistedModel()
+            activeToneRepository.clear()
 
             status.text =
                 "Saved model file no longer exists."
@@ -4294,12 +3508,12 @@ class MainActivity : AppCompatActivity() {
                         for (band in 0 until 6) audioEngine.nativeSetImpulseResponseEqDb(band, prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + band, 0.0f))
                     }
                     readFxChain().forEachIndexed { slot, fx ->
-                        val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, fx.optString("path"))
+                        val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, fx.path)
                         if (loaded.startsWith("FX LOADED")) {
-                            audioEngine.nativeSetFxImpulseResponseBypass(slot, fx.optBoolean("bypass", false))
-                            audioEngine.nativeSetFxImpulseResponseMix(slot, fx.optDouble("mix", 0.5).toFloat())
+                            audioEngine.nativeSetFxImpulseResponseBypass(slot, fx.bypass)
+                            audioEngine.nativeSetFxImpulseResponseMix(slot, fx.mix)
                             val namCount = audioEngine.nativeGetNamBlockCount()
-                            audioEngine.nativeSetFxImpulseResponsePosition(slot, fx.optInt("position", namCount).coerceIn(0, namCount))
+                            audioEngine.nativeSetFxImpulseResponsePosition(slot, fx.position.coerceIn(0, namCount))
                         }
                     }
                     restored
@@ -4428,127 +3642,55 @@ class MainActivity : AppCompatActivity() {
             false
 
 
-        val verifier =
-            randomBase64Url(
-                32
-            )
-
-
-        val challenge =
-            sha256Base64Url(
-                verifier
-            )
-
-
-        val state =
-            randomBase64Url(
-                16
-            )
-
-
         prefs
             .edit()
             .putString(
                 PREF_PENDING_IMPORT_MODE,
                 importMode
             )
-            .putString(
-                PREF_VERIFIER,
-                verifier
-            )
-            .putString(
-                PREF_STATE,
-                state
-            )
             .apply()
 
 
         val selectedModuleType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
         prefs.edit().putString(PREF_PENDING_TONE_TYPE, selectedModuleType).apply()
-        val gears = when (selectedModuleType) {
-            "PEDAL" -> "pedal"
-            "FX" -> "space"
-            "IR" -> "cab"
-            else -> "amp-cab_amp"
-        }
-        val uri =
-            Uri.parse(
-                AUTHORIZE_URL
-            )
-                .buildUpon()
-
-                .appendQueryParameter(
-                    "client_id",
-                    PUBLISHABLE_KEY
-                )
-
-                .appendQueryParameter(
-                    "redirect_uri",
-                    REDIRECT_URI
-                )
-
-                .appendQueryParameter(
-                    "response_type",
-                    "code"
-                )
-
-                .appendQueryParameter(
-                    "code_challenge",
-                    challenge
-                )
-
-                .appendQueryParameter(
-                    "code_challenge_method",
-                    "S256"
-                )
-
-                .appendQueryParameter(
-                    "state",
-                    state
-                )
-
-                .appendQueryParameter(
-                    "prompt",
-                    "select_tone"
-                )
-
-                .appendQueryParameter(
-                    "format",
-                    if (selectedModuleType == "IR" || selectedModuleType == "FX") "ir" else "nam"
-                )
-                .appendQueryParameter("gears", gears)
-                .apply {
-                    if (selectedModuleType != "IR" && selectedModuleType != "FX") {
-                        appendQueryParameter("architecture", "2")
-                    }
+        lifecycleScope.launch {
+            try {
+                val authorization = withContext(Dispatchers.IO) {
+                    prepareToneAuthorizationUseCase.execute()
                 }
+                val gears = when (selectedModuleType) {
+                    "PEDAL" -> "pedal"
+                    "FX" -> "space"
+                    "IR" -> "cab"
+                    else -> "amp-cab_amp"
+                }
+                val uri = Uri.parse(AUTHORIZE_URL).buildUpon()
+                    .appendQueryParameter("client_id", PUBLISHABLE_KEY)
+                    .appendQueryParameter("redirect_uri", REDIRECT_URI)
+                    .appendQueryParameter("response_type", "code")
+                    .appendQueryParameter("code_challenge", authorization.codeChallenge)
+                    .appendQueryParameter("code_challenge_method", "S256")
+                    .appendQueryParameter("state", authorization.state)
+                    .appendQueryParameter("prompt", "select_tone")
+                    .appendQueryParameter("format", if (selectedModuleType == "IR" || selectedModuleType == "FX") "ir" else "nam")
+                    .appendQueryParameter("gears", gears)
+                    .apply {
+                        if (selectedModuleType != "IR" && selectedModuleType != "FX") {
+                            appendQueryParameter("architecture", "2")
+                        }
+                    }
+                    .appendQueryParameter("menubar", "true")
+                    .appendQueryParameter("preview", "true")
+                    .build()
 
-                .appendQueryParameter(
-                    "menubar",
-                    "true"
-                )
-
-                .appendQueryParameter(
-                    "preview",
-                    "true"
-                )
-
-                .build()
-
-
-        status.text =
-            "Opening TONE3000...\n\n" +
-                    "Current model preserved until a new capture is loaded."
-
-
-        CustomTabsIntent
-            .Builder()
-            .setShowTitle(true)
-            .build()
-            .launchUrl(
-                this,
-                uri
-            )
+                status.text = "Opening TONE3000...\n\nCurrent model preserved until a new capture is loaded."
+                CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(this@MainActivity, uri)
+            } catch (error: Exception) {
+                Log.e(API_TAG, "Could not prepare TONE3000 authorization", error)
+                status.text = "Could not open TONE3000.\n${error.message}"
+                restoreCurrentModelAvailability("TONE3000 authorization setup failed.")
+            }
+        }
     }
 
     // ========================================================
@@ -4620,47 +3762,12 @@ class MainActivity : AppCompatActivity() {
             )
 
 
-        val storedState =
-            prefs.getString(
-                PREF_STATE,
-                null
-            )
-
-
-        val verifier =
-            prefs.getString(
-                PREF_VERIFIER,
-                null
-            )
-
-
-        if (
-            returnedState == null ||
-            returnedState != storedState
-        ) {
-
-            restoreCurrentModelAvailability(
-                "OAuth state mismatch."
-            )
-
-            return
-        }
-
-
         if (
             canceled &&
             toneId == null
         ) {
 
-            prefs
-                .edit()
-                .remove(
-                    PREF_STATE
-                )
-                .remove(
-                    PREF_VERIFIER
-                )
-                .apply()
+            lifecycleScope.launch(Dispatchers.IO) { toneSessionRepository.clearPendingAuthorization() }
 
             restoreCurrentModelAvailability(
                 "TONE3000 selection canceled."
@@ -4670,13 +3777,10 @@ class MainActivity : AppCompatActivity() {
         }
 
 
-        if (
-            code == null ||
-            verifier == null
-        ) {
+        if (code == null) {
 
             restoreCurrentModelAvailability(
-                "OAuth callback sem code/verifier."
+                "OAuth callback sem code."
             )
 
             return
@@ -4718,48 +3822,25 @@ class MainActivity : AppCompatActivity() {
                 )
 
 
-                val tokenResponse = tone3000ApiRepository.exchangeAuthorizationCode(code, verifier)
-                prefs.edit()
-                    .putString(PREF_ACCESS_TOKEN, tokenResponse.accessToken)
-                    .putString(PREF_REFRESH_TOKEN, tokenResponse.refreshToken)
-                    .apply()
-                val token = tokenResponse.accessToken
-
-
-                prefs
-                    .edit()
-                    .remove(
-                        PREF_STATE
-                    )
-                    .remove(
-                        PREF_VERIFIER
-                    )
-                    .apply()
-
-
-                stage(
-                    "2/3 - FETCHING TONE..."
-                )
-
-
                 val selectedType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
                 prefs.edit()
                     .putString(PREF_SELECTED_ADD_TYPE, selectedType)
                     .putString(PREF_PENDING_TONE_TYPE, selectedType)
                     .apply()
-                val architecture = if (selectedType == "IR" || selectedType == "FX") null else 2
-                val tone = tone3000ApiRepository.getTone(toneId, token, architecture)
-
-
-                stage(if (architecture == null) "3/3 - FETCHING IMPULSE RESPONSE..." else "3/3 - FETCHING A2 CAPTURES...")
-
-
-                val models =
-                    tone3000ApiRepository.listModels(
-                        toneId,
-                        token,
-                        architecture
+                val selection = runBlocking {
+                    completeToneSelectionUseCase.execute(
+                        code = code,
+                        returnedState = returnedState,
+                        toneId = toneId,
+                        moduleType = selectedType,
+                        onProgress = ::stage,
                     )
+                }
+                val token = selection.token.accessToken
+                val tone = selection.tone
+                val models = selection.models
+                runBlocking { tonePackageCaptureRepository.save(toneId, selectedType, models) }
+                val architecture = if (selection.moduleType == "IR" || selection.moduleType == "FX") null else 2
 
 
                 Log.i(
@@ -4869,61 +3950,6 @@ class MainActivity : AppCompatActivity() {
     )
 
 
-    private fun packageCaptureCacheKey(toneId: String, moduleType: String): String {
-        val kind = when (moduleType.uppercase(Locale.US)) {
-            "FX" -> "FX"
-            "IR" -> "IR"
-            else -> "NAM"
-        }
-        return "package_capture_cache_${kind}_$toneId"
-    }
-
-    private fun cachePackageCaptures(toneId: String, moduleType: String, models: List<OnlineModel>) {
-        if (toneId.isBlank() || models.isEmpty()) return
-        val json = JSONArray()
-        models.distinctBy { it.id }.forEach { model ->
-            json.put(
-                JSONObject()
-                    .put("id", model.id)
-                    .put("name", model.name)
-                    .put("size", model.size)
-                    .put("modelUrl", model.modelUrl)
-            )
-        }
-        prefs.edit().putString(packageCaptureCacheKey(toneId, moduleType), json.toString()).apply()
-    }
-
-    private fun readCachedPackageCaptures(toneId: String, moduleType: String): List<OnlineModel> {
-        val json = prefs.getString(packageCaptureCacheKey(toneId, moduleType), null) ?: return emptyList()
-        return try {
-            val array = JSONArray(json)
-            (0 until array.length()).mapNotNull { index ->
-                val item = array.optJSONObject(index) ?: return@mapNotNull null
-                val id = item.optLong("id", 0L)
-                val modelUrl = item.optString("modelUrl").takeIf(String::isNotBlank)
-                    ?: return@mapNotNull null
-                OnlineModel(
-                    id = id,
-                    name = item.optString("name", "capture-$id"),
-                    size = item.optString("size", "custom"),
-                    modelUrl = modelUrl
-                )
-            }.distinctBy { it.id }
-        } catch (error: Exception) {
-            Log.w(API_TAG, "Ignoring invalid cached capture list for tone $toneId", error)
-            emptyList()
-        }
-    }
-
-    private fun mergePackageCaptures(toneId: String, moduleType: String, freshModels: List<OnlineModel>): List<OnlineModel> {
-        val cachedModels = readCachedPackageCaptures(toneId, moduleType)
-        if (cachedModels.isEmpty()) return freshModels.distinctBy { it.id }
-        val freshById = freshModels.associateBy { it.id }
-        val merged = cachedModels.map { cached -> freshById[cached.id] ?: cached }
-        val cachedIds = cachedModels.mapTo(mutableSetOf()) { it.id }
-        return (merged + freshModels.filterNot { it.id in cachedIds }).distinctBy { it.id }
-    }
-
     // ========================================================
     // MODEL SELECTION
     // ========================================================
@@ -4939,8 +3965,6 @@ class MainActivity : AppCompatActivity() {
         // in-editor selector must offer the same captures as the browser that
         // originally loaded this package, even if a later API query is partial.
         val selectedModuleType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
-        cachePackageCaptures(toneId, selectedModuleType, models)
-
         if (models.isEmpty()) {
 
             restoreCurrentModelAvailability(
@@ -5312,35 +4336,18 @@ class MainActivity : AppCompatActivity() {
                 audioEngine.nativeStop()
 
 
-                pendingFile =
-                    File(
-                        filesDir,
-                        "pending-tone3000-model-${model.id}.nam"
-                    )
-
-
-                if (
-                    pendingFile.exists() &&
-                    !pendingFile.delete()
-                ) {
-
-                    throw RuntimeException(
-                        "Could not clear previous pending model file."
-                    )
-                }
-
-
                 val downloaded =
-                    downloadModel(
+                    downloadToneModelUseCase.execute(
                         model =
                             model,
 
                         token =
                             token,
 
-                        destination =
-                            pendingFile
+                        fileName =
+                            "pending-tone3000-model-${model.id}.nam"
                     )
+                pendingFile = downloaded
 
 
                 if (
@@ -5353,106 +4360,15 @@ class MainActivity : AppCompatActivity() {
                     )
 
 
-                    val committedExtra =
-                        commitExtraDownloadedModel(
-                            pendingFile =
-                                downloaded,
-
-                            modelId =
-                                model.id
-                        )
-
-
-                    pendingFile =
-                        null
-
-
-                    val addResult =
-                        audioEngine.nativeAddChainModel(
-                            committedExtra.absolutePath
-                        )
-
-
-                    if (
-                        !addResult.startsWith(
-                            "CHAIN NAM ADDED"
-                        )
-                    ) {
-
-                        committedExtra.delete()
-
-
-                        throw RuntimeException(
-                            addResult
-                        )
-                    }
-
-                    val addedChainIndex = audioEngine.nativeGetNamBlockCount() - 1
-                    audioEngine.nativeSetChainNamBypass(addedChainIndex, false)
-                    audioEngine.nativeSetChainNamInGainDb(addedChainIndex, 0.0f)
-                    audioEngine.nativeSetChainNamMix(addedChainIndex, 1.0f)
-                    val addedLevelDb = if (moduleType == "PEDAL") -10.0f else -15.0f
-                    audioEngine.nativeSetChainNamGainDb(addedChainIndex, addedLevelDb)
-                    for (band in 0 until 6) {
-                        audioEngine.nativeSetChainNamEqDb(addedChainIndex, band, 0.0f)
-                    }
-                    audioEngine.nativeSetChainNamEqPre(addedChainIndex, false)
-                    audioEngine.nativeSetChainNamNormalize(addedChainIndex, moduleType != "PEDAL")
-                    audioEngine.nativeSetChainNamEqEnabled(addedChainIndex, true)
-                    val addedA2Full = moduleType == "AMP"
-                    audioEngine.nativeSetChainNamQuality(addedChainIndex, addedA2Full)
-
-
-                    val entries =
-                        readExtraNamChain()
-
-
-                    entries.add(
-                        ExtraNamEntry(
-                            toneId =
-                                toneId,
-
-                            toneTitle =
-                                toneTitle,
-
-                            modelId =
-                                model.id,
-
-                            modelName =
-                                model.name,
-
-                            size =
-                                model.size,
-
-                            path =
-                                committedExtra.absolutePath,
-
-                            bypass =
-                                false,
-                            gainDb = addedLevelDb,
-                            inGainDb = 0.0f,
-                            mix = 1.0f,
-                            eqLowDb = 0.0f,
-                            eqMidDb = 0.0f,
-                            eqHighDb = 0.0f,
-                            eqBand3Db = 0.0f,
-                            eqBand4Db = 0.0f,
-                            eqBand5Db = 0.0f,
-                            eqPre = false,
-                            eqEnabled = true,
-                            normalize = moduleType != "PEDAL",
-                            imageUrl = imageUrl,
-                            moduleType = moduleType,
-                            a2Full = addedA2Full
-                        )
+                    val added = addExtraNamCaptureUseCase.execute(
+                        pendingFile = downloaded,
+                        toneId = toneId,
+                        toneTitle = toneTitle,
+                        imageUrl = imageUrl,
+                        model = model,
+                        moduleType = moduleType,
                     )
-
-                    val audioResult = audioEngine.nativeStart()
-
-
-                    persistExtraNamChain(
-                        entries
-                    )
+                    pendingFile = null
 
 
                     prefs
@@ -5477,7 +4393,7 @@ class MainActivity : AppCompatActivity() {
                                     "Tone: $toneTitle\n" +
                                     "Capture: ${model.name}\n" +
                                     "Size: ${model.size.uppercase()}\n\n" +
-                                    addResult + "\n" + audioResult
+                                    added.chainResult + "\n" + added.audioResult
                     }
 
 
@@ -5488,61 +4404,21 @@ class MainActivity : AppCompatActivity() {
                 if (replacementIndex != null && replacementIndex >= 0) {
                     stage("REPLACING NAM BLOCK ${replacementIndex + 1}...\n${model.name}")
 
-                    val entries = readNamChainEntries()
-                    if (replacementIndex !in entries.indices) {
-                        throw RuntimeException("NAM block ${replacementIndex + 1} no longer exists.")
-                    }
-
-                    val previous = entries[replacementIndex]
-                    val committed = commitExtraDownloadedModel(
+                    val replaced = replaceNamCaptureUseCase.execute(
+                        currentEntries = readNamChainEntries(),
+                        replacementIndex = replacementIndex,
                         pendingFile = downloaded,
-                        modelId = model.id
+                        toneId = toneId,
+                        toneTitle = toneTitle,
+                        imageUrl = imageUrl,
+                        model = model,
+                        moduleType = moduleType,
                     )
                     pendingFile = null
 
-                    // Replacing a capture must not reset the block's mixer/EQ
-                    // state. Keep every per-block control and change only the
-                    // capture metadata and file path.
-                    val changedModuleType = moduleType != previous.moduleType
-                    val newModuleGain = if (moduleType == "PEDAL") -10.0f else -15.0f
-                    entries[replacementIndex] = previous.copy(
-                        toneId = toneId,
-                        toneTitle = toneTitle,
-                        modelId = model.id,
-                        modelName = model.name,
-                        size = model.size,
-                        path = committed.absolutePath,
-                        imageUrl = imageUrl,
-                        // A replacement can intentionally change the NAM
-                        // role (AMP <-> PEDAL). Do not keep the old visual
-                        // type or A2 quality setting with the new capture.
-                        moduleType = moduleType,
-                        a2Full = moduleType == "AMP",
-                        gainDb = if (changedModuleType) newModuleGain else previous.gainDb,
-                        inGainDb = if (changedModuleType) 0.0f else previous.inGainDb,
-                        mix = if (changedModuleType) 1.0f else previous.mix,
-                        eqLowDb = if (changedModuleType) 0.0f else previous.eqLowDb,
-                        eqMidDb = if (changedModuleType) 0.0f else previous.eqMidDb,
-                        eqHighDb = if (changedModuleType) 0.0f else previous.eqHighDb,
-                        eqBand3Db = if (changedModuleType) 0.0f else previous.eqBand3Db,
-                        eqBand4Db = if (changedModuleType) 0.0f else previous.eqBand4Db,
-                        eqBand5Db = if (changedModuleType) 0.0f else previous.eqBand5Db,
-                        eqPre = if (changedModuleType) false else previous.eqPre,
-                        eqEnabled = if (changedModuleType) true else previous.eqEnabled,
-                        normalize = if (changedModuleType) moduleType != "PEDAL" else previous.normalize
-                    )
-
-                    val replaceResult = rebuildNativeNamChain(entries)
-                    if (!replaceResult.startsWith("NAM CHAIN READY")) {
-                        committed.delete()
-                        throw RuntimeException(replaceResult)
-                    }
-
-                    val audioResult = audioEngine.nativeStart()
-
-                    persistNamChainEntries(entries)
-                    if (previous.path != committed.absolutePath) {
-                        File(previous.path).delete()
+                    persistNamChainEntries(replaced.entries)
+                    if (replaced.previousPath != replaced.replacement.path) {
+                        File(replaced.previousPath).delete()
                     }
 
                     prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
@@ -5553,120 +4429,38 @@ class MainActivity : AppCompatActivity() {
                                 "Tone: $toneTitle\n" +
                                 "Capture: ${model.name}\n" +
                                 "Size: ${model.size.uppercase()}\n\n" +
-                                replaceResult + "\n" + audioResult
+                                replaced.rebuildResult + "\n" + replaced.audioResult
                     }
 
                     return@Thread
                 }
 
 
-                stage(
-                    "LOADING CAPTURE...\n${model.name}"
-                )
-
-
-                val loadResult =
-                    audioEngine.nativeLoadModel(
-                        downloaded.absolutePath
-                    )
-
-
-                if (
-                    !loadResult.startsWith(
-                        "MODEL LOADED"
-                    )
-                ) {
-
-                    throw RuntimeException(
-                        "NAM rejected the selected capture:\n" +
-                                loadResult
-                    )
-                }
-
-                if (moduleType == "PEDAL") {
-                    audioEngine.nativeSetChainNamGainDb(0, -10.0f)
-                    audioEngine.nativeSetChainNamInGainDb(0, 0.0f)
-                    audioEngine.nativeSetChainNamMix(0, 1.0f)
-                    for (band in 0 until 6) audioEngine.nativeSetChainNamEqDb(0, band, 0.0f)
-                    audioEngine.nativeSetChainNamEqPre(0, false)
-                    audioEngine.nativeSetChainNamEqEnabled(0, true)
-                    audioEngine.nativeSetChainNamNormalize(0, false)
-                }
-                audioEngine.nativeSetChainNamQuality(0, moduleType == "AMP")
-                val audioResult = audioEngine.nativeStart()
-
-
-                /*
-                 * The new DSP is valid at this point.
-                 *
-                 * Only now replace current-tone3000-model.nam.
-                 * Until this moment the previous file remained untouched.
-                 */
-                val committedFile =
-                    commitDownloadedModel(
-                        downloaded
-                    )
-
-
-                persistModel(
-                    toneId =
-                        toneId,
-
-                    toneTitle =
-                        toneTitle,
-
-                    model =
-                        model,
-
+                stage("LOADING CAPTURE...\n${model.name}")
+                val loadedCapture = loadPrimaryToneCaptureUseCase.execute(
+                    toneId = toneId,
+                    toneTitle = toneTitle,
+                    model = model,
                     moduleType = moduleType,
-
-                    file =
-                        committedFile
+                    downloadedFile = downloaded,
                 )
+                pendingFile = null
+                val loadResult = loadedCapture.loadResult
+                val audioResult = loadedCapture.audioResult
 
-
-                prefs
-                    .edit()
-                    .remove(
-                        PREF_PENDING_IMPORT_MODE
-                    )
-                    .apply()
-
-
-                pendingFile =
-                    null
-
+                prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
 
                 runOnUiThread {
-
-                    startButton.isEnabled =
-                        true
-
-
-                    currentModelText.text =
-                        "Tone: $toneTitle\n" +
-                                "Capture: ${model.name}\n" +
-                                "Size: ${model.size.uppercase()}\n" +
-                                "Model ID: ${model.id}\n"
-
-
-                    bypass =
-                        false
-
-
-                    audioEngine.nativeSetBypass(
-                        false
-                    )
-
-
+                    startButton.isEnabled = true
+                    currentModelText.text = "Tone: $toneTitle\n" +
+                        "Capture: ${model.name}\n" +
+                        "Size: ${model.size.uppercase()}\n" +
+                        "Model ID: ${model.id}\n"
+                    bypass = false
+                    audioEngine.nativeSetBypass(false)
                     updateBypassButton()
-
-
-                    status.text =
-                        "TONE3000 CAPTURE READY\n\n" +
-                                loadResult + "\n" + audioResult
+                    status.text = "TONE3000 CAPTURE READY\n\n$loadResult\n$audioResult"
                 }
-
 
             } catch (
                 e: Exception
@@ -5730,231 +4524,6 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    private fun downloadModel(
-        model: OnlineModel,
-        token: String,
-        destination: File
-    ): File {
-
-        if (
-            destination.exists() &&
-            !destination.delete()
-        ) {
-
-            throw RuntimeException(
-                "Could not replace pending download file."
-            )
-        }
-
-
-        var currentUrl =
-            model.modelUrl
-
-
-        repeat(
-            5
-        ) {
-
-            val url =
-                URL(
-                    currentUrl
-                )
-
-
-            val connection =
-                url.openConnection()
-                        as HttpURLConnection
-
-
-            try {
-
-                connection.requestMethod =
-                    "GET"
-
-                connection.instanceFollowRedirects =
-                    false
-
-                connection.connectTimeout =
-                    15_000
-
-                connection.readTimeout =
-                    60_000
-
-
-                connection.setRequestProperty(
-                    "Connection",
-                    "close"
-                )
-
-
-                /*
-                 * Never forward the TONE3000 bearer token to an external
-                 * storage/CDN host after a redirect.
-                 */
-                if (
-                    url.host ==
-                    "www.tone3000.com" ||
-                    url.host ==
-                    "tone3000.com"
-                ) {
-
-                    connection.setRequestProperty(
-                        "Authorization",
-                        "Bearer $token"
-                    )
-                }
-
-
-                val responseCode =
-                    connection.responseCode
-
-
-                Log.i(
-                    API_TAG,
-                    "MODEL DOWNLOAD id=${model.id} HTTP $responseCode"
-                )
-
-
-                if (
-                    responseCode in
-                    300..399
-                ) {
-
-                    val location =
-                        connection.getHeaderField(
-                            "Location"
-                        )
-                            ?: throw RuntimeException(
-                                "Download redirect sem Location."
-                            )
-
-
-                    currentUrl =
-                        URL(
-                            url,
-                            location
-                        ).toString()
-
-
-                    return@repeat
-                }
-
-
-                if (
-                    responseCode !in
-                    200..299
-                ) {
-
-                    val error =
-                        readHttpResponse(
-                            connection,
-                            responseCode
-                        )
-
-
-                    throw RuntimeException(
-                        "Model download failed " +
-                                "HTTP $responseCode\n$error"
-                    )
-                }
-
-
-                connection
-                    .inputStream
-                    .use { input ->
-
-                        destination
-                            .outputStream()
-                            .use { output ->
-
-                                input.copyTo(
-                                    output
-                                )
-                            }
-                    }
-
-
-                if (
-                    destination.length() ==
-                    0L
-                ) {
-
-                    throw RuntimeException(
-                        "Downloaded model is empty."
-                    )
-                }
-
-
-                Log.i(
-                    API_TAG,
-                    "MODEL DOWNLOAD COMPLETE " +
-                            "id=${model.id} " +
-                            "bytes=${destination.length()}"
-                )
-
-
-                return destination
-
-            } finally {
-
-                connection.disconnect()
-            }
-        }
-
-
-        throw RuntimeException(
-            "Too many redirects downloading model."
-        )
-    }
-
-
-    private fun commitDownloadedModel(
-        pendingFile: File
-    ): File {
-
-        val destination =
-            File(
-                filesDir,
-                "current-tone3000-model.nam"
-            )
-
-
-        try {
-
-            Files.move(
-                pendingFile.toPath(),
-                destination.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE
-            )
-
-        } catch (
-            _: AtomicMoveNotSupportedException
-        ) {
-
-            Files.move(
-                pendingFile.toPath(),
-                destination.toPath(),
-                StandardCopyOption.REPLACE_EXISTING
-            )
-        }
-
-
-        if (
-            !destination.exists() ||
-            destination.length() == 0L
-        ) {
-
-            throw RuntimeException(
-                "Failed to commit selected model."
-            )
-        }
-
-
-        return destination
-    }
-
-
     private fun restoreCurrentModelAvailability(
         message: String
     ) {
@@ -5999,244 +4568,14 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    private fun reloadPersistedModelAfterFailedSwitch():
-            Pair<Boolean, String> {
-
-        val path =
-            prefs.getString(
-                PREF_LAST_MODEL_PATH,
-                null
-            )
-                ?: return Pair(
-                    false,
-                    "No persisted model path."
-                )
-
-
-        val file =
-            File(
-                path
-            )
-
-
-        if (!file.exists()) {
-
-            return Pair(
-                false,
-                "Persisted model file does not exist."
-            )
-        }
-
-
-        return try {
-
-            val result =
-                audioEngine.nativeLoadModel(
-                    file.absolutePath
-                )
-
-
-            Pair(
-                result.startsWith(
-                    "MODEL LOADED"
-                ),
-                result
-            )
-
-        } catch (
-            e: Exception
-        ) {
-
-            Pair(
-                false,
-                e.message
-                    ?: e.toString()
-            )
-        }
+    private fun reloadPersistedModelAfterFailedSwitch(): Pair<Boolean, String> {
+        val result = restorePreviousToneModelUseCase.execute()
+        return result.restored to result.details
     }
 
     // ========================================================
     // PERSIST MODEL
     // ========================================================
-
-    private fun persistModel(
-        toneId: String,
-        toneTitle: String,
-        model: OnlineModel,
-        moduleType: String,
-        file: File
-    ) {
-
-        prefs
-            .edit()
-
-            .putString(
-                PREF_LAST_MODEL_PATH,
-                file.absolutePath
-            )
-
-            .putString(
-                PREF_LAST_MODEL_NAME,
-                model.name
-            )
-
-            .putString(
-                PREF_LAST_MODEL_SIZE,
-                model.size
-            )
-
-            .putString(
-                PREF_LAST_MODEL_TYPE,
-                moduleType
-            )
-
-            .putString(
-                PREF_LAST_TONE_ID,
-                toneId
-            )
-
-            .putString(
-                PREF_LAST_TONE_TITLE,
-                toneTitle
-            )
-
-            .putFloat(PREF_NAM_GAIN_DB, if (moduleType == "PEDAL") -10.0f else -15.0f)
-            .putFloat(PREF_NAM_IN_GAIN_DB, 0.0f)
-            .putFloat(PREF_NAM_MIX, 1.0f)
-            .putFloat(PREF_NAM_EQ_LOW_DB, 0.0f)
-            .putFloat(PREF_NAM_EQ_MID_DB, 0.0f)
-            .putFloat(PREF_NAM_EQ_HIGH_DB, 0.0f)
-            .putFloat(PREF_NAM_EQ_BAND3_DB, 0.0f)
-            .putFloat(PREF_NAM_EQ_BAND4_DB, 0.0f)
-            .putFloat(PREF_NAM_EQ_BAND5_DB, 0.0f)
-            .putBoolean(PREF_NAM_EQ_PRE, false)
-            .putBoolean(PREF_NAM_EQ_ENABLED, true)
-            .putBoolean(PREF_NAM_NORMALIZE, moduleType != "PEDAL")
-            .putBoolean(PREF_NAM_A2_FULL, moduleType == "AMP")
-
-            .apply()
-    }
-
-
-    private fun clearPersistedModel() {
-
-        prefs
-            .edit()
-
-            .remove(
-                PREF_LAST_MODEL_PATH
-            )
-
-            .remove(
-                PREF_LAST_MODEL_NAME
-            )
-
-            .remove(
-                PREF_LAST_MODEL_SIZE
-            )
-
-            .remove(
-                PREF_LAST_TONE_ID
-            )
-
-            .remove(
-                PREF_LAST_TONE_TITLE
-            )
-
-            .apply()
-    }
-
-
-    // ========================================================
-    // PKCE
-    // ========================================================
-
-    private fun randomBase64Url(
-        bytes: Int
-    ): String {
-
-        val data =
-            ByteArray(
-                bytes
-            )
-
-
-        SecureRandom()
-            .nextBytes(
-                data
-            )
-
-
-        return Base64.encodeToString(
-            data,
-            Base64.URL_SAFE or
-                    Base64.NO_WRAP or
-                    Base64.NO_PADDING
-        )
-    }
-
-
-    private fun sha256Base64Url(
-        value: String
-    ): String {
-
-        val digest =
-            MessageDigest
-                .getInstance(
-                    "SHA-256"
-                )
-                .digest(
-                    value.toByteArray(
-                        StandardCharsets.UTF_8
-                    )
-                )
-
-
-        return Base64.encodeToString(
-            digest,
-            Base64.URL_SAFE or
-                    Base64.NO_WRAP or
-                    Base64.NO_PADDING
-        )
-    }
-
-
-    // ========================================================
-    // HTTP
-    // ========================================================
-
-    private fun readHttpResponse(
-        connection: HttpURLConnection,
-        responseCode: Int
-    ): String {
-
-        val stream =
-            if (
-                responseCode in
-                200..299
-            ) {
-
-                connection.inputStream
-
-            } else {
-
-                connection.errorStream
-            }
-
-
-        if (stream == null) {
-            return ""
-        }
-
-
-        return stream
-            .bufferedReader()
-            .use {
-
-                it.readText()
-            }
-    }
-
 
     // ========================================================
     // UI STATE

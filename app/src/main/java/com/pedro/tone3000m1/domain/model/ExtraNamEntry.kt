@@ -1,4 +1,4 @@
-package com.pedro.tone3000m1.data.model
+package com.pedro.tone3000m1.domain.model
 
 /**
  * Persisted signal-chain entry.
