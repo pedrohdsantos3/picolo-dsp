@@ -1,105 +1,95 @@
-# Tone3000M1
+# PicoloDSP
 
-Aplicativo Android experimental para processamento NAM em tempo real usando uma
-interface de áudio USB. O backend atual acessa a interface diretamente com
-TinyALSA.
+PicoloDSP is an experimental native Android audio project written in Kotlin
+and C++. It combines NAM models with guitar effects processing and external
+audio hardware.
 
-## Importante antes de publicar
+The original motivation was to port the Tone3000 plugin to native Android and
+validate how its experience could work outside a desktop host. As development
+progressed, the idea grew into a **Neural Amp Modeler (NAM)** player, including
+NAM A2 support, integrated with a guitar-effects DSP engine. The app brings
+together a capture browser, NAM blocks, cabinet/IR, pedals, and native effects.
+The audio engine uses TinyALSA and C++; the main UI is native Android, built
+with Jetpack Compose.
 
-> **LEMBRETE DE DOCUMENTAÇÃO:** antes de distribuir o aplicativo, documentar e
-> testar cuidadosamente todos os passos necessários para usar o backend
-> TinyALSA. O público principal inclui músicos sem experiência com Android,
-> ADB, root ou linha de comando; as instruções precisam ser guiadas, visuais e
-> difíceis de executar incorretamente.
+NAM remains mono; FXNative blocks are stereo and run after NAM/CAB. This project
+was built primarily to validate knowledge of Android, C++, and DSP, and is not
+yet a product intended for general use. Real-time performance depends on the
+model, signal chain, audio interface, buffer, drivers, and device firmware.
 
-A documentação final deverá incluir, no mínimo:
+## Running consistently on Android
 
-- lista de aparelhos e versões de Android testados;
-- interfaces USB testadas, cabos/adaptadores OTG e requisitos de alimentação;
-- como preparar o aparelho e conceder as permissões necessárias;
-- como configurar o roteamento de áudio USB exigido pelo TinyALSA;
-- como instalar e ativar, de forma persistente, o componente privilegiado que
-  aplica `SCHED_FIFO` à thread `Tone3000Audio`;
-- verificação automática de TinyALSA, interface USB, canais, sample rate e
-  `SCHED_FIFO` antes de liberar o botão de iniciar;
-- mensagens claras de correção para cada falha, sem exigir leitura do Logcat;
-- procedimento de recuperação e desinstalação que restaure as configurações do
-  aparelho;
-- um instalador guiado ou preparação de aparelho em uma única etapa, evitando
-  que o usuário precise digitar comandos manualmente;
-- aviso explícito de que o modo ao vivo só deve ser usado depois que o teste de
-  estabilidade e xruns for aprovado.
+The app can start without root, but direct USB audio access and thread priority
+may be restricted by some firmware. For live TinyALSA use, the currently tested
+setup uses a rooted Android device with a persistent Magisk service (or an
+equivalent `init` integration on `userdebug` firmware). The companion prepares
+the EVO4 ALSA nodes, disables Android's automatic USB audio routing, and applies
+`SCHED_FIFO:2` to the `Tone3000Audio` thread, periodically checking the setup
+again. It does not pin the thread to a CPU.
 
-Não considerar o fluxo pronto para usuários finais enquanto a preparação ainda
-depender de instruções informais ou comandos não validados.
-
-## Componente root experimental
-
-O script [`root-service/tone3000-root-service.sh`](root-service/tone3000-root-service.sh)
-é um protótipo do componente privilegiado persistente. Ele:
-
-- identifica a EVO4 em `/proc/asound/cards` e libera somente seus nós PCM e de
-  controle;
-- desativa o roteamento USB automático do Android, evitando que o AudioFlinger
-  dispute a interface com o TinyALSA;
-- detecta o processo `com.pedro.tone3000m1` e aplica `SCHED_FIFO:2` somente à
-  thread `Tone3000Audio`;
-- reaplica a configuração quando o app reinicia ou a interface USB reconecta;
-- oferece `once`, `status` e `stop` para instalação e diagnóstico.
-
-O script deve ser executado por um gerenciador root como serviço de boot. O
-módulo Magisk abaixo automatiza essa inicialização, mas ainda não é um fluxo
-guiado adequado para usuários finais.
-
-Alguns firmwares Samsung também bloqueiam o acesso por SELinux. O modo
-permissivo pode ser habilitado explicitamente com
-`TONE3000_SELINUX_PERMISSIVE=1`, mas isso reduz a segurança de todo o aparelho e
-serve somente para desenvolvimento. A versão distribuível deverá usar uma
-política SELinux mínima e específica, sem colocar o sistema inteiro em modo
-permissivo.
-
-### Módulo Magisk
-
-Gere o pacote instalável com:
+Build the Magisk module with:
 
 ```bash
 ./root-service/build-magisk-module.sh
 ```
 
-O arquivo `Tone3000-Root-Companion-v0.1.0.zip` pode ser instalado pelo Magisk.
-Após reiniciar, o `service.sh` mantém o companion ativo. A desinstalação encerra
-o serviço e restaura o roteamento USB automático do Android.
+Install the generated ZIP through Magisk and reboot. The companion script is
+[`root-service/tone3000-root-service.sh`](root-service/tone3000-root-service.sh);
+experimental methods for `userdebug` firmware are in [`root-service/`](root-service/).
 
-ADB root de builds `userdebug` não equivale a Magisk: ele permite executar o
-serviço durante a sessão, mas não oferece necessariamente um mecanismo de boot
-persistente. Nesses aparelhos é preciso instalar Magisk ou integrar uma unidade
-`init` assinada ao firmware.
-
-Para firmwares `userdebug` que aceitam `adb remount`, a integração experimental
-ao `init` pode ser instalada com:
-
-```bash
-./root-service/install-adb-userdebug.sh SERIAL_ADB
-```
-
-Esse método altera a imagem/overlay de `/system`, ativa SELinux permissivo e
-exige reiniciar o Android. Remova com
-`./root-service/uninstall-adb-userdebug.sh SERIAL_ADB` antes de atualizar ou
-restaurar o firmware.
+**Security warning:** the current `service.sh` starts the companion with SELinux
+permissive, weakening security for the entire system. This is a development
+workaround and is not recommended for daily use or distribution. Root/Magisk,
+firmware changes, USB routing, and ALSA permissions require care. Review the
+scripts and understand how to remove the module before proceeding. Validate
+stability with the actual interface, measuring xruns, latency, and artifacts.
 
 ## Build
 
-### Frontend oficial adaptado
+Requirements: Android Studio/SDK, the NDK and CMake configured for this project,
+a JDK compatible with the Gradle Wrapper, and Git with submodule support.
 
-A pasta `ui/` contém a árvore React/TypeScript do frontend oficial do
-TONE3000, mantida sob MIT (`ui/TONE3000-PLUGIN-LICENSE`). O bridge JUCE foi
-substituído por `ui/src/backend/AndroidBackend.ts`, que traduz o estado e os
-controles da cadeia para `Tone3000Android`; o backend de áudio continua sendo o
-TinyALSA/NAM deste aplicativo. A UI legada permanece como fallback enquanto a
-adaptação dos recursos JUCE sem equivalente Android (OAuth, MIDI e stereo) é
-concluída.
+```bash
+git submodule update --init --recursive
+./gradlew :app:assembleDebug
+```
 
-Para validar o bundle sem alterar o APK:
+The debug APK is generated at `app/build/outputs/apk/debug/app-debug.apk`.
+
+## Root service and Magisk
+
+The service in [`root-service/tone3000-root-service.sh`](root-service/tone3000-root-service.sh)
+is experimental. It looks for an Audient EVO4 in `/proc/asound/cards`, prepares
+the ALSA audio nodes, disables Android's automatic USB routing, and applies
+`SCHED_FIFO:2` only to the `Tone3000Audio` thread in the
+`com.pedro.tone3000m1` process. It checks again every second; the `once`,
+`status`, and `stop` commands are available for manual operation and
+diagnostics.
+
+Generate the persistent companion ZIP with
+`./root-service/build-magisk-module.sh` and install it through Magisk. The
+current startup script sets `TONE3000_SELINUX_PERMISSIVE=1`, disabling SELinux
+protection system-wide. This is a temporary development compromise and a real
+security risk. Do not distribute or use the module as a daily setup without
+replacing this with a minimal, device-specific SELinux policy.
+
+On `userdebug` firmware,
+`root-service/install-adb-userdebug.sh SERIAL_ADB` provides an experimental
+`init` integration. It modifies `/system` or its overlay, requires a reboot,
+and also enables permissive SELinux. Remove it with
+`root-service/uninstall-adb-userdebug.sh`. ADB root for a single session is not
+by itself a persistent boot service.
+
+## Optional web frontend
+
+The `ui/` directory contains the React/TypeScript tree of the official TONE3000
+frontend, under MIT (`ui/TONE3000-PLUGIN-LICENSE`). Its JUCE bridge was replaced
+by `ui/src/backend/AndroidBackend.ts`, which maps state and chain controls to
+`Tone3000Android`; the audio backend remains this app's TinyALSA/NAM engine.
+The legacy UI remains as a fallback while adapting JUCE features without direct
+Android equivalents, such as OAuth, MIDI, and stereo.
+
+To build the bundle without changing the APK:
 
 ```bash
 cd ui
@@ -107,79 +97,60 @@ npm install --no-audit --no-fund
 npm run build
 ```
 
-As dependências e o código importados continuam sujeitos às licenças próprias;
-o aviso MIT do frontend oficial deve acompanhar qualquer distribuição.
+Imported code and dependencies remain subject to their own licenses. Include
+the official frontend's MIT notice with any distribution.
 
-## Arquitetura da cadeia de sinal
+## Signal-chain architecture
 
-O estado exposto pela interface contém `signalChain`, uma lista ordenada de
-blocos tipados (`NAM` e `CABINET_IR`). A posição do Cabinet é persistida e pode
-ser alterada antes, entre ou depois dos NAMs. Presets salvam a cadeia extra, o
-arquivo do Cabinet e os controles de cada bloco.
+The UI exposes an ordered chain of typed blocks. NAM and Cabinet/IR blocks can
+be moved in the chain; FXNative blocks are processed after the NAM/CAB stages
+and do not make the NAM engine stereo. Presets persist the chain and its
+corresponding controls.
 
-Cada NAM possui In Gain, Mix, Out Gain, normalização, A2 Lite/Full, bypass e EQ
-paramétrico de seis bandas com seleção PRE/POST. O Cabinet possui os mesmos
-controles de ganho/mix, bypass, EQ de seis bandas PRE/POST, remoção e posição na
-cadeia. O processamento nativo aplica exatamente a posição selecionada; não
-há uma convolução global adicional quando o Cabinet está em outro ponto.
+Each NAM has In Gain, Mix, Out Gain, normalization, A2 Lite/Full, bypass, and a
+six-band parametric EQ with PRE/POST selection. The Cabinet has gain/mix
+controls, bypass, a six-band PRE/POST EQ, removal, and chain positioning. The
+native engine honors the selected position; it does not add a global
+convolution when the Cabinet is placed elsewhere in the chain.
 
-#### Pedal, amp e cabinet
+### Guitar blocks and FXNative
 
-O desenho alvo da cadeia separa explicitamente os papéis: haverá um único bloco
-`AMP`, que acessará o browser e carregará um NAM; blocos `IR` continuarão
-acessando o browser, mas aceitarão somente cabinets/impulse responses; e blocos
-`PEDAL` serão processadores DSP nativos, sem executar NAM. Enquanto o backend de
-pedais não estiver pronto, captures classificados como `PEDAL` permanecem em
-modo de compatibilidade e podem usar o caminho NAM existente.
+`AMP` loads NAM models; `CAB/IR` processes cabinet impulse responses; `PEDAL`
+and `FX` provide their respective processors/captures. FXNative offers four
+stereo effects: ChowMatrix Delay, BYOD BBD Delay, BYOD Smooth Reverb, and BYOD
+Shimmer Reverb. The implementation uses ChowDSP DSP modules and adapts the
+processing structures needed by the Android host without bringing in the
+desktop plugin interfaces. Sources and licenses are documented in
+[`app/src/main/cpp/third_party/CHOWDSP_NOTICES.md`](app/src/main/cpp/third_party/CHOWDSP_NOTICES.md).
 
-### Roadmap de DSP para pedais
+Before relying on live use, test with the USB interface connected. Xruns,
+artifacts, and processing time should be measured with the actual hardware and
+intended signal chain.
 
-O roadmap abaixo é intencionalmente separado da implementação atual da cadeia:
+For up to two NAMs, the TinyALSA profile prioritizes 128 frames at 48 kHz (a
+nominal DSP deadline of 2.67 ms) and automatically falls back to 256 frames if
+the interface does not accept the smaller period. Confirm actual latency on
+the hardware, as firmware and drivers may impose larger periods.
 
-1. **Contrato da cadeia:** limitar AMP a um único modelo NAM e manter IR como
-   bloco independente, com browser filtrado por tipo.
-2. **Base nativa:** criar uma interface C++ de processador de pedal, com
-   `prepare`, processamento por bloco, bypass, mix e parâmetros atômicos,
-   integrada ao mesmo thread de áudio TinyALSA.
-3. **Primeiro efeito:** portar um overdrive baseado no ecossistema ChowDSP,
-   começando preferencialmente pelo `chowdsp_wdf` (BSD-3-Clause) e não pelo
-   plugin BYOD completo. O WDF é uma biblioteca C++ header-only de modelagem
-   de circuitos em tempo real: <https://github.com/Chowdhury-DSP/chowdsp_wdf>.
-4. **Controles do pedal:** expor Drive, Tone e Level no card PEDAL, com
-   automação segura para o thread de áudio e presets persistentes.
-5. **Validação:** comparar resposta e CPU contra um capture NAM de referência,
-   medir xruns/latência no SM-G781B + EVO4 e só então substituir o fallback NAM
-   para PEDAL.
-6. **Expansão:** adicionar boost, distortion/fuzz, compressor, wah e modulação
-   usando processadores nativos; avaliar cada licença do `chowdsp_utils` antes
-   de incorporar código, pois os módulos têm licenças diferentes.
+### Reference measurement
 
-O BYOD é uma referência importante de arquitetura — cadeia configurável e
-diversos circuitos de distorção — mas seu código é GPLv3. Não será incorporado
-diretamente sem uma decisão explícita de licenciamento:
-<https://github.com/Chowdhury-DSP/BYOD>.
+During development on a Samsung SM-G781B with an Audient EVO4, two NAMs, and
+the root companion active, one observed measurement was: 128-frame blocks,
+1.126 ms average processing time, 2.123 ms maximum, a 2.667 ms budget, no
+over-budget blocks, and no capture/playback errors. The Magisk service had
+reapplied `SCHED_FIFO:2` to the audio thread.
 
-Antes de aceitar uso ao vivo, validar com a interface USB conectada: ausência
-de captura não é considerada falha de inicialização, mas xruns, artefatos e o
-tempo de processamento devem ser medidos com o hardware real e com a cadeia
-pretendida.
+## Credits
 
-Para até dois NAMs, o perfil TinyALSA prioriza 128 frames a 48 kHz (prazo DSP
-nominal de 2,67 ms) e cai automaticamente para 256 frames se a interface não
-aceitar o período menor. A latência efetiva deve ser confirmada no hardware,
-pois o firmware e o driver podem impor períodos maiores.
+Thanks to **Tone3000** for the original plugin that inspired this project and
+for the capture-browsing experience. PicoloDSP is an independent project and
+does not imply endorsement by Tone3000.
 
-### Medição de referência
+### About me
 
-No Samsung SM-G781B usado no desenvolvimento, com uma Audient EVO4 conectada,
-dois NAMs e o companion root ativo, a medição observada foi: bloco de 128
-frames, processamento médio de 1,126 ms, máximo de 2,123 ms, orçamento de
-2,667 ms, zero blocos acima do orçamento e zero erros de captura/playback. A
-thread recebeu `SCHED_FIFO:2` após o serviço Magisk reaplicá-lo.
+I have been a **programmer and guitarist since my teens**, and I am an
+enthusiast of technology applied to music. The motivation for this project was
+purely to validate my knowledge by bringing together native Android, C++,
+audio processing.
 
-Clone os submódulos e compile com o JDK do Android Studio:
-
-```bash
-git submodule update --init --recursive
-./gradlew :app:assembleDebug
-```
+Contact: [pedrohdsantos3@gmail.com](mailto:pedrohdsantos3@gmail.com)
