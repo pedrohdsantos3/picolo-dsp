@@ -64,7 +64,7 @@ internal data class PicoloUiState(
     val audioIoErrors: Long = 0,
 )
 
-internal fun readPicoloState(json: String, status: String, stats: String): PicoloUiState = try {
+internal fun readPicoloState(json: String, status: String): PicoloUiState = try {
     val root = JSONObject(json)
     val modulesJson = root.optJSONArray("signalChain")
     val modules = buildList {
@@ -116,11 +116,8 @@ internal fun readPicoloState(json: String, status: String, stats: String): Picol
     }
     val cabinetEqJson = root.optJSONArray("cabinetIrEq")
     val cabinetEq = List(6) { index -> cabinetEqJson?.optDouble(index, 0.0)?.toFloat() ?: 0f }
-    fun peakDbFs(key: String): Float? = Regex("(?m)^$key=.*\\((-?[0-9]+(?:\\.[0-9]+)?) dBFS\\)")
-        .find(stats)?.groupValues?.getOrNull(1)?.toFloatOrNull()
     PicoloUiState(
         running = root.optBoolean("running"),
-        inputDbFs = peakDbFs("capturePeak"), outputDbFs = peakDbFs("postEqPeak"),
         bypass = root.optBoolean("bypass"),
         modelName = root.optString("modelName", "No capture loaded"),
         toneTitle = root.optString("toneTitle", ""), activePresetSlot = root.optInt("activePresetSlot", 0),

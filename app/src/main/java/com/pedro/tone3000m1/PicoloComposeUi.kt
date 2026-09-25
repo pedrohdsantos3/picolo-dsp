@@ -4,9 +4,8 @@ import com.pedro.tone3000m1.ui.actions.PicoloActions
 import com.pedro.tone3000m1.ui.model.PicoloUiState
 import com.pedro.tone3000m1.ui.model.UiModule
 import com.pedro.tone3000m1.ui.model.UiPreset
-import com.pedro.tone3000m1.ui.model.readPicoloState
-import com.pedro.tone3000m1.data.model.PicoloStateSnapshot
-import com.pedro.tone3000m1.data.repository.PicoloStateRepository
+import com.pedro.tone3000m1.ui.model.PicoloStateSnapshot
+import com.pedro.tone3000m1.ui.state.PicoloStateRepository
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -116,8 +115,7 @@ internal class PicoloComposeViewModel : ViewModel() {
     }
 
     private fun refresh(snapshot: PicoloStateSnapshot) {
-        val serializedState = snapshot.pluginState
-        val status = snapshot.status
+        val screenState = snapshot.state
         val stats = snapshot.stats
         val blocks = stats.metricLong("blocks")
         val totalProcessNs = stats.metricLong("totalProcessNs")
@@ -134,7 +132,9 @@ internal class PicoloComposeViewModel : ViewModel() {
         if (totalProcessNs != null) previousProcessNs = totalProcessNs
 
         mutableState.update {
-            readPicoloState(serializedState, status, stats).copy(
+            screenState.copy(
+                inputDbFs = stats.metricDbFs("capturePeak"),
+                outputDbFs = stats.metricDbFs("postEqPeak"),
                 processingPercent = livePercent ?: if (!it.running) null else it.processingPercent,
                 processingAvgUs = liveAverageUs ?: if (!it.running) null else it.processingAvgUs,
                 processingMaxUs = (stats.metricFloat("maxProcess") ?: 0f),
@@ -151,6 +151,10 @@ private fun String.metricLong(name: String): Long? =
 
 private fun String.metricFloat(name: String): Float? =
     Regex("(?m)^${Regex.escape(name)}=([0-9]+(?:\\.[0-9]+)?)").find(this)?.groupValues?.getOrNull(1)?.toFloatOrNull()
+
+private fun String.metricDbFs(name: String): Float? =
+    Regex("(?m)^${Regex.escape(name)}=.*\\((-?[0-9]+(?:\\.[0-9]+)?) dBFS\\)")
+        .find(this)?.groupValues?.getOrNull(1)?.toFloatOrNull()
 
 @Composable
 internal fun PicoloComposeApp(

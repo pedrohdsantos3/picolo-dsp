@@ -1,8 +1,8 @@
 package com.pedro.tone3000m1
 
 import com.pedro.tone3000m1.domain.model.ExtraNamEntry
-import com.pedro.tone3000m1.data.model.PicoloStateSnapshot
-import com.pedro.tone3000m1.data.repository.PicoloStateRepository
+import com.pedro.tone3000m1.ui.model.PicoloUiState
+import com.pedro.tone3000m1.ui.state.PicoloStateRepository
 import com.pedro.tone3000m1.domain.engine.PresetAudioEngine
 import com.pedro.tone3000m1.domain.engine.PrimaryToneCaptureEngine
 import com.pedro.tone3000m1.domain.engine.FxImpulseEngine
@@ -169,12 +169,12 @@ class DomainUseCasesTest {
 
     @Test fun picoloStateRepositoryPublishesStateChangesWithoutWaitingForMetricsTick() = runBlocking {
         val repository = PicoloStateRepository(readStats = { "blocks=1" }, intervalMs = 60_000)
-        repository.publish("{\"running\":true}", "Audio active")
+        repository.publish(PicoloUiState(running = true, status = "Audio active"))
         val snapshot = withTimeout(1_000) {
-            repository.observe().first { it.pluginState == "{\"running\":true}" }
+            repository.observe().first { it.state.running }
         }
 
-        assertEquals("Audio active", snapshot.status)
+        assertEquals("Audio active", snapshot.state.status)
         assertEquals("blocks=1", snapshot.stats)
     }
 
