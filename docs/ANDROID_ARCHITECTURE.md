@@ -74,6 +74,9 @@ PicoloActions (contrato tipado)
 - `ImportCabinetImpulseUseCase` coordena o download, normalização WAV, carga no motor e início do áudio. `CabinetImpulseRepositoryImpl` mantém as chaves e defaults legados de cabinet IR.
 - `ui/model/PicoloUiState.kt` mantém os modelos de apresentação e converte o
   snapshot legado para `PicoloUiState` na borda Android, separado dos Composables.
+  `PicoloLegacyStateJsonFactory` concentra a montagem do snapshot JSON fora da
+  Activity; a migração para um assembler que produza diretamente estado tipado
+  segue pendente.
 - `ui/actions/PicoloActions.kt` descreve as ações que a UI pode executar. Os
   Composables dependem desse contrato, sem referenciar a Activity.
 - `PicoloComposeViewModel` mantém estado de UI e coleta snapshots tipados
@@ -85,10 +88,10 @@ PicoloActions (contrato tipado)
 - `PicoloAppContainer` monta o motor, os repositórios e os casos de uso sem
   depender da Activity. `AudioAppController` ainda está declarado dentro dela e
   usa helpers de navegação e importação da Activity.
-- `DataStoreSharedPreferences` mantém compatibilidade síncrona para os
-  repositórios legados enquanto persiste no DataStore. Escritas são aplicadas
-  imediatamente ao cache em memória e serializadas em background; código novo
-  deve preferir APIs suspensas dos repositórios.
+- `DataStoreSharedPreferences` ainda mantém compatibilidade síncrona para
+  repositórios e preferências acessadas pela Activity. Sua remoção pede a
+  migração coordenada desses consumidores para contratos suspensos; ela segue
+  como trabalho pendente e não deve ser tratada como conclusão da migração.
 - `controller/AudioParameterController` concentra os limites, a chamada da
   engine e a persistência dos controles globais de ganho, gate e EQ. A Activity
   fornece callbacks concretos de JNI e preferências; o restante do
@@ -115,6 +118,13 @@ PicoloActions (contrato tipado)
 - `controller/AudioSessionController` prepara os efeitos nativos antes do start,
   coordena start/stop e encaminha mudanças de rota. A Activity fornece apenas
   callbacks de engine, roteamento e status.
+- Reconfigurações completas da cadeia FXNative, start e stop são enfileiradas
+  em um executor serial fora da UI. O JNI pode interromper e aguardar a thread
+  de áudio ao limpar/configurar efeitos; a fila evita concorrência entre edição
+  do grafo e start.
+- `controller/LocalNamImportController` coordena gravação do `.nam`,
+  substituição/inclusão na cadeia, persistência e rebuild. A Activity mantém a
+  leitura do payload JSON recebido pela ponte local e serializa a resposta.
 - `controller/PackageCaptureController` resolve o token e carrega em coroutine
   as captures associadas aos blocos NAM, FX e IR. A Activity resolve os
   metadados locais do bloco e continua responsável por persistir o contexto de
@@ -137,7 +147,7 @@ PicoloActions (contrato tipado)
    também usa um controller próprio, e o movimento de blocos NAM é coordenado
    por um controller testável. Remoção de bloco NAM e add/remove da cadeia FX
    nativa e reordenação mista da cadeia também foram extraídos. Ainda há ações de
-   coordenação de importação e os metadados finais da substituição NAM ainda
+   fluxos de seleção Android e metadados finais de importações remotas ainda
    ficam na borda da Activity.
 3. **Limite JNI:** concluído. `NativeAudioEngine` concentra a carga da
    biblioteca e declarações JNI, e os casos de uso de preset e roteamento usam
@@ -145,14 +155,19 @@ PicoloActions (contrato tipado)
 4. **Estado de tela:** snapshots tipados são publicados após ações e mudanças de
    status; só as métricas contínuas do áudio são consultadas a cada 700 ms. Os
    controles Android auxiliares e a ponte por `TextWatcher` foram removidos.
-   A serialização JSON ainda existe na borda Android para ler o estado legado;
-   o repositório e a ViewModel recebem apenas `PicoloUiState`.
-5. **Preferências:** concluído. DataStore é a fonte ativa para cache de captures,
-   OAuth/PKCE, tipo de módulo, NAM, FX/IR, presets, roteamento, modelo ativo e
-   configurações de áudio. `DataStoreSharedPreferences` preserva temporariamente
-   as chamadas síncronas existentes; novos contratos devem expor APIs suspensas.
-   A migração preenche apenas chaves ausentes e mantém o arquivo legado como
-   backup para recuperação.
+   `PicoloLegacyStateJsonFactory` mantém a serialização de compatibilidade fora
+   da Activity. Trocar o formato intermediário por um assembler de estado
+   tipado continua pendente. O repositório e a ViewModel recebem apenas
+   `PicoloUiState`.
+5. **Preferências:** em andamento. DataStore é a fonte ativa para cache de
+   captures, OAuth/PKCE, tipo de módulo, NAM, FX/IR, presets, roteamento, modelo
+   ativo e configurações de áudio. `DataStoreSharedPreferences` preserva
+   temporariamente as chamadas síncronas existentes e ainda precisa ser
+   substituído por APIs suspensas nos consumidores legados. A migração preenche
+   apenas chaves ausentes e mantém o arquivo legado como backup para recuperação.
+6. **Teste instrumentado em CI:** workflow compila e roda os testes unitários, e
+   executa os instrumentados em um único emulador x86_64. O ABI x86_64 é
+   selecionado apenas pela propriedade `testAbi`; o APK normal mantém arm64-v8a.
 
 Cada etapa deve ser pequena o bastante para preservar o áudio ativo, os
 presets salvos, imports locais e a seleção TONE3000.

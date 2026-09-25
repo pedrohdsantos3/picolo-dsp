@@ -23,7 +23,8 @@ android {
             "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            val testAbi = providers.gradleProperty("testAbi").orNull
+            abiFilters += listOf(testAbi ?: "arm64-v8a")
         }
 
         externalNativeBuild {

@@ -41,8 +41,10 @@ import com.pedro.tone3000m1.controller.FxChainRemovalController
 import com.pedro.tone3000m1.controller.NamChainEditController
 import com.pedro.tone3000m1.controller.SignalChainReorderController
 import com.pedro.tone3000m1.controller.ResetToDefaultController
+import com.pedro.tone3000m1.controller.LocalNamImportController
 import com.pedro.tone3000m1.ui.state.PicoloStateRepository
 import com.pedro.tone3000m1.ui.model.readPicoloState
+import com.pedro.tone3000m1.ui.model.PicoloLegacyStateJsonFactory
 import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
 import com.pedro.tone3000m1.data.repository.ToneImportRepositoryImpl
 import com.pedro.tone3000m1.data.repository.ToneSessionRepositoryImpl
@@ -78,6 +80,8 @@ import com.pedro.tone3000m1.ui.actions.StatePublishingPicoloActions
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -111,114 +115,114 @@ class MainActivity : AppCompatActivity() {
         private const val PREFS =
             "tone3000"
 
-        private const val PREF_LAST_MODEL_PATH =
+        internal const val PREF_LAST_MODEL_PATH =
             PresetPreferenceKeys.LAST_MODEL_PATH
 
-        private const val PREF_LAST_MODEL_NAME =
+        internal const val PREF_LAST_MODEL_NAME =
             PresetPreferenceKeys.LAST_MODEL_NAME
 
-        private const val PREF_LAST_MODEL_SIZE =
+        internal const val PREF_LAST_MODEL_SIZE =
             PresetPreferenceKeys.LAST_MODEL_SIZE
 
-        private const val PREF_LAST_TONE_ID =
+        internal const val PREF_LAST_TONE_ID =
             PresetPreferenceKeys.LAST_TONE_ID
 
-        private const val PREF_LAST_TONE_TITLE =
+        internal const val PREF_LAST_TONE_TITLE =
             PresetPreferenceKeys.LAST_TONE_TITLE
 
-        private const val PREF_LAST_TONE_IMAGE =
+        internal const val PREF_LAST_TONE_IMAGE =
             "last_tone_image"
 
-        private const val PREF_LAST_MODEL_TYPE = PresetPreferenceKeys.LAST_MODEL_TYPE
+        internal const val PREF_LAST_MODEL_TYPE = PresetPreferenceKeys.LAST_MODEL_TYPE
 
-        private const val PREF_CABINET_IR_PATH =
+        internal const val PREF_CABINET_IR_PATH =
             PresetPreferenceKeys.CABINET_IR_PATH
-        private const val PREF_FX_CHAIN = "fx_ir_chain_json"
-        private const val PREF_FX_NATIVE_CHAIN = "fx_native_chain_json"
+        internal const val PREF_FX_CHAIN = "fx_ir_chain_json"
+        internal const val PREF_FX_NATIVE_CHAIN = "fx_native_chain_json"
 
-        private const val PREF_CABINET_IR_IMAGE =
+        internal const val PREF_CABINET_IR_IMAGE =
             "cabinet_ir_image"
 
-        private const val PREF_CABINET_IR_TITLE = PresetPreferenceKeys.CABINET_IR_TITLE
-        private const val PREF_CABINET_IR_TYPE = PresetPreferenceKeys.CABINET_IR_TYPE
-        private const val PREF_CABINET_IR_TONE_ID = PresetPreferenceKeys.CABINET_IR_TONE_ID
+        internal const val PREF_CABINET_IR_TITLE = PresetPreferenceKeys.CABINET_IR_TITLE
+        internal const val PREF_CABINET_IR_TYPE = PresetPreferenceKeys.CABINET_IR_TYPE
+        internal const val PREF_CABINET_IR_TONE_ID = PresetPreferenceKeys.CABINET_IR_TONE_ID
 
-        private const val PREF_CABINET_IR_BYPASS =
+        internal const val PREF_CABINET_IR_BYPASS =
             PresetPreferenceKeys.CABINET_IR_BYPASS
 
-        private const val PREF_CABINET_IR_POSITION =
+        internal const val PREF_CABINET_IR_POSITION =
             PresetPreferenceKeys.CABINET_IR_POSITION
 
-        private const val PREF_CABINET_IR_IN_GAIN = PresetPreferenceKeys.CABINET_IR_IN_GAIN
-        private const val PREF_CABINET_IR_OUT_GAIN = PresetPreferenceKeys.CABINET_IR_OUT_GAIN
-        private const val PREF_CABINET_IR_MIX = PresetPreferenceKeys.CABINET_IR_MIX
-        private const val PREF_CABINET_IR_EQ_PRE = PresetPreferenceKeys.CABINET_IR_EQ_PRE
-        private const val PREF_CABINET_IR_EQ_PREFIX = PresetPreferenceKeys.CABINET_IR_EQ_PREFIX
+        internal const val PREF_CABINET_IR_IN_GAIN = PresetPreferenceKeys.CABINET_IR_IN_GAIN
+        internal const val PREF_CABINET_IR_OUT_GAIN = PresetPreferenceKeys.CABINET_IR_OUT_GAIN
+        internal const val PREF_CABINET_IR_MIX = PresetPreferenceKeys.CABINET_IR_MIX
+        internal const val PREF_CABINET_IR_EQ_PRE = PresetPreferenceKeys.CABINET_IR_EQ_PRE
+        internal const val PREF_CABINET_IR_EQ_PREFIX = PresetPreferenceKeys.CABINET_IR_EQ_PREFIX
 
-        private const val PREF_INPUT_GAIN =
+        internal const val PREF_INPUT_GAIN =
             PresetPreferenceKeys.INPUT_GAIN
 
-        private const val PREF_OUTPUT_GAIN =
+        internal const val PREF_OUTPUT_GAIN =
             PresetPreferenceKeys.OUTPUT_GAIN
 
-        private const val PREF_INPUT_CHANNEL =
+        internal const val PREF_INPUT_CHANNEL =
             PresetPreferenceKeys.INPUT_CHANNEL
 
-        private const val PREF_OUTPUT_PAIR =
+        internal const val PREF_OUTPUT_PAIR =
             PresetPreferenceKeys.OUTPUT_PAIR
 
-        private const val PREF_ACTIVE_PRESET_SLOT = PresetPreferenceKeys.ACTIVE_PRESET_SLOT
+        internal const val PREF_ACTIVE_PRESET_SLOT = PresetPreferenceKeys.ACTIVE_PRESET_SLOT
 
-        private const val PREF_GATE_ENABLED =
+        internal const val PREF_GATE_ENABLED =
             PresetPreferenceKeys.GATE_ENABLED
 
-        private const val PREF_GATE_THRESHOLD =
+        internal const val PREF_GATE_THRESHOLD =
             PresetPreferenceKeys.GATE_THRESHOLD
 
-        private const val PREF_EQ_LOW =
+        internal const val PREF_EQ_LOW =
             PresetPreferenceKeys.EQ_LOW
 
-        private const val PREF_EQ_MID =
+        internal const val PREF_EQ_MID =
             PresetPreferenceKeys.EQ_MID
 
-        private const val PREF_EQ_HIGH =
+        internal const val PREF_EQ_HIGH =
             PresetPreferenceKeys.EQ_HIGH
 
-        private const val PREF_EQ_ENABLED = PresetPreferenceKeys.EQ_ENABLED
+        internal const val PREF_EQ_ENABLED = PresetPreferenceKeys.EQ_ENABLED
 
-        private const val PREF_EXTRA_NAM_CHAIN =
+        internal const val PREF_EXTRA_NAM_CHAIN =
             PresetPreferenceKeys.EXTRA_NAM_CHAIN
 
-        private const val PREF_NAM_GAIN_DB = PresetPreferenceKeys.NAM_GAIN_DB
-        private const val PREF_NAM_IN_GAIN_DB = PresetPreferenceKeys.NAM_IN_GAIN_DB
-        private const val PREF_NAM_MIX = PresetPreferenceKeys.NAM_MIX
-        private const val PREF_NAM_EQ_LOW_DB = PresetPreferenceKeys.NAM_EQ_LOW_DB
-        private const val PREF_NAM_EQ_MID_DB = PresetPreferenceKeys.NAM_EQ_MID_DB
-        private const val PREF_NAM_EQ_HIGH_DB = PresetPreferenceKeys.NAM_EQ_HIGH_DB
-        private const val PREF_NAM_EQ_BAND3_DB = PresetPreferenceKeys.NAM_EQ_BAND3_DB
-        private const val PREF_NAM_EQ_BAND4_DB = PresetPreferenceKeys.NAM_EQ_BAND4_DB
-        private const val PREF_NAM_EQ_BAND5_DB = PresetPreferenceKeys.NAM_EQ_BAND5_DB
-        private const val PREF_NAM_BYPASS = PresetPreferenceKeys.NAM_BYPASS
-        private const val PREF_NAM_EQ_PRE = PresetPreferenceKeys.NAM_EQ_PRE
-        private const val PREF_NAM_EQ_ENABLED = PresetPreferenceKeys.NAM_EQ_ENABLED
-        private const val PREF_CABINET_IR_EQ_ENABLED = PresetPreferenceKeys.CABINET_IR_EQ_ENABLED
-        private const val PREF_NAM_NORMALIZE = PresetPreferenceKeys.NAM_NORMALIZE
-        private const val PREF_NAM_A2_FULL = PresetPreferenceKeys.NAM_A2_FULL
-        private const val PREF_EXPERIMENT_DEFAULTS_APPLIED = "experiment_defaults_applied_v1"
+        internal const val PREF_NAM_GAIN_DB = PresetPreferenceKeys.NAM_GAIN_DB
+        internal const val PREF_NAM_IN_GAIN_DB = PresetPreferenceKeys.NAM_IN_GAIN_DB
+        internal const val PREF_NAM_MIX = PresetPreferenceKeys.NAM_MIX
+        internal const val PREF_NAM_EQ_LOW_DB = PresetPreferenceKeys.NAM_EQ_LOW_DB
+        internal const val PREF_NAM_EQ_MID_DB = PresetPreferenceKeys.NAM_EQ_MID_DB
+        internal const val PREF_NAM_EQ_HIGH_DB = PresetPreferenceKeys.NAM_EQ_HIGH_DB
+        internal const val PREF_NAM_EQ_BAND3_DB = PresetPreferenceKeys.NAM_EQ_BAND3_DB
+        internal const val PREF_NAM_EQ_BAND4_DB = PresetPreferenceKeys.NAM_EQ_BAND4_DB
+        internal const val PREF_NAM_EQ_BAND5_DB = PresetPreferenceKeys.NAM_EQ_BAND5_DB
+        internal const val PREF_NAM_BYPASS = PresetPreferenceKeys.NAM_BYPASS
+        internal const val PREF_NAM_EQ_PRE = PresetPreferenceKeys.NAM_EQ_PRE
+        internal const val PREF_NAM_EQ_ENABLED = PresetPreferenceKeys.NAM_EQ_ENABLED
+        internal const val PREF_CABINET_IR_EQ_ENABLED = PresetPreferenceKeys.CABINET_IR_EQ_ENABLED
+        internal const val PREF_NAM_NORMALIZE = PresetPreferenceKeys.NAM_NORMALIZE
+        internal const val PREF_NAM_A2_FULL = PresetPreferenceKeys.NAM_A2_FULL
+        internal const val PREF_EXPERIMENT_DEFAULTS_APPLIED = "experiment_defaults_applied_v1"
 
-        private const val PREF_PENDING_IMPORT_MODE =
+        internal const val PREF_PENDING_IMPORT_MODE =
             "pending_import_mode"
 
-        private const val PREF_PENDING_TONE_IMAGE =
+        internal const val PREF_PENDING_TONE_IMAGE =
             "pending_tone_image"
 
-        private const val PREF_PENDING_TONE_TYPE =
+        internal const val PREF_PENDING_TONE_TYPE =
             "pending_tone_type"
 
-        private const val MAX_NAM_BLOCKS =
+        internal const val MAX_NAM_BLOCKS =
             4
 
-        private const val PRESET_COUNT =
+        internal const val PRESET_COUNT =
             4
 
     }
@@ -296,7 +300,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val prefs get() = appContainer.preferences
+    private val legacyStateJsonFactory by lazy {
+        PicoloLegacyStateJsonFactory(
+            preferences = prefs,
+            engine = audioEngine,
+            readExtras = ::readExtraNamChain,
+            readFxChain = ::readFxChain,
+            readFxNativeChain = ::readFxNativeChain,
+            presetReader = ::readPreset,
+            presetLabeler = ::presetLabel,
+        )
+    }
     private val audioEngine get() = appContainer.audioEngine
+    /** Native graph edits can stop/join the audio worker; serialize them away from the UI thread. */
+    private val audioGraphCommandsLazy = lazy<ExecutorService> { Executors.newSingleThreadExecutor() }
+    private val audioGraphCommands by audioGraphCommandsLazy
     private val audioParameterController by lazy {
         AudioParameterController(
             saveFloatPreference = { key, value -> prefs.edit().putFloat(key, value).apply() },
@@ -583,6 +601,15 @@ class MainActivity : AppCompatActivity() {
     private val listToneModelsUseCase get() = appContainer.listToneModelsUseCase
     private val downloadToneModelUseCase get() = appContainer.downloadToneModelUseCase
     private val importLocalNamFileUseCase get() = appContainer.importLocalNamFileUseCase
+    private val localNamImportController by lazy {
+        LocalNamImportController(
+            importFile = importLocalNamFileUseCase,
+            readEntries = ::readNamChainEntries,
+            persistEntries = ::persistNamChainEntries,
+            rebuildChain = ::rebuildNativeNamChain,
+            maxEntries = MAX_NAM_BLOCKS,
+        )
+    }
     private val prepareImpulseResponseUseCase get() = appContainer.prepareImpulseResponseUseCase
     private val commitCurrentToneModelUseCase get() = appContainer.commitCurrentToneModelUseCase
     private val loadPrimaryToneCaptureUseCase get() = appContainer.loadPrimaryToneCaptureUseCase
@@ -676,7 +703,7 @@ class MainActivity : AppCompatActivity() {
         restoreGainSettings()
         restoreRoutingSettings()
         restoreDspSettings()
-        syncFxNativeChain(readFxNativeChain(), reset = true)
+        audioGraphCommands.execute { syncFxNativeChain(readFxNativeChain(), reset = true) }
 
         val launchedFromOAuth =
             isOAuthCallback(
@@ -772,9 +799,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
 
-        audioEngine.nativeStop()
+        audioGraphCommands.execute { audioEngine.nativeStop() }
 
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        if (audioGraphCommandsLazy.isInitialized()) audioGraphCommands.shutdown()
+        super.onDestroy()
     }
 
 
@@ -1160,375 +1192,7 @@ class MainActivity : AppCompatActivity() {
     // ANDROID APP UI
     // ========================================================
 
-    private fun pluginStateJson(): String {
-
-        val result =
-            JSONObject()
-
-
-        result.put(
-            "running",
-            audioEngine.nativeIsRunning()
-        )
-
-        result.put(
-            "bypass",
-            bypass
-        )
-
-        result.put(
-            "modelName",
-            prefs.getString(
-                PREF_LAST_MODEL_NAME,
-                "No capture loaded"
-            )
-        )
-        result.put("activePresetSlot", prefs.getInt(PREF_ACTIVE_PRESET_SLOT, 0))
-
-        result.put(
-            "modelSize",
-            prefs.getString(
-                PREF_LAST_MODEL_SIZE,
-                ""
-            )
-        )
-
-        result.put(
-            "toneTitle",
-            prefs.getString(
-                PREF_LAST_TONE_TITLE,
-                ""
-            )
-        )
-
-        val cabinetPath = prefs.getString(PREF_CABINET_IR_PATH, null)
-        result.put("cabinetIrLoaded", cabinetPath != null && File(cabinetPath).exists())
-        result.put("cabinetIrName", prefs.getString(PREF_CABINET_IR_TITLE, cabinetPath?.let { File(it).nameWithoutExtension } ?: "") ?: "")
-        result.put("cabinetIrModuleType", prefs.getString(PREF_CABINET_IR_TYPE, "IR") ?: "IR")
-        result.put("cabinetIrLong", prefs.getString(PREF_CABINET_IR_TYPE, "IR") == "FX")
-        result.put("cabinetIrImage", prefs.getString(PREF_CABINET_IR_IMAGE, ""))
-        result.put("cabinetIrBypass", prefs.getBoolean(PREF_CABINET_IR_BYPASS, false))
-        result.put("cabinetIrPosition", prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS))
-        result.put("cabinetIrInGain", prefs.getFloat(PREF_CABINET_IR_IN_GAIN, 0.0f).toDouble())
-        result.put("cabinetIrOutGain", prefs.getFloat(PREF_CABINET_IR_OUT_GAIN, 0.0f).toDouble())
-        result.put("cabinetIrMix", prefs.getFloat(PREF_CABINET_IR_MIX, 1.0f).toDouble())
-        result.put("cabinetIrEqPre", prefs.getBoolean(PREF_CABINET_IR_EQ_PRE, false))
-        result.put("cabinetIrEqEnabled", prefs.getBoolean(PREF_CABINET_IR_EQ_ENABLED, true))
-        val cabinetEq = JSONArray()
-        for (band in 0 until 6) cabinetEq.put(prefs.getFloat(PREF_CABINET_IR_EQ_PREFIX + band, 0.0f).toDouble())
-        result.put("cabinetIrEq", cabinetEq)
-
-        result.put(
-            "inputGain",
-            prefs.getFloat(
-                PREF_INPUT_GAIN,
-                0.0f
-            ).toDouble()
-        )
-
-        result.put(
-            "outputGain",
-            prefs.getFloat(
-                PREF_OUTPUT_GAIN,
-                -10.0f
-            ).toDouble()
-        )
-
-        result.put(
-            "inputChannel",
-            prefs.getInt(
-                PREF_INPUT_CHANNEL,
-                0
-            )
-        )
-
-        result.put(
-            "outputPair",
-            prefs.getInt(
-                PREF_OUTPUT_PAIR,
-                0
-            )
-        )
-
-        result.put(
-            "gateEnabled",
-            prefs.getBoolean(
-                PREF_GATE_ENABLED,
-                false
-            )
-        )
-
-        result.put(
-            "gateThreshold",
-            prefs.getFloat(
-                PREF_GATE_THRESHOLD,
-                -65.0f
-            ).toDouble()
-        )
-
-        result.put(
-            "eqLow",
-            prefs.getFloat(
-                PREF_EQ_LOW,
-                0.0f
-            ).toDouble()
-        )
-
-        result.put(
-            "eqMid",
-            prefs.getFloat(
-                PREF_EQ_MID,
-                0.0f
-            ).toDouble()
-        )
-
-        result.put(
-            "eqHigh",
-            prefs.getFloat(
-                PREF_EQ_HIGH,
-                0.0f
-            ).toDouble()
-        )
-
-        result.put("eqEnabled", prefs.getBoolean(PREF_EQ_ENABLED, true))
-
-        result.put(
-            "routing",
-            audioEngine.nativeGetRoutingInfo()
-        )
-
-        result.put(
-            "audioDevice",
-            audioEngine.nativeGetAudioDeviceInfo()
-        )
-
-        result.put(
-            "namBlockCount",
-            audioEngine.nativeGetNamBlockCount()
-        )
-
-
-        val namChain =
-            JSONArray()
-
-
-        val firstModelPath = prefs.getString(PREF_LAST_MODEL_PATH, null)
-        val hasFirstModel = firstModelPath != null && File(firstModelPath).exists()
-        if (hasFirstModel) {
-            namChain.put(
-                JSONObject()
-                .put(
-                    "chainIndex",
-                    0
-                )
-                .put(
-                    "modelName",
-                    prefs.getString(
-                        PREF_LAST_MODEL_NAME,
-                        "No capture loaded"
-                    )
-                )
-                .put(
-                    "toneTitle",
-                    prefs.getString(
-                        PREF_LAST_TONE_TITLE,
-                        ""
-                    )
-                )
-                .put(
-                    "size",
-                    prefs.getString(
-                        PREF_LAST_MODEL_SIZE,
-                        ""
-                    )
-                )
-                .put(
-                    "bypass",
-                    bypass
-                )
-                .put("gainDb", prefs.getFloat(PREF_NAM_GAIN_DB, -15.0f))
-                .put("inGainDb", prefs.getFloat(PREF_NAM_IN_GAIN_DB, 0.0f))
-                .put("mix", prefs.getFloat(PREF_NAM_MIX, 1.0f))
-                .put("eqLowDb", prefs.getFloat(PREF_NAM_EQ_LOW_DB, 0.0f))
-                .put("eqMidDb", prefs.getFloat(PREF_NAM_EQ_MID_DB, 0.0f))
-                .put("eqHighDb", prefs.getFloat(PREF_NAM_EQ_HIGH_DB, 0.0f))
-                .put("eqBand3Db", prefs.getFloat(PREF_NAM_EQ_BAND3_DB, 0.0f))
-                .put("eqBand4Db", prefs.getFloat(PREF_NAM_EQ_BAND4_DB, 0.0f))
-                .put("eqBand5Db", prefs.getFloat(PREF_NAM_EQ_BAND5_DB, 0.0f))
-                .put("eqPre", prefs.getBoolean(PREF_NAM_EQ_PRE, false))
-                .put("eqEnabled", prefs.getBoolean(PREF_NAM_EQ_ENABLED, true))
-                .put("normalize", prefs.getBoolean(PREF_NAM_NORMALIZE, true))
-                .put("a2Full", prefs.getBoolean(PREF_NAM_A2_FULL, false))
-                .put("moduleType", prefs.getString(PREF_LAST_MODEL_TYPE, "AMP"))
-                .put("images", JSONArray().put(prefs.getString(PREF_LAST_TONE_IMAGE, "")))
-            )
-        }
-
-
-        readExtraNamChain()
-            .forEachIndexed { index, entry ->
-
-                namChain.put(
-                    JSONObject()
-                        .put(
-                            "chainIndex",
-                            index + if (hasFirstModel) 1 else 0
-                        )
-                        .put(
-                            "modelName",
-                            entry.modelName
-                        )
-                        .put(
-                            "toneTitle",
-                            entry.toneTitle
-                        )
-                        .put(
-                            "size",
-                            entry.size
-                        )
-                        .put(
-                            "bypass",
-                            entry.bypass
-                        )
-                        .put("gainDb", entry.gainDb)
-                        .put("inGainDb", entry.inGainDb)
-                        .put("mix", entry.mix)
-                        .put("eqLowDb", entry.eqLowDb)
-                        .put("eqMidDb", entry.eqMidDb)
-                        .put("eqHighDb", entry.eqHighDb)
-                        .put("eqBand3Db", entry.eqBand3Db)
-                        .put("eqBand4Db", entry.eqBand4Db)
-                        .put("eqBand5Db", entry.eqBand5Db)
-                        .put("eqPre", entry.eqPre)
-                        .put("eqEnabled", entry.eqEnabled)
-                        .put("normalize", entry.normalize)
-                        .put("a2Full", entry.a2Full)
-                        .put("moduleType", entry.moduleType)
-                        .put("images", JSONArray().put(entry.imageUrl))
-                )
-            }
-
-
-        result.put(
-            "namChain",
-            namChain
-        )
-
-        val signalChain = JSONArray()
-        val fxChain = readFxChain()
-        val fxNativeChain = readFxNativeChain()
-        result.put("fxChain", JSONArray().also { array -> fxChain.forEach { array.put(it.toUiJson()) } })
-        result.put("fxNativeChain", JSONArray().also { array -> fxNativeChain.forEach { array.put(it.toUiJson()) } })
-        val irLoaded = cabinetPath != null && File(cabinetPath).exists()
-        val irPosition = prefs.getInt(PREF_CABINET_IR_POSITION, MAX_NAM_BLOCKS)
-            .coerceIn(0, namChain.length())
-        for (position in 0..namChain.length()) {
-            if (irLoaded && irPosition == position) {
-                signalChain.put(JSONObject()
-                    .put("type", "CABINET_IR")
-                    .put("position", position)
-                    .put("name", File(cabinetPath).name))
-            }
-            fxChain.forEachIndexed { index, fx ->
-                if (fx.position == position) {
-                    signalChain.put(JSONObject()
-                        .put("type", "FX")
-                        .put("fxIndex", index)
-                        .put("position", position)
-                        .put("name", fx.title)
-                        .put("bypass", fx.bypass)
-                        .put("mix", fx.mix.toDouble()))
-                }
-            }
-            if (position < namChain.length()) signalChain.put(namChain.getJSONObject(position).put("type", "NAM"))
-        }
-        // FXNative is intentionally a stereo post section: it cannot be
-        // inserted before a NAM or either cabinet/space convolution stage.
-        fxNativeChain.forEachIndexed { index, item ->
-            val effect = item.effect.coerceIn(0, 3)
-            val names = arrayOf("ChowMatrix Delay", "BYOD BBD Delay", "BYOD Smooth Reverb", "BYOD Shimmer Reverb")
-            signalChain.put(JSONObject()
-                .put("type", "FX_NATIVE")
-                .put("nativeIndex", index)
-                .put("effect", effect)
-                .put("position", MAX_NAM_BLOCKS)
-                .put("name", names[effect])
-                .put("bypass", item.bypass)
-                .put("mix", item.mix.toDouble())
-                .put("param1", item.param1.toDouble())
-                .put("param2", item.param2.toDouble())
-                .put("param3", item.param3.toDouble()))
-        }
-        result.put("signalChain", signalChain)
-
-
-        val presets =
-            JSONArray()
-
-
-        for (
-        slot in
-        1..PRESET_COUNT
-        ) {
-
-            val preset =
-                readPreset(
-                    slot
-                )
-
-
-            val item =
-                JSONObject()
-
-
-            item.put(
-                "slot",
-                slot
-            )
-
-            item.put(
-                "saved",
-                preset != null
-            )
-
-            item.put(
-                "label",
-                presetLabel(
-                    slot
-                )
-            )
-
-
-            if (preset != null) {
-
-                item.put(
-                    "modelName",
-                    preset.modelName
-                )
-
-                item.put(
-                    "toneTitle",
-                    preset.toneTitle
-                        ?: ""
-                )
-            }
-
-
-            presets.put(
-                item
-            )
-        }
-
-
-        result.put(
-            "presets",
-            presets
-        )
-
-
-        return result.toString()
-    }
-
+    private fun pluginStateJson(): String = legacyStateJsonFactory.build(bypass)
 
     internal inner class AudioAppController : PicoloActions {
 
@@ -1559,9 +1223,15 @@ class MainActivity : AppCompatActivity() {
 
         override fun cycleOutput(): Int = audioSessionController.cycleOutput()
 
-        override fun startAudio(): String = audioSessionController.startAudio()
+        override fun startAudio(): String {
+            audioGraphCommands.execute { audioSessionController.startAudio() }
+            return "STARTING"
+        }
 
-        override fun stopAudio(): String = audioSessionController.stopAudio()
+        override fun stopAudio(): String {
+            audioGraphCommands.execute { audioSessionController.stopAudio() }
+            return "STOPPING"
+        }
 
         fun toggleBypass(): Boolean {
 
@@ -1632,38 +1302,9 @@ return bypass
                 val source = files.getJSONObject(0)
                 val name = source.optString("name", "$title.nam")
                 val encoded = source.optString("data")
-                val importedFile = importLocalNamFileUseCase.execute(name, encoded)
-                val destination = importedFile.file
-
-                val entries = readNamChainEntries().toMutableList()
-                val requested = targetBlockId.removePrefix("nam-").toIntOrNull()
-                val target = requested?.takeIf { it in entries.indices } ?: entries.size
-                if (target >= MAX_NAM_BLOCKS) {
-                    destination.delete()
-                    return JSONObject().put("error", "NAM chain full").toString()
-                }
-                val entry = ExtraNamEntry(
-                    toneId = "local-${destination.name}",
-                    toneTitle = title,
-                    modelId = 0L,
-                            modelName = importedFile.originalName.removeSuffix(".nam"),
-                    size = "unknown",
-                    path = destination.absolutePath,
-                    bypass = false,
-                    eqLowDb = 0.0f,
-                    eqMidDb = 0.0f,
-                    eqHighDb = 0.0f,
-                    eqBand3Db = 0.0f,
-                    eqBand4Db = 0.0f,
-                    eqBand5Db = 0.0f
-                )
-                if (target < entries.size) entries[target] = entry else entries.add(entry)
-                persistNamChainEntries(entries)
-                val result = rebuildNativeNamChain(entries)
-                if (!result.contains("failed", ignoreCase = true) && !result.contains("error", ignoreCase = true)) {
-                    JSONObject().put("blockId", "nam-$target").toString()
-                } else {
-                    JSONObject().put("error", result).toString()
+                when (val result = localNamImportController.import(title, name, encoded, targetBlockId)) {
+                    is LocalNamImportController.Result.Success -> JSONObject().put("blockId", result.blockId).toString()
+                    is LocalNamImportController.Result.Failure -> JSONObject().put("error", result.message).toString()
                 }
             } catch (error: Exception) {
                 Log.e(API_TAG, "Local tone import failed", error)
@@ -1775,11 +1416,11 @@ return bypass
             fxParameterController.setFxMix(fxIndex, mix)
 
         override fun addFxNative(effect: Int) {
-            fxNativeChainController.add(effect)
+            audioGraphCommands.execute { fxNativeChainController.add(effect) }
         }
 
         override fun removeFxNative(nativeIndex: Int) {
-            fxNativeChainController.remove(nativeIndex)
+            audioGraphCommands.execute { fxNativeChainController.remove(nativeIndex) }
         }
 
         override fun setFxNativeBypass(nativeIndex: Int, bypassed: Boolean) =
@@ -1791,8 +1432,9 @@ return bypass
         override fun setFxNativeParameter(nativeIndex: Int, parameter: Int, value: Double) =
             fxParameterController.setNativeParameter(nativeIndex, parameter, value)
 
-        override fun setFxNativeType(nativeIndex: Int, effect: Int) =
-            fxParameterController.setNativeType(nativeIndex, effect)
+        override fun setFxNativeType(nativeIndex: Int, effect: Int) {
+            audioGraphCommands.execute { fxParameterController.setNativeType(nativeIndex, effect) }
+        }
 
         override fun setCabinetBypass(bypassed: Boolean) {
             cabinetParameterController.setBypass(bypassed)
@@ -2283,16 +1925,11 @@ return bypass
                         false
                     )
 
-                    val audioResult = audioEngine.nativeStart()
-                    status.value += "\n\n$audioResult"
-
-
-
-
-
-                    status.value =
-                        "PRESET $slot READY\n\n" +
-                                result + "\n" + restoredChain
+                    status.value = "PRESET $slot READY\n\n$result\n$restoredChain\n\nSTARTING"
+                    audioGraphCommands.execute {
+                        val audioResult = audioEngine.nativeStart()
+                        runOnUiThread { status.value = "PRESET $slot READY\n\n$result\n$restoredChain\n\n$audioResult" }
+                    }
                 }
 
 
@@ -2390,9 +2027,14 @@ return bypass
             if (extraEntries.isNotEmpty()) {
                 Thread {
                     val restored = rebuildNativeNamChain(extraEntries)
-                    val audio = if (restored.startsWith("NAM CHAIN READY")) audioEngine.nativeStart() else restored
+                    val shouldStart = restored.startsWith("NAM CHAIN READY")
+                    val audio = if (shouldStart) "STARTING" else restored
                     runOnUiThread {
                         status.value = restored + "\n" + audio
+                    }
+                    if (shouldStart) audioGraphCommands.execute {
+                        val startResult = audioEngine.nativeStart()
+                        runOnUiThread { status.value = "$restored\n$startResult" }
                     }
                 }.start()
                 return
