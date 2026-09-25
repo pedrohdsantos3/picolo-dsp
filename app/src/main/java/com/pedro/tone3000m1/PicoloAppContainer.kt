@@ -1,9 +1,11 @@
 package com.pedro.tone3000m1
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.core.DataStore
 import com.pedro.tone3000m1.data.repository.AppPreferencesDataStore
+import com.pedro.tone3000m1.data.repository.DataStoreSharedPreferences
 import com.pedro.tone3000m1.data.repository.SelectedModuleTypeRepository
 import com.pedro.tone3000m1.data.repository.AudioRoutingRepositoryImpl
 import com.pedro.tone3000m1.data.repository.CabinetImpulseRepositoryImpl
@@ -46,7 +48,6 @@ internal class PicoloAppContainer(
     private val config: Config,
 ) {
     data class Config(
-        val preferencesName: String,
         val apiBase: String,
         val publishableKey: String,
         val redirectUri: String,
@@ -61,9 +62,9 @@ internal class PicoloAppContainer(
     )
 
     private val appContext = context.applicationContext
-    val preferences = appContext.getSharedPreferences(config.preferencesName, Context.MODE_PRIVATE)
     val audioEngine by lazy { NativeAudioEngine() }
     private val appPreferences: DataStore<Preferences> by lazy { AppPreferencesDataStore.get(appContext) }
+    val preferences: SharedPreferences by lazy { DataStoreSharedPreferences(appPreferences) }
 
     val namChainRepository by lazy {
         NamChainRepository(preferences, config.extraNamChainKey, config.lastModelPathKey)

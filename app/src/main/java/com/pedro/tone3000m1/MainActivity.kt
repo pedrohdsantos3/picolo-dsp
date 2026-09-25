@@ -32,7 +32,15 @@ import com.pedro.tone3000m1.controller.AudioParameterController
 import com.pedro.tone3000m1.controller.NamParameterController
 import com.pedro.tone3000m1.controller.FxParameterController
 import com.pedro.tone3000m1.controller.CabinetParameterController
+import com.pedro.tone3000m1.controller.CabinetRemovalController
 import com.pedro.tone3000m1.controller.AudioSessionController
+import com.pedro.tone3000m1.controller.PackageCaptureController
+import com.pedro.tone3000m1.controller.PackageCaptureSource
+import com.pedro.tone3000m1.controller.FxNativeChainController
+import com.pedro.tone3000m1.controller.FxChainRemovalController
+import com.pedro.tone3000m1.controller.NamChainEditController
+import com.pedro.tone3000m1.controller.SignalChainReorderController
+import com.pedro.tone3000m1.controller.ResetToDefaultController
 import com.pedro.tone3000m1.ui.state.PicoloStateRepository
 import com.pedro.tone3000m1.ui.model.readPicoloState
 import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
@@ -54,7 +62,6 @@ import com.pedro.tone3000m1.domain.usecase.CommitExtraToneModelUseCase
 import com.pedro.tone3000m1.domain.usecase.DownloadToneModelUseCase
 import com.pedro.tone3000m1.domain.usecase.ImportLocalNamFileUseCase
 import com.pedro.tone3000m1.domain.usecase.ListToneModelsUseCase
-import com.pedro.tone3000m1.domain.usecase.LoadPackageCapturesUseCase
 import com.pedro.tone3000m1.domain.usecase.LoadPrimaryToneCaptureUseCase
 import com.pedro.tone3000m1.domain.usecase.ImportFxCaptureUseCase
 import com.pedro.tone3000m1.domain.usecase.ImportCabinetImpulseUseCase
@@ -256,7 +263,6 @@ class MainActivity : AppCompatActivity() {
             context = applicationContext,
             filesDirectory = filesDir,
             config = PicoloAppContainer.Config(
-                preferencesName = PREFS,
                 apiBase = API_BASE,
                 publishableKey = PUBLISHABLE_KEY,
                 redirectUri = REDIRECT_URI,
@@ -305,6 +311,13 @@ class MainActivity : AppCompatActivity() {
             setEqEnabledNative = audioEngine::nativeSetEqEnabled,
         )
     }
+    private val namChainEditController by lazy {
+        NamChainEditController(
+            readEntries = ::readNamChainEntries,
+            persistEntries = ::persistNamChainEntries,
+            rebuildNativeChain = ::rebuildNativeNamChain,
+        )
+    }
     private val namParameterController by lazy {
         NamParameterController(
             readEntries = ::readNamChainEntries,
@@ -337,6 +350,63 @@ class MainActivity : AppCompatActivity() {
             restartAudio = { audioEngine.nativeStart() },
         )
     }
+    private val fxNativeChainController by lazy {
+        FxNativeChainController(
+            readEntries = ::readFxNativeChain,
+            persistEntries = ::persistFxNativeChain,
+            isAudioRunning = audioEngine::nativeIsRunning,
+            syncNativeChain = { entries -> syncFxNativeChain(entries, reset = true) },
+            restartAudio = audioEngine::nativeStart,
+            hasOtherModules = {
+                audioEngine.nativeGetNamBlockCount() > 0 ||
+                    readFxChain().isNotEmpty() ||
+                    prefs.getString(PREF_CABINET_IR_PATH, null) != null
+            },
+            publishStatus = { message -> runOnUiThread { status.value = message } },
+        )
+    }
+    private val fxChainRemovalController by lazy {
+        FxChainRemovalController(
+            readEntries = ::readFxChain,
+            persistEntries = ::persistFxChain,
+            isAudioRunning = audioEngine::nativeIsRunning,
+            clearFxSlot = audioEngine::nativeClearFxImpulseResponse,
+            loadFxSlot = audioEngine::nativeLoadFxImpulseResponse,
+            setFxBypass = audioEngine::nativeSetFxImpulseResponseBypass,
+            setFxMix = audioEngine::nativeSetFxImpulseResponseMix,
+            namBlockCount = audioEngine::nativeGetNamBlockCount,
+            setFxPosition = audioEngine::nativeSetFxImpulseResponsePosition,
+            cabinetPathExists = { prefs.getString(PREF_CABINET_IR_PATH, null) != null },
+            deleteFile = { path -> File(path).delete() },
+            restartAudio = audioEngine::nativeStart,
+            publishStatus = { message -> runOnUiThread { status.value = message } },
+        )
+    }
+    private val signalChainReorderController by lazy {
+        SignalChainReorderController(
+            readNamEntries = ::readNamChainEntries,
+            persistNamEntries = ::persistNamChainEntries,
+            readFxEntries = ::readFxChain,
+            persistFxEntries = ::persistFxChain,
+            readCabinetPosition = { default -> prefs.getInt(PREF_CABINET_IR_POSITION, default) },
+            persistCabinetPosition = { position -> prefs.edit().putInt(PREF_CABINET_IR_POSITION, position).apply() },
+            setCabinetPosition = audioEngine::nativeSetImpulseResponsePosition,
+            isAudioRunning = audioEngine::nativeIsRunning,
+            rebuildNamChain = ::rebuildNativeNamChain,
+            clearFxSlot = audioEngine::nativeClearFxImpulseResponse,
+            loadFxSlot = audioEngine::nativeLoadFxImpulseResponse,
+            setFxBypass = audioEngine::nativeSetFxImpulseResponseBypass,
+            setFxMix = audioEngine::nativeSetFxImpulseResponseMix,
+            setFxPosition = audioEngine::nativeSetFxImpulseResponsePosition,
+            hasModules = {
+                audioEngine.nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty() ||
+                    prefs.getString(PREF_CABINET_IR_PATH, null) != null
+            },
+            restartAudio = audioEngine::nativeStart,
+            publishStatus = { message -> runOnUiThread { status.value = message } },
+            reportError = { error -> Log.e(API_TAG, "Chain reorder failed", error) },
+        )
+    }
     private val cabinetParameterController by lazy {
         CabinetParameterController(
             saveFloatPreference = { key, value -> prefs.edit().putFloat(key, value).apply() },
@@ -355,6 +425,85 @@ class MainActivity : AppCompatActivity() {
             maxNamBlocks = MAX_NAM_BLOCKS,
         )
     }
+    private val cabinetRemovalController by lazy {
+        CabinetRemovalController(
+            isAudioRunning = audioEngine::nativeIsRunning,
+            resetNativeImpulseResponse = {
+                audioEngine.nativeClearImpulseResponse()
+                audioEngine.nativeSetImpulseResponseBypass(false)
+                audioEngine.nativeSetImpulseResponseInGainDb(0.0f)
+                audioEngine.nativeSetImpulseResponseOutGainDb(0.0f)
+                audioEngine.nativeSetImpulseResponseMix(1.0f)
+                audioEngine.nativeSetImpulseResponseEqPre(false)
+                audioEngine.nativeSetImpulseResponseEqEnabled(true)
+                for (band in 0 until 6) audioEngine.nativeSetImpulseResponseEqDb(band, 0.0f)
+            },
+            readImpulseResponsePath = { prefs.getString(PREF_CABINET_IR_PATH, null) },
+            deleteFile = { path -> File(path).delete() },
+            clearPersistedImpulseResponse = {
+                prefs.edit()
+                    .remove(PREF_CABINET_IR_PATH)
+                    .remove(PREF_CABINET_IR_IMAGE)
+                    .remove(PREF_CABINET_IR_TITLE)
+                    .remove(PREF_CABINET_IR_TONE_ID)
+                    .remove(PREF_CABINET_IR_TYPE)
+                    .remove(PREF_CABINET_IR_BYPASS)
+                    .remove(PREF_CABINET_IR_POSITION)
+                    .remove(PREF_CABINET_IR_IN_GAIN)
+                    .remove(PREF_CABINET_IR_OUT_GAIN)
+                    .remove(PREF_CABINET_IR_MIX)
+                    .remove(PREF_CABINET_IR_EQ_PRE)
+                    .apply {
+                        for (band in 0 until 6) remove(PREF_CABINET_IR_EQ_PREFIX + band)
+                    }
+                    .apply()
+            },
+            hasOtherModules = { audioEngine.nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty() },
+            restartAudio = audioEngine::nativeStart,
+            publishStatus = { message -> runOnUiThread { status.value = message } },
+        )
+    }
+    private val resetToDefaultController by lazy {
+        ResetToDefaultController(
+            clearNamChain = audioEngine::nativeClearNamChain,
+            clearImpulseResponse = audioEngine::nativeClearImpulseResponse,
+            clearFxImpulseResponse = audioEngine::nativeClearFxImpulseResponse,
+            clearActiveTone = activeToneRepository::clear,
+            clearExtraNamChain = { persistExtraNamChain(emptyList()) },
+            setEqLow = audioEngine::nativeSetEqLowDb,
+            setEqMid = audioEngine::nativeSetEqMidDb,
+            setEqHigh = audioEngine::nativeSetEqHighDb,
+            setEqEnabled = audioEngine::nativeSetEqEnabled,
+            clearPersistedSettings = {
+                prefs.edit()
+                    .putFloat(PREF_EQ_LOW, 0.0f)
+                    .putFloat(PREF_EQ_MID, 0.0f)
+                    .putFloat(PREF_EQ_HIGH, 0.0f)
+                    .putBoolean(PREF_EQ_ENABLED, true)
+                    .remove(PREF_CABINET_IR_PATH)
+                    .remove(PREF_CABINET_IR_IMAGE)
+                    .remove(PREF_CABINET_IR_TITLE)
+                    .remove(PREF_CABINET_IR_TYPE)
+                    .remove(PREF_CABINET_IR_POSITION)
+                    .remove(PREF_CABINET_IR_BYPASS)
+                    .remove(PREF_CABINET_IR_IN_GAIN)
+                    .remove(PREF_CABINET_IR_OUT_GAIN)
+                    .remove(PREF_CABINET_IR_MIX)
+                    .remove(PREF_CABINET_IR_EQ_PRE)
+                    .remove(PREF_CABINET_IR_EQ_ENABLED)
+                    .remove(PREF_FX_CHAIN)
+                    .apply {
+                        for (band in 0 until 6) remove(PREF_CABINET_IR_EQ_PREFIX + band)
+                    }
+                    .apply()
+            },
+            setBypass = { enabled ->
+                bypass = enabled
+                audioEngine.nativeSetBypass(enabled)
+            },
+            reportError = { error -> Log.e(API_TAG, "Reset to default failed", error) },
+        )
+    }
     private val audioSessionController by lazy {
         AudioSessionController(
             prepareBeforeStart = { syncFxNativeChain(readFxNativeChain(), reset = true) },
@@ -363,6 +512,54 @@ class MainActivity : AppCompatActivity() {
             cycleInputRoute = audioRoutingUseCase::cycleInput,
             cycleOutputRoute = audioRoutingUseCase::cycleOutput,
             publishStatus = { message -> runOnUiThread { status.value = message } },
+        )
+    }
+    private val packageCaptureController by lazy {
+        PackageCaptureController(
+            scope = lifecycleScope,
+            resolveSource = ::resolvePackageCaptureSource,
+            accessToken = toneSessionRepository::accessToken,
+            loadCaptures = { source, token ->
+                appContainer.loadPackageCapturesUseCase.execute(source.toneId, source.moduleType, token)
+            },
+            publishStatus = { message -> runOnUiThread { status.value = message } },
+            showUnavailable = { message -> runOnUiThread { showPackageCaptureUnavailable(message) } },
+            onCapturesLoaded = { source, models, token ->
+                lifecycleScope.launch {
+                    saveSelectedModuleType(source.moduleType)
+                    prefs.edit()
+                        .putString(PREF_PENDING_IMPORT_MODE, source.importMode)
+                        .putString(PREF_PENDING_TONE_IMAGE, source.imageUrl)
+                        .putString(PREF_PENDING_TONE_TYPE, source.moduleType)
+                        .apply()
+
+                    when (source.moduleType) {
+                        "FX" -> showFxModelSelectionDialog(
+                            source.toneId,
+                            source.toneTitle,
+                            source.imageUrl,
+                            models,
+                            token,
+                        )
+                        "IR" -> showCabinetModelSelectionDialog(
+                            source.toneId,
+                            source.toneTitle,
+                            source.imageUrl,
+                            models,
+                            token,
+                        )
+                        else -> showModelSelectionDialog(
+                            source.toneId,
+                            source.toneTitle,
+                            models,
+                            token,
+                        )
+                    }
+                }
+            },
+            reportError = { source, error ->
+                Log.e(API_TAG, "Could not list package captures for ${source.blockId}", error)
+            },
         )
     }
     private val namChainRepository get() = appContainer.namChainRepository
@@ -380,7 +577,6 @@ class MainActivity : AppCompatActivity() {
     private val restorePreviousToneModelUseCase get() = appContainer.restorePreviousToneModelUseCase
     private val tonePackageCaptureRepository get() = appContainer.tonePackageCaptureRepository
     private val mergePackageCapturesUseCase get() = appContainer.mergePackageCapturesUseCase
-    private val loadPackageCapturesUseCase get() = appContainer.loadPackageCapturesUseCase
     private val toneImportRepository get() = appContainer.toneImportRepository
     private val prepareToneAuthorizationUseCase get() = appContainer.prepareToneAuthorizationUseCase
     private val completeToneSelectionUseCase get() = appContainer.completeToneSelectionUseCase
@@ -843,35 +1039,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun removeNamBlock(chainIndex: Int) {
         Thread {
-            val entries = readNamChainEntries()
-
-            if (chainIndex !in entries.indices) {
-                return@Thread
-            }
-
-            val removed = entries.removeAt(chainIndex)
-            val result = rebuildNativeNamChain(entries)
-
-            if (
-                entries.isEmpty() ||
-                result.startsWith("NAM CHAIN READY")
-            ) {
-                persistNamChainEntries(entries)
-
-                if (entries.none { it.path == removed.path }) {
-                    try {
-                        File(removed.path).delete()
-                    } catch (_: Exception) {
-                    }
-                }
-            }
+            val removal = namChainEditController.removeBlock(chainIndex) ?: return@Thread
 
             runOnUiThread {
                 val otherModulesRemain = readFxChain().isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null)?.let { File(it).exists() } == true
-                status.value = if (entries.isEmpty() && !otherModulesRemain) {
+                status.value = if (removal.remainingBlockCount == 0 && !otherModulesRemain) {
                     "NAM CHAIN EMPTY\n\nUse ADD NAM to insert a block."
                 } else {
-                    result
+                    removal.rebuildResult
                 }
             }
         }.start()
@@ -1497,117 +1672,8 @@ return bypass
         }
 
         /** Starts the authenticated downloader for package captures selected in Compose. */
-        override fun selectPackageCaptures(blockId: String): Boolean {
-            val source = when {
-                blockId.startsWith("nam-") -> {
-                    val index = blockId.removePrefix("nam-").toIntOrNull() ?: return false
-                    readNamChainEntries().getOrNull(index)?.let { entry ->
-                        PackageCaptureSource(
-                            blockId = blockId,
-                            toneId = entry.toneId,
-                            toneTitle = entry.toneTitle,
-                            moduleType = entry.moduleType,
-                            imageUrl = entry.imageUrl,
-                            importMode = "replace:$index",
-                        )
-                    }
-                }
-                blockId.startsWith("fx-") -> {
-                    val index = blockId.removePrefix("fx-").toIntOrNull() ?: return false
-                    readFxChain().getOrNull(index)?.let { entry ->
-                        PackageCaptureSource(
-                            blockId = blockId,
-                            toneId = entry.toneId,
-                            toneTitle = entry.title,
-                            moduleType = "FX",
-                            imageUrl = entry.image,
-                            importMode = "replace-fx:$index",
-                        )
-                    }
-                }
-                blockId == "cabinet-ir" -> {
-                    val path = prefs.getString(PREF_CABINET_IR_PATH, null)
-                    if (path.isNullOrBlank() || !File(path).exists()) null else PackageCaptureSource(
-                        blockId = blockId,
-                        toneId = prefs.getString(PREF_CABINET_IR_TONE_ID, "") ?: "",
-                        toneTitle = prefs.getString(PREF_CABINET_IR_TITLE, "Cabinet IR") ?: "Cabinet IR",
-                        moduleType = "IR",
-                        imageUrl = prefs.getString(PREF_CABINET_IR_IMAGE, "") ?: "",
-                        importMode = "",
-                    )
-                }
-                else -> null
-            }
-
-            if (source == null || source.toneId.isBlank() || source.toneId.startsWith("local-")) {
-                runOnUiThread {
-                    showPackageCaptureUnavailable()
-                }
-                return true
-            }
-
-            runOnUiThread {
-                status.value = "Loading captures from:\n${source.toneTitle}"
-            }
-            Thread {
-                try {
-                    val token = runBlocking { toneSessionRepository.accessToken() }
-                    if (token.isNullOrBlank()) {
-                        runOnUiThread {
-                            showPackageCaptureUnavailable("Sign in to TONE3000 to view this package's captures.")
-                        }
-                        return@Thread
-                    }
-                    val models = runBlocking {
-                        loadPackageCapturesUseCase.execute(source.toneId, source.moduleType, token)
-                    }
-                    runOnUiThread {
-                        if (models.isEmpty()) {
-                            showPackageCaptureUnavailable("No captures found in ${source.toneTitle}.")
-                            return@runOnUiThread
-                        }
-
-                        lifecycleScope.launch {
-                            saveSelectedModuleType(source.moduleType)
-                            prefs.edit()
-                                .putString(PREF_PENDING_IMPORT_MODE, source.importMode)
-                                .putString(PREF_PENDING_TONE_IMAGE, source.imageUrl)
-                                .putString(PREF_PENDING_TONE_TYPE, source.moduleType)
-                                .apply()
-
-                            when (source.moduleType) {
-                                "FX" -> showFxModelSelectionDialog(
-                                    source.toneId,
-                                    source.toneTitle,
-                                    source.imageUrl,
-                                    models,
-                                    token,
-                                )
-                                "IR" -> showCabinetModelSelectionDialog(
-                                    source.toneId,
-                                    source.toneTitle,
-                                    source.imageUrl,
-                                    models,
-                                    token,
-                                )
-                                else -> showModelSelectionDialog(
-                                    source.toneId,
-                                    source.toneTitle,
-                                    models,
-                                    token,
-                                )
-                            }
-                        }
-                    }
-                } catch (error: Exception) {
-                    Log.e(API_TAG, "Could not list package captures for ${source.blockId}", error)
-                    runOnUiThread {
-                        showPackageCaptureUnavailable("Couldn't load this package's captures. Check your connection and sign-in.")
-                    }
-                }
-            }.start()
-            return true
-        }
+        override fun selectPackageCaptures(blockId: String): Boolean =
+            packageCaptureController.selectPackageCaptures(blockId)
 
        private fun downloadAndLoadCabinet(
             toneId: String,
@@ -1693,70 +1759,12 @@ return bypass
         }
 
         override fun removeCabinetIr() {
-            val resumeAudio = audioEngine.nativeIsRunning()
-            audioEngine.nativeClearImpulseResponse()
-            audioEngine.nativeSetImpulseResponseBypass(false)
-            audioEngine.nativeSetImpulseResponseInGainDb(0.0f)
-            audioEngine.nativeSetImpulseResponseOutGainDb(0.0f)
-            audioEngine.nativeSetImpulseResponseMix(1.0f)
-            audioEngine.nativeSetImpulseResponseEqPre(false)
-            audioEngine.nativeSetImpulseResponseEqEnabled(true)
-            for (band in 0 until 6) audioEngine.nativeSetImpulseResponseEqDb(band, 0.0f)
-            prefs.getString(PREF_CABINET_IR_PATH, null)?.let { path ->
-                try { File(path).delete() } catch (_: Exception) { }
-            }
-            prefs.edit()
-                .remove(PREF_CABINET_IR_PATH)
-                .remove(PREF_CABINET_IR_IMAGE)
-                .remove(PREF_CABINET_IR_TITLE)
-                .remove(PREF_CABINET_IR_TONE_ID)
-                .remove(PREF_CABINET_IR_TYPE)
-                .remove(PREF_CABINET_IR_BYPASS)
-                .remove(PREF_CABINET_IR_POSITION)
-                .remove(PREF_CABINET_IR_IN_GAIN)
-                .remove(PREF_CABINET_IR_OUT_GAIN)
-                .remove(PREF_CABINET_IR_MIX)
-                .remove(PREF_CABINET_IR_EQ_PRE)
-                .apply {
-                    for (band in 0 until 6) remove(PREF_CABINET_IR_EQ_PREFIX + band)
-                }
-                .apply()
-            val hasOtherModules = audioEngine.nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty()
-            val audioResult = if (resumeAudio && hasOtherModules) audioEngine.nativeStart() else ""
-            runOnUiThread {
-                status.value = if (audioResult.startsWith("AUDIO ACTIVE")) {
-                    "CABINET IR REMOVED\n$audioResult"
-                } else if (resumeAudio && hasOtherModules) {
-                    "CABINET IR REMOVED\n$audioResult"
-                } else {
-                    "CABINET IR REMOVED"
-                }
-            }
+            cabinetRemovalController.remove()
         }
 
         override fun removeFx(fxIndex: Int) {
             Thread {
-                val entries = readFxChain()
-                if (fxIndex !in entries.indices) return@Thread
-                val wasRunning = audioEngine.nativeIsRunning()
-                val removed = entries.removeAt(fxIndex)
-                for (slot in 0 until 8) audioEngine.nativeClearFxImpulseResponse(slot)
-                entries.forEachIndexed { slot, item ->
-                    val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, item.path)
-                    if (!loaded.startsWith("FX LOADED")) {
-                        runOnUiThread { status.value = "FX CHAIN RELOAD FAILED\n$loaded" }
-                        return@Thread
-                    }
-                    audioEngine.nativeSetFxImpulseResponseBypass(slot, item.bypass)
-                    audioEngine.nativeSetFxImpulseResponseMix(slot, item.mix)
-                    val namCount = audioEngine.nativeGetNamBlockCount()
-                    audioEngine.nativeSetFxImpulseResponsePosition(slot, item.position.coerceIn(0, namCount))
-                }
-                persistFxChain(entries)
-                try { File(removed.path).delete() } catch (_: Exception) { }
-                val hasModules = audioEngine.nativeGetNamBlockCount() > 0 || entries.isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null
-                val audio = if (wasRunning && hasModules) audioEngine.nativeStart() else ""
-                runOnUiThread { status.value = "FX REMOVED\n$audio" }
+                fxChainRemovalController.remove(fxIndex)
             }.start()
         }
 
@@ -1767,34 +1775,11 @@ return bypass
             fxParameterController.setFxMix(fxIndex, mix)
 
         override fun addFxNative(effect: Int) {
-            val entries = readFxNativeChain()
-            if (entries.size >= 8) {
-                runOnUiThread { status.value = "FXNATIVE CHAIN FULL\nMaximum 8 native effects." }
-                return
-            }
-            val wasRunning = audioEngine.nativeIsRunning()
-            val selected = effect.coerceIn(0, 3)
-            val entry = FxNativeEntry(
-                effect = selected,
-                param1 = when (selected) { 0, 1 -> 350f; 2 -> 1500f; else -> 150f },
-                param2 = when (selected) { 0, 1 -> 0.35f; 2 -> 0.5f; else -> 5000f },
-            )
-            entries.add(entry)
-            persistFxNativeChain(entries)
-            syncFxNativeChain(entries, reset = true)
-            val audio = if (wasRunning) audioEngine.nativeStart() else ""
-            runOnUiThread { status.value = "FXNATIVE ADDED\nStereo post NAM/CAB\n$audio" }
+            fxNativeChainController.add(effect)
         }
 
         override fun removeFxNative(nativeIndex: Int) {
-            val entries = readFxNativeChain()
-            if (nativeIndex !in entries.indices) return
-            val wasRunning = audioEngine.nativeIsRunning()
-            entries.removeAt(nativeIndex)
-            persistFxNativeChain(entries)
-            syncFxNativeChain(entries, reset = true)
-            val audio = if (wasRunning && (audioEngine.nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null)) audioEngine.nativeStart() else ""
-            runOnUiThread { status.value = "FXNATIVE REMOVED\n$audio" }
+            fxNativeChainController.remove(nativeIndex)
         }
 
         override fun setFxNativeBypass(nativeIndex: Int, bypassed: Boolean) =
@@ -1860,24 +1845,7 @@ return bypass
 
         fun moveNam(chainIndex: Int, direction: Int) {
             Thread {
-                val entries = readNamChainEntries()
-                val target = chainIndex + direction
-
-                if (
-                    chainIndex !in entries.indices ||
-                    target !in entries.indices
-                ) {
-                    return@Thread
-                }
-
-                val moved = entries.removeAt(chainIndex)
-                entries.add(target, moved)
-
-                val result = rebuildNativeNamChain(entries)
-
-                if (result.startsWith("NAM CHAIN READY")) {
-                    persistNamChainEntries(entries)
-                }
+                val result = namChainEditController.moveBlock(chainIndex, direction) ?: return@Thread
 
                 runOnUiThread {
                     status.value = result
@@ -1921,66 +1889,7 @@ return bypass
             return try {
                 val requested = JSONArray(blockIdsJson)
                     .let { array -> (0 until array.length()).map { array.optString(it) } }
-                val entries = readNamChainEntries()
-                val wasRunning = audioEngine.nativeIsRunning()
-                val fxEntries = readFxChain()
-                val orderedIndices = requested
-                    .filter { it.startsWith("nam-") }
-                    .mapNotNull { it.removePrefix("nam-").toIntOrNull() }
-                    .filter { it in entries.indices }
-                    .distinct()
-                    .toMutableList()
-                entries.indices.forEach { if (it !in orderedIndices) orderedIndices.add(it) }
-                val reordered = orderedIndices.map { entries[it] }
-                val requestedFxIndices = requested.filter { it.startsWith("fx-") }
-                    .mapNotNull { it.removePrefix("fx-").toIntOrNull() }
-                    .filter { it in fxEntries.indices }.distinct().toMutableList()
-                fxEntries.indices.forEach { if (it !in requestedFxIndices) requestedFxIndices.add(it) }
-                val reorderedFx = requestedFxIndices.map { fxEntries[it] }.toMutableList()
-                val fxPositions = mutableMapOf<Int, Int>()
-                var namBefore = 0
-                requested.forEach { id ->
-                    when {
-                        id.startsWith("nam-") -> namBefore++
-                        id.startsWith("fx-") -> id.removePrefix("fx-").toIntOrNull()?.let { fxPositions[it] = namBefore }
-                    }
-                }
-                val cabinetPosition = requested.indexOf("cabinet-ir")
-                    .takeIf { it >= 0 }
-                    ?.coerceIn(0, reordered.size)
-                    ?: prefs.getInt(PREF_CABINET_IR_POSITION, reordered.size).coerceIn(0, reordered.size)
-                // Do not report success or settle the UI until the native chain has actually been
-                // rebuilt in that order. If loading any model fails, restore
-                // the previous DSP chain and keep its persisted ordering.
-                val result = rebuildNativeNamChain(reordered)
-                if (result.startsWith("NAM CHAIN READY")) {
-                    persistNamChainEntries(reordered)
-                    prefs.edit().putInt(PREF_CABINET_IR_POSITION, cabinetPosition).apply()
-                    audioEngine.nativeSetImpulseResponsePosition(cabinetPosition)
-                    for (slot in 0 until 8) audioEngine.nativeClearFxImpulseResponse(slot)
-                    reorderedFx.forEachIndexed { slot, item ->
-                        val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, item.path)
-                        if (!loaded.startsWith("FX LOADED")) return false
-                        reorderedFx[slot] = item.copy(position = fxPositions[requestedFxIndices.getOrNull(slot)] ?: reordered.size)
-                        audioEngine.nativeSetFxImpulseResponseBypass(slot, item.bypass)
-                        audioEngine.nativeSetFxImpulseResponseMix(slot, item.mix)
-                        audioEngine.nativeSetFxImpulseResponsePosition(slot, item.position.coerceIn(0, reordered.size))
-                    }
-                    persistFxChain(reorderedFx)
-                    val audio = if (wasRunning && (reordered.isNotEmpty() || reorderedFx.isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null)) audioEngine.nativeStart() else ""
-                    runOnUiThread { status.value = if (audio.isBlank()) result else "$result\n$audio" }
-                    true
-                } else {
-                    val rollback = rebuildNativeNamChain(entries)
-                    runOnUiThread {
-                        status.value = if (rollback.startsWith("NAM CHAIN READY")) {
-                            "Reordenação cancelada: $result"
-                        } else {
-                            "Falha ao reordenar e restaurar cadeia: $rollback"
-                        }
-                    }
-                    false
-                }
+                signalChainReorderController.reorder(requested)
             } catch (error: Exception) {
                 Log.e(API_TAG, "Chain reorder failed", error)
                 false
@@ -1988,44 +1897,7 @@ return bypass
         }
 
         fun resetToDefault(): Boolean {
-            return try {
-                audioEngine.nativeClearNamChain()
-                audioEngine.nativeClearImpulseResponse()
-                for (slot in 0 until 8) audioEngine.nativeClearFxImpulseResponse(slot)
-                activeToneRepository.clear()
-                persistExtraNamChain(emptyList())
-                audioEngine.nativeSetEqLowDb(0.0f)
-                audioEngine.nativeSetEqMidDb(0.0f)
-                audioEngine.nativeSetEqHighDb(0.0f)
-                audioEngine.nativeSetEqEnabled(true)
-                prefs.edit()
-                    .putFloat(PREF_EQ_LOW, 0.0f)
-                    .putFloat(PREF_EQ_MID, 0.0f)
-                    .putFloat(PREF_EQ_HIGH, 0.0f)
-                    .putBoolean(PREF_EQ_ENABLED, true)
-                    .remove(PREF_CABINET_IR_PATH)
-                    .remove(PREF_CABINET_IR_IMAGE)
-                    .remove(PREF_CABINET_IR_TITLE)
-                    .remove(PREF_CABINET_IR_TYPE)
-                    .remove(PREF_CABINET_IR_POSITION)
-                    .remove(PREF_CABINET_IR_BYPASS)
-                    .remove(PREF_CABINET_IR_IN_GAIN)
-                    .remove(PREF_CABINET_IR_OUT_GAIN)
-                    .remove(PREF_CABINET_IR_MIX)
-                    .remove(PREF_CABINET_IR_EQ_PRE)
-                    .remove(PREF_CABINET_IR_EQ_ENABLED)
-                    .remove(PREF_FX_CHAIN)
-                    .apply {
-                        for (band in 0 until 6) remove(PREF_CABINET_IR_EQ_PREFIX + band)
-                    }
-                    .apply()
-                bypass = false
-                audioEngine.nativeSetBypass(false)
-                true
-            } catch (error: Exception) {
-                Log.e(API_TAG, "Reset to default failed", error)
-                false
-            }
+            return resetToDefaultController.reset()
         }
 
 
@@ -3007,16 +2879,6 @@ return bypass
     }
 
 
-    private data class PackageCaptureSource(
-        val blockId: String,
-        val toneId: String,
-        val toneTitle: String,
-        val moduleType: String,
-        val imageUrl: String,
-        val importMode: String,
-    )
-
-
     // ========================================================
     // MODEL SELECTION
     // ========================================================
@@ -3341,6 +3203,47 @@ return bypass
             .create()
             .also { it.setCanceledOnTouchOutside(false) }
             .show()
+    }
+
+    private fun resolvePackageCaptureSource(blockId: String): PackageCaptureSource? = when {
+        blockId.startsWith("nam-") -> {
+            val index = blockId.removePrefix("nam-").toIntOrNull() ?: return null
+            readNamChainEntries().getOrNull(index)?.let { entry ->
+                PackageCaptureSource(
+                    blockId = blockId,
+                    toneId = entry.toneId,
+                    toneTitle = entry.toneTitle,
+                    moduleType = entry.moduleType,
+                    imageUrl = entry.imageUrl,
+                    importMode = "replace:$index",
+                )
+            }
+        }
+        blockId.startsWith("fx-") -> {
+            val index = blockId.removePrefix("fx-").toIntOrNull() ?: return null
+            readFxChain().getOrNull(index)?.let { entry ->
+                PackageCaptureSource(
+                    blockId = blockId,
+                    toneId = entry.toneId,
+                    toneTitle = entry.title,
+                    moduleType = "FX",
+                    imageUrl = entry.image,
+                    importMode = "replace-fx:$index",
+                )
+            }
+        }
+        blockId == "cabinet-ir" -> {
+            val path = prefs.getString(PREF_CABINET_IR_PATH, null)
+            if (path.isNullOrBlank() || !File(path).exists()) null else PackageCaptureSource(
+                blockId = blockId,
+                toneId = prefs.getString(PREF_CABINET_IR_TONE_ID, "") ?: "",
+                toneTitle = prefs.getString(PREF_CABINET_IR_TITLE, "Cabinet IR") ?: "Cabinet IR",
+                moduleType = "IR",
+                imageUrl = prefs.getString(PREF_CABINET_IR_IMAGE, "") ?: "",
+                importMode = "",
+            )
+        }
+        else -> null
     }
 
     private fun showPackageCaptureUnavailable(message: String = "No package captures are associated with this block.") {

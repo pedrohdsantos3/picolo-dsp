@@ -9,6 +9,10 @@ import com.pedro.tone3000m1.domain.model.PendingToneAuthorization
 import org.json.JSONObject
 import org.json.JSONArray
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -233,9 +237,10 @@ class DataRepositoryCompatibilityTest {
         assertEquals(emptyList<OnlineModel>(), repository.read("tone-7", "FX"))
         assertTrue(store.data.first().contains(stringPreferencesKey(legacyKey)))
         assertEquals("still-here", preferences.getString("unrelated_legacy_setting", null))
+        assertEquals("still-here", store.data.first()[stringPreferencesKey("unrelated_legacy_setting")])
     }
 
-    @Test fun toneSessionDataStoreMigratesTokensAndPkceWithoutMovingOtherPreferences() = runBlocking {
+    @Test fun toneSessionDataStoreMigratesTokensPkceAndOtherLegacyPreferences() = runBlocking {
         val preferences = context.getSharedPreferences(preferenceName, 0)
         preferences.edit()
             .putString("access_token", "legacy-access")
@@ -261,6 +266,7 @@ class DataRepositoryCompatibilityTest {
         assertEquals("new-access", data[stringPreferencesKey("access_token")])
         assertEquals("new-refresh", data[stringPreferencesKey("refresh_token")])
         assertEquals(null, repository.pendingAuthorization())
+        assertEquals("/model.nam", data[stringPreferencesKey("last_model_path")])
         assertEquals("/model.nam", preferences.getString("last_model_path", null))
     }
 
@@ -276,12 +282,49 @@ class DataRepositoryCompatibilityTest {
         val repository = SelectedModuleTypeRepository(store)
 
         assertEquals("PEDAL", repository.read())
-        assertEquals(null, legacy.getString(PresetPreferenceKeys.SELECTED_ADD_TYPE, null))
+        assertEquals("PEDAL", legacy.getString(PresetPreferenceKeys.SELECTED_ADD_TYPE, null))
 
         repository.save("FX")
 
         assertEquals("FX", repository.read())
         assertEquals("FX", store.data.first()[stringPreferencesKey(PresetPreferenceKeys.SELECTED_ADD_TYPE)])
+    }
+
+    @Test fun dataStoreSharedPreferencesMigratesTypedValuesAndKeepsLegacyBackup() = runBlocking {
+        val legacy = context.getSharedPreferences(preferenceName, 0)
+        legacy.edit()
+            .putBoolean("audio_enabled", true)
+            .putInt("input_channel", 2)
+            .putFloat("input_gain_db", 4.5f)
+            .putStringSet("favorite_modules", mutableSetOf("AMP", "FX"))
+            .commit()
+        val store = AppPreferencesDataStore.create(
+            context,
+            legacyPreferencesName = preferenceName,
+            file = File(directory, "typed-preferences.preferences_pb"),
+            scope = dataStoreScope,
+        )
+        val preferences = DataStoreSharedPreferences(store, dataStoreScope)
+
+        assertTrue(preferences.getBoolean("audio_enabled", false))
+        assertEquals(2, preferences.getInt("input_channel", 0))
+        assertEquals(4.5f, preferences.getFloat("input_gain_db", 0f))
+        assertEquals(setOf("AMP", "FX"), preferences.getStringSet("favorite_modules", null))
+
+        assertTrue(
+            preferences.edit()
+                .putBoolean("audio_enabled", false)
+                .putStringSet("favorite_modules", mutableSetOf("PEDAL"))
+                .commit(),
+        )
+
+        val data = store.data.first()
+        assertEquals(false, data[booleanPreferencesKey("audio_enabled")])
+        assertEquals(2, data[intPreferencesKey("input_channel")])
+        assertEquals(4.5f, data[floatPreferencesKey("input_gain_db")])
+        assertEquals(setOf("PEDAL"), data[stringSetPreferencesKey("favorite_modules")])
+        assertTrue(legacy.getBoolean("audio_enabled", false))
+        assertEquals(setOf("AMP", "FX"), legacy.getStringSet("favorite_modules", null))
     }
 
     @Test fun readSupportsExistingSavedPresetPreferenceFormat() {
