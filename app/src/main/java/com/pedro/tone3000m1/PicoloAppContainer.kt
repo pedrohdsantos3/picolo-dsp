@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.core.DataStore
 import com.pedro.tone3000m1.data.repository.AppPreferencesDataStore
+import com.pedro.tone3000m1.data.repository.SelectedModuleTypeRepository
 import com.pedro.tone3000m1.data.repository.AudioRoutingRepositoryImpl
 import com.pedro.tone3000m1.data.repository.CabinetImpulseRepositoryImpl
 import com.pedro.tone3000m1.data.repository.CurrentToneRepositoryImpl
@@ -89,6 +90,7 @@ internal class PicoloAppContainer(
         Tone3000ApiRepository(config.apiBase, config.publishableKey, config.redirectUri)
     }
     val toneSessionRepository by lazy { ToneSessionRepositoryImpl(appPreferences) }
+    val selectedModuleTypeRepository by lazy { SelectedModuleTypeRepository(appPreferences) }
     val currentToneRepository by lazy { CurrentToneRepositoryImpl(preferences) }
     val activeToneRepository by lazy { currentToneRepository }
     val restorePreviousToneModelUseCase by lazy {

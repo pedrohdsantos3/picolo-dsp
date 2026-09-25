@@ -60,9 +60,10 @@ PicoloActions (contrato tipado)
   mas ainda coordena parte dos comandos através do controller interno.
 - `CurrentToneRepositoryImpl` lê o caminho ativo, salva o modelo e aplica defaults NAM pelas chaves legadas. `RestorePreviousToneModelUseCase` valida o arquivo e pede à interface `ToneModelEngine` para restaurá-lo após uma troca malsucedida. `NativeAudioEngine` implementa essa interface sem expor JNI ao caso de uso.
 - `TonePackageCaptureRepositoryImpl` mantém o cache de captures de pacote no
-  Preferences DataStore. `AppPreferencesDataStore` migra apenas as chaves desse
-  cache e da sessão OAuth, deixando as outras preferências SharedPreferences
-  intactas.
+  Preferences DataStore. `ToneSessionRepositoryImpl` e
+  `SelectedModuleTypeRepository` também usam esse store para sessão OAuth/PKCE
+  e tipo de módulo selecionado. `AppPreferencesDataStore` migra essas chaves
+  legadas sem mover as outras preferências SharedPreferences.
   `LoadPackageCapturesUseCase` escolhe a arquitetura da API, combina resultados
   novos e em cache e atualiza o cache sem descartar captures omitidos por
   respostas parciais.
@@ -121,10 +122,11 @@ PicoloActions (contrato tipado)
    controles Android auxiliares e a ponte por `TextWatcher` foram removidos.
    A serialização JSON ainda existe na borda Android para ler o estado legado;
    o repositório e a ViewModel recebem apenas `PicoloUiState`.
-5. **Preferências:** DataStore migrou cache de captures e sessão OAuth. NAM,
-   FX/IR, presets, roteamento, modelo ativo e configurações de áudio ainda usam
-   SharedPreferences; a migração desses grupos requer adaptar os contratos
-   síncronos e cobrir a compatibilidade de cada grupo.
+5. **Preferências:** DataStore contém cache de captures, sessão OAuth/PKCE e
+   tipo de módulo selecionado. NAM, FX/IR, presets, roteamento, modelo ativo e
+   configurações de áudio ainda usam SharedPreferences; a migração desses
+   grupos requer adaptar os contratos síncronos e cobrir a compatibilidade de
+   cada grupo.
 
 Cada etapa deve ser pequena o bastante para preservar o áudio ativo, os
 presets salvos, imports locais e a seleção TONE3000.

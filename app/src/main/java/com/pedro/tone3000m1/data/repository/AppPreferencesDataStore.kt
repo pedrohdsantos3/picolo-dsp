@@ -13,7 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import java.io.File
 
-/** Migrates package-capture JSON and OAuth session keys; other settings remain in SharedPreferences. */
+/** Migrates package cache, OAuth session, and module selection; other settings remain in SharedPreferences. */
 internal object AppPreferencesDataStore {
     private val Context.dataStore by preferencesDataStore(
         name = DATA_STORE_FILE_NAME,
@@ -63,11 +63,12 @@ internal object AppPreferencesDataStore {
             }
 
             private fun isMigratedKey(key: String) =
-                key.startsWith(PACKAGE_CAPTURE_KEY_PREFIX) || key in OAUTH_KEYS
+                key.startsWith(PACKAGE_CAPTURE_KEY_PREFIX) || key in MIGRATED_STRING_KEYS
         }
 
     private const val LEGACY_PREFERENCES_NAME = "tone3000"
     private const val DATA_STORE_FILE_NAME = "app_preferences"
     const val PACKAGE_CAPTURE_KEY_PREFIX = "package_capture_cache_"
     private val OAUTH_KEYS = setOf("access_token", "refresh_token", "oauth_state", "pkce_verifier")
+    private val MIGRATED_STRING_KEYS = OAUTH_KEYS + PresetPreferenceKeys.SELECTED_ADD_TYPE
 }

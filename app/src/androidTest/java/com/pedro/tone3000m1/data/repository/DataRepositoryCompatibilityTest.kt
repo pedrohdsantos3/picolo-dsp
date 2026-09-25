@@ -264,6 +264,26 @@ class DataRepositoryCompatibilityTest {
         assertEquals("/model.nam", preferences.getString("last_model_path", null))
     }
 
+    @Test fun selectedModuleTypeMigratesAndPersistsInDataStore() = runBlocking {
+        val legacy = context.getSharedPreferences(preferenceName, 0)
+        legacy.edit().putString(PresetPreferenceKeys.SELECTED_ADD_TYPE, "PEDAL").commit()
+        val store = AppPreferencesDataStore.create(
+            context,
+            legacyPreferencesName = preferenceName,
+            file = File(directory, "module-type.preferences_pb"),
+            scope = dataStoreScope,
+        )
+        val repository = SelectedModuleTypeRepository(store)
+
+        assertEquals("PEDAL", repository.read())
+        assertEquals(null, legacy.getString(PresetPreferenceKeys.SELECTED_ADD_TYPE, null))
+
+        repository.save("FX")
+
+        assertEquals("FX", repository.read())
+        assertEquals("FX", store.data.first()[stringPreferencesKey(PresetPreferenceKeys.SELECTED_ADD_TYPE)])
+    }
+
     @Test fun readSupportsExistingSavedPresetPreferenceFormat() {
         val preferences = context.getSharedPreferences(preferenceName, 0)
         val model = File(directory, "legacy.nam").apply { writeText("legacy model") }

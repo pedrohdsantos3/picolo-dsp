@@ -208,9 +208,6 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_PENDING_TONE_TYPE =
             "pending_tone_type"
 
-        private const val PREF_SELECTED_ADD_TYPE =
-            "selected_add_type"
-
         private const val MAX_NAM_BLOCKS =
             4
 
@@ -227,6 +224,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var composeView: ComposeView
 
     private val status = MutableStateFlow("")
+    private val selectedModuleTypeState = MutableStateFlow("AMP")
     private var picoloStateRepository: PicoloStateRepository? = null
     private val stateSnapshotVersion = AtomicLong(0L)
     private var bypass =
@@ -272,6 +270,23 @@ class MainActivity : AppCompatActivity() {
                 maxNamBlocks = MAX_NAM_BLOCKS,
             ),
         )
+    }
+
+    private suspend fun saveSelectedModuleType(type: String) {
+        val normalized = type.uppercase(Locale.US)
+        withContext(Dispatchers.IO) {
+            appContainer.selectedModuleTypeRepository.save(normalized)
+        }
+        selectedModuleTypeState.value = normalized
+    }
+
+    private fun updateSelectedModuleType(type: String) {
+        val normalized = type.uppercase(Locale.US)
+        if (normalized !in setOf("AMP", "PEDAL", "FX", "IR")) return
+        selectedModuleTypeState.value = normalized
+        lifecycleScope.launch(Dispatchers.IO) {
+            appContainer.selectedModuleTypeRepository.save(normalized)
+        }
     }
 
     private val prefs get() = appContainer.preferences
@@ -1401,10 +1416,7 @@ return bypass
         }
 
         fun setSelectedAddType(type: String) {
-            val normalized = type.uppercase(Locale.US)
-            if (normalized == "AMP" || normalized == "PEDAL" || normalized == "FX" || normalized == "IR") {
-                prefs.edit().putString(PREF_SELECTED_ADD_TYPE, normalized).apply()
-            }
+            updateSelectedModuleType(type)
         }
 
 
@@ -1555,34 +1567,36 @@ return bypass
                             return@runOnUiThread
                         }
 
-                        prefs.edit()
-                            .putString(PREF_PENDING_IMPORT_MODE, source.importMode)
-                            .putString(PREF_PENDING_TONE_IMAGE, source.imageUrl)
-                            .putString(PREF_PENDING_TONE_TYPE, source.moduleType)
-                            .putString(PREF_SELECTED_ADD_TYPE, source.moduleType)
-                            .apply()
+                        lifecycleScope.launch {
+                            saveSelectedModuleType(source.moduleType)
+                            prefs.edit()
+                                .putString(PREF_PENDING_IMPORT_MODE, source.importMode)
+                                .putString(PREF_PENDING_TONE_IMAGE, source.imageUrl)
+                                .putString(PREF_PENDING_TONE_TYPE, source.moduleType)
+                                .apply()
 
-                        when (source.moduleType) {
-                            "FX" -> showFxModelSelectionDialog(
-                                source.toneId,
-                                source.toneTitle,
-                                source.imageUrl,
-                                models,
-                                token,
-                            )
-                            "IR" -> showCabinetModelSelectionDialog(
-                                source.toneId,
-                                source.toneTitle,
-                                source.imageUrl,
-                                models,
-                                token,
-                            )
-                            else -> showModelSelectionDialog(
-                                source.toneId,
-                                source.toneTitle,
-                                models,
-                                token,
-                            )
+                            when (source.moduleType) {
+                                "FX" -> showFxModelSelectionDialog(
+                                    source.toneId,
+                                    source.toneTitle,
+                                    source.imageUrl,
+                                    models,
+                                    token,
+                                )
+                                "IR" -> showCabinetModelSelectionDialog(
+                                    source.toneId,
+                                    source.toneTitle,
+                                    source.imageUrl,
+                                    models,
+                                    token,
+                                )
+                                else -> showModelSelectionDialog(
+                                    source.toneId,
+                                    source.toneTitle,
+                                    models,
+                                    token,
+                                )
+                            }
                         }
                     }
                 } catch (error: Exception) {
@@ -2660,11 +2674,11 @@ return bypass
             .setTitle("Adicionar módulo")
             .setItems(labels) { _, which ->
                 val type = when (which) { 0 -> "PEDAL"; 1 -> "AMP"; 2 -> "FX"; else -> "IR" }
-                prefs.edit()
-                    .putString(PREF_SELECTED_ADD_TYPE, type)
-                    .putString(PREF_PENDING_TONE_TYPE, type)
-                    .apply()
-                openTone3000SelectFlow(importMode)
+                lifecycleScope.launch {
+                    saveSelectedModuleType(type)
+                    prefs.edit().putString(PREF_PENDING_TONE_TYPE, type).apply()
+                    openTone3000SelectFlow(importMode)
+                }
             }
             .setNegativeButton("CANCELAR", null)
             .show()
@@ -2707,7 +2721,7 @@ return bypass
             .apply()
 
 
-        val selectedModuleType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
+        val selectedModuleType = selectedModuleTypeState.value
         prefs.edit().putString(PREF_PENDING_TONE_TYPE, selectedModuleType).apply()
         lifecycleScope.launch {
             try {
@@ -2876,9 +2890,9 @@ return bypass
                 )
 
 
-                val selectedType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
+                val selectedType = runBlocking { appContainer.selectedModuleTypeRepository.read() }
+                selectedModuleTypeState.value = selectedType
                 prefs.edit()
-                    .putString(PREF_SELECTED_ADD_TYPE, selectedType)
                     .putString(PREF_PENDING_TONE_TYPE, selectedType)
                     .apply()
                 val selection = runBlocking {
@@ -3017,7 +3031,7 @@ return bypass
         // Keep the full compatible package list with the block. The small
         // in-editor selector must offer the same captures as the browser that
         // originally loaded this package, even if a later API query is partial.
-        val selectedModuleType = prefs.getString(PREF_SELECTED_ADD_TYPE, "AMP") ?: "AMP"
+        val selectedModuleType = selectedModuleTypeState.value
         if (models.isEmpty()) {
 
             restoreCurrentModelAvailability(

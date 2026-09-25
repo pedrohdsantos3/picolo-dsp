@@ -32,6 +32,7 @@ internal object PresetPreferenceKeys {
     const val EQ_HIGH = "eq_high_db"
     const val EQ_ENABLED = "eq_enabled"
     const val EXTRA_NAM_CHAIN = "extra_nam_chain"
+    const val SELECTED_ADD_TYPE = "selected_add_type"
     const val NAM_GAIN_DB = "nam_gain_db"
     const val NAM_IN_GAIN_DB = "nam_in_gain_db"
     const val NAM_MIX = "nam_mix"
