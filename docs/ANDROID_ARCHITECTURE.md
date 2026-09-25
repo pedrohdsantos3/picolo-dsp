@@ -16,7 +16,7 @@ PicoloActions (contrato tipado)
         ├── contratos de domínio
         └── NativeAudioEngine (fachada JNI)
               ↓
-        repositórios: DataStore / SharedPreferences / API / arquivos
+        repositórios: DataStore / API / arquivos
                     ↓
              C++: TinyALSA + NAM + IR + efeitos
 ```
@@ -36,6 +36,9 @@ PicoloActions (contrato tipado)
   de um bloco novo. `RebuildNamChainUseCase` restaura os blocos e controles pela
   interface `NamChainRebuildEngine`; `ReplaceNamCaptureUseCase` valida e aplica
   uma substituição antes do commit dos metadados da cadeia.
+  `NamChainEditController` coordena mover/remover sobre a cadeia completa
+  (modelo primário e blocos adicionais), delegando rebuild e persistência pelos
+  callbacks que mantêm as preferências legadas compatíveis.
   `LoadPrimaryToneCaptureUseCase` só confirma a troca depois que a
   interface `PrimaryToneCaptureEngine` aceita o arquivo e aplica os defaults do
   módulo. `PrepareNamBlockReplacementUseCase` mantém controles do bloco ao
@@ -60,9 +63,11 @@ PicoloActions (contrato tipado)
   mas ainda coordena parte dos comandos através do controller interno.
 - `CurrentToneRepositoryImpl` lê o caminho ativo, salva o modelo e aplica defaults NAM pelas chaves legadas. `RestorePreviousToneModelUseCase` valida o arquivo e pede à interface `ToneModelEngine` para restaurá-lo após uma troca malsucedida. `NativeAudioEngine` implementa essa interface sem expor JNI ao caso de uso.
 - `TonePackageCaptureRepositoryImpl` mantém o cache de captures de pacote no
-  Preferences DataStore. `AppPreferencesDataStore` migra apenas as chaves desse
-  cache e da sessão OAuth, deixando as outras preferências SharedPreferences
-  intactas.
+  Preferences DataStore. `ToneSessionRepositoryImpl` e
+  `SelectedModuleTypeRepository` também usam esse store para sessão OAuth/PKCE
+  e tipo de módulo selecionado. `AppPreferencesDataStore` importa todos os tipos
+  suportados do arquivo SharedPreferences legado; os valores existentes no
+  DataStore prevalecem e o arquivo antigo é mantido como backup.
   `LoadPackageCapturesUseCase` escolhe a arquitetura da API, combina resultados
   novos e em cache e atualiza o cache sem descartar captures omitidos por
   respostas parciais.
@@ -80,6 +85,40 @@ PicoloActions (contrato tipado)
 - `PicoloAppContainer` monta o motor, os repositórios e os casos de uso sem
   depender da Activity. `AudioAppController` ainda está declarado dentro dela e
   usa helpers de navegação e importação da Activity.
+- `DataStoreSharedPreferences` mantém compatibilidade síncrona para os
+  repositórios legados enquanto persiste no DataStore. Escritas são aplicadas
+  imediatamente ao cache em memória e serializadas em background; código novo
+  deve preferir APIs suspensas dos repositórios.
+- `controller/AudioParameterController` concentra os limites, a chamada da
+  engine e a persistência dos controles globais de ganho, gate e EQ. A Activity
+  fornece callbacks concretos de JNI e preferências; o restante do
+  `AudioAppController` ainda coordena outras ações e será extraído em etapas.
+- `controller/NamParameterController` aplica alterações por bloco NAM e usa
+  callbacks para persistência, JNI e status. A gravação pontual não reconstrói
+  nem reposiciona a cadeia IR/FX. Navegação e importação continuam no controller
+  interno até as próximas extrações.
+- `controller/FxParameterController` e `controller/CabinetParameterController`
+  isolam os controles de bypass, mix, parâmetros, EQ e posição com dependências
+  injetadas. O controller interno ainda mantém parte das operações de importação
+  e remoção de cadeias.
+- `controller/FxNativeChainController` aplica add/remove de efeitos nativos,
+  persistindo e sincronizando a cadeia antes de retomar o áudio.
+- `controller/FxChainRemovalController` e `controller/CabinetRemovalController`
+  coordenam limpeza da cadeia nativa, persistência, arquivos e retomada do áudio
+  por callbacks testáveis.
+- `controller/SignalChainReorderController` aplica a ordem mista NAM/FX/IR ao
+  motor e às preferências por callbacks injetados; `MainActivity` traduz o
+  snapshot JSON legado para os identificadores tipados dos blocos.
+- `controller/ResetToDefaultController` coordena a restauração do grafo de
+  áudio, seleção do tone, EQ, bypass e preferências de módulos. A Activity
+  fornece callbacks Android/JNI e de repositório; a sequência tem teste unitário.
+- `controller/AudioSessionController` prepara os efeitos nativos antes do start,
+  coordena start/stop e encaminha mudanças de rota. A Activity fornece apenas
+  callbacks de engine, roteamento e status.
+- `controller/PackageCaptureController` resolve o token e carrega em coroutine
+  as captures associadas aos blocos NAM, FX e IR. A Activity resolve os
+  metadados locais do bloco e continua responsável por persistir o contexto de
+  importação e abrir o seletor apropriado.
 - `MainActivity` cuida do ciclo de vida Android, permissões, seletores e
   navegação OAuth; Compose é a única interface. OAuth, API, armazenamento dos
   presets, cache de captures, restauração do modelo ativo e importação NAM/FX/IR
@@ -93,9 +132,13 @@ PicoloActions (contrato tipado)
    chaves legados permanecem compatíveis e têm cobertura instrumentada.
 2. **Controlador da aplicação:** casos de uso coordenam presets, roteamento,
    OAuth/API, captures, restauração e importações. `PicoloAppContainer` monta as
-   dependências fora da Activity. Falta mover `AudioAppController` e a
-   coordenação de persistência restante para componentes sem referência à
-   Activity; os metadados finais da substituição NAM ainda são gravados nela.
+   dependências fora da Activity. Controles globais, NAM, FX e IR já foram
+   extraídos para controllers testáveis. O carregamento de captures de pacote
+   também usa um controller próprio, e o movimento de blocos NAM é coordenado
+   por um controller testável. Remoção de bloco NAM e add/remove da cadeia FX
+   nativa e reordenação mista da cadeia também foram extraídos. Ainda há ações de
+   coordenação de importação e os metadados finais da substituição NAM ainda
+   ficam na borda da Activity.
 3. **Limite JNI:** concluído. `NativeAudioEngine` concentra a carga da
    biblioteca e declarações JNI, e os casos de uso de preset e roteamento usam
    interfaces de engine. O callback de áudio continua sem dependências Android.
@@ -104,10 +147,12 @@ PicoloActions (contrato tipado)
    controles Android auxiliares e a ponte por `TextWatcher` foram removidos.
    A serialização JSON ainda existe na borda Android para ler o estado legado;
    o repositório e a ViewModel recebem apenas `PicoloUiState`.
-5. **Preferências:** DataStore migrou cache de captures e sessão OAuth. NAM,
-   FX/IR, presets, roteamento, modelo ativo e configurações de áudio ainda usam
-   SharedPreferences; a migração desses grupos requer adaptar os contratos
-   síncronos e cobrir a compatibilidade de cada grupo.
+5. **Preferências:** concluído. DataStore é a fonte ativa para cache de captures,
+   OAuth/PKCE, tipo de módulo, NAM, FX/IR, presets, roteamento, modelo ativo e
+   configurações de áudio. `DataStoreSharedPreferences` preserva temporariamente
+   as chamadas síncronas existentes; novos contratos devem expor APIs suspensas.
+   A migração preenche apenas chaves ausentes e mantém o arquivo legado como
+   backup para recuperação.
 
 Cada etapa deve ser pequena o bastante para preservar o áudio ativo, os
 presets salvos, imports locais e a seleção TONE3000.
