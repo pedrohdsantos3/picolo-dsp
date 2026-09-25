@@ -88,6 +88,13 @@ PicoloActions (contrato tipado)
   callbacks para persistência, JNI e status. A gravação pontual não reconstrói
   nem reposiciona a cadeia IR/FX. Navegação e importação continuam no controller
   interno até as próximas extrações.
+- `controller/FxParameterController` e `controller/CabinetParameterController`
+  isolam os controles de bypass, mix, parâmetros, EQ e posição com dependências
+  injetadas. O controller interno ainda mantém operações de ciclo de vida do
+  áudio, importação, remoção e reordenação das cadeias.
+- `controller/AudioSessionController` prepara os efeitos nativos antes do start,
+  coordena start/stop e encaminha mudanças de rota. A Activity fornece apenas
+  callbacks de engine, roteamento e status.
 - `MainActivity` cuida do ciclo de vida Android, permissões, seletores e
   navegação OAuth; Compose é a única interface. OAuth, API, armazenamento dos
   presets, cache de captures, restauração do modelo ativo e importação NAM/FX/IR
@@ -101,8 +108,8 @@ PicoloActions (contrato tipado)
    chaves legados permanecem compatíveis e têm cobertura instrumentada.
 2. **Controlador da aplicação:** casos de uso coordenam presets, roteamento,
    OAuth/API, captures, restauração e importações. `PicoloAppContainer` monta as
-   dependências fora da Activity. Controles globais e parâmetros de blocos NAM
-   já foram extraídos para controllers testáveis. Falta mover o restante de
+   dependências fora da Activity. Controles globais, NAM, FX e IR já foram
+   extraídos para controllers testáveis. Falta mover o restante de
    `AudioAppController` e a coordenação de persistência para componentes sem
    referência à Activity; os metadados finais da substituição NAM ainda são
    gravados nela.

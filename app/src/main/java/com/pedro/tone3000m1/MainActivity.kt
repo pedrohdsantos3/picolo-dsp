@@ -30,6 +30,9 @@ import com.pedro.tone3000m1.data.repository.AudioRoutingRepositoryImpl
 import com.pedro.tone3000m1.data.repository.PresetPreferenceKeys
 import com.pedro.tone3000m1.controller.AudioParameterController
 import com.pedro.tone3000m1.controller.NamParameterController
+import com.pedro.tone3000m1.controller.FxParameterController
+import com.pedro.tone3000m1.controller.CabinetParameterController
+import com.pedro.tone3000m1.controller.AudioSessionController
 import com.pedro.tone3000m1.ui.state.PicoloStateRepository
 import com.pedro.tone3000m1.ui.model.readPicoloState
 import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
@@ -191,7 +194,7 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_NAM_BYPASS = PresetPreferenceKeys.NAM_BYPASS
         private const val PREF_NAM_EQ_PRE = PresetPreferenceKeys.NAM_EQ_PRE
         private const val PREF_NAM_EQ_ENABLED = PresetPreferenceKeys.NAM_EQ_ENABLED
-        private const val PREF_CABINET_IR_EQ_ENABLED = "cabinet_ir_eq_enabled"
+        private const val PREF_CABINET_IR_EQ_ENABLED = PresetPreferenceKeys.CABINET_IR_EQ_ENABLED
         private const val PREF_NAM_NORMALIZE = PresetPreferenceKeys.NAM_NORMALIZE
         private const val PREF_NAM_A2_FULL = PresetPreferenceKeys.NAM_A2_FULL
         private const val PREF_EXPERIMENT_DEFAULTS_APPLIED = "experiment_defaults_applied_v1"
@@ -300,6 +303,50 @@ class MainActivity : AppCompatActivity() {
             setEqEnabledNative = audioEngine::nativeSetChainNamEqEnabled,
             setNormalizeNative = audioEngine::nativeSetChainNamNormalize,
             setQualityNative = audioEngine::nativeSetChainNamQuality,
+            publishStatus = { message -> runOnUiThread { status.value = message } },
+        )
+    }
+    private val fxParameterController by lazy {
+        FxParameterController(
+            readFxEntries = ::readFxChain,
+            persistFxEntries = ::persistFxChain,
+            setFxBypassNative = audioEngine::nativeSetFxImpulseResponseBypass,
+            setFxMixNative = audioEngine::nativeSetFxImpulseResponseMix,
+            readNativeEntries = ::readFxNativeChain,
+            persistNativeEntries = ::persistFxNativeChain,
+            setNativeBypass = audioEngine::nativeSetFxNativeBypass,
+            setNativeMix = audioEngine::nativeSetFxNativeMix,
+            setNativeParameter = audioEngine::nativeSetFxNativeParameter,
+            isAudioRunning = audioEngine::nativeIsRunning,
+            syncNativeChain = { entries -> syncFxNativeChain(entries, reset = true) },
+            restartAudio = { audioEngine.nativeStart() },
+        )
+    }
+    private val cabinetParameterController by lazy {
+        CabinetParameterController(
+            saveFloatPreference = { key, value -> prefs.edit().putFloat(key, value).apply() },
+            saveBooleanPreference = { key, value -> prefs.edit().putBoolean(key, value).apply() },
+            readPositionPreference = { key, default -> prefs.getInt(key, default) },
+            savePositionPreference = { key, value -> prefs.edit().putInt(key, value).apply() },
+            namBlockCount = audioEngine::nativeGetNamBlockCount,
+            setBypassNative = audioEngine::nativeSetImpulseResponseBypass,
+            setPositionNative = audioEngine::nativeSetImpulseResponsePosition,
+            setInGainNative = audioEngine::nativeSetImpulseResponseInGainDb,
+            setOutGainNative = audioEngine::nativeSetImpulseResponseOutGainDb,
+            setMixNative = audioEngine::nativeSetImpulseResponseMix,
+            setEqNative = audioEngine::nativeSetImpulseResponseEqDb,
+            setEqPositionNative = audioEngine::nativeSetImpulseResponseEqPre,
+            setEqEnabledNative = audioEngine::nativeSetImpulseResponseEqEnabled,
+            maxNamBlocks = MAX_NAM_BLOCKS,
+        )
+    }
+    private val audioSessionController by lazy {
+        AudioSessionController(
+            prepareBeforeStart = { syncFxNativeChain(readFxNativeChain(), reset = true) },
+            startNative = audioEngine::nativeStart,
+            stopNative = audioEngine::nativeStop,
+            cycleInputRoute = audioRoutingUseCase::cycleInput,
+            cycleOutputRoute = audioRoutingUseCase::cycleOutput,
             publishStatus = { message -> runOnUiThread { status.value = message } },
         )
     }
@@ -1318,52 +1365,13 @@ class MainActivity : AppCompatActivity() {
         override fun setEqEnabled(enabled: Boolean) = audioParameterController.setEqEnabled(enabled)
 
 
-        fun cycleInput(): Int {
-            val selected = audioRoutingUseCase.cycleInput()
-            return selected
-        }
+        fun cycleInput(): Int = audioSessionController.cycleInput()
 
-        override fun cycleOutput(): Int {
-            val selected = audioRoutingUseCase.cycleOutput()
-            return selected
-        }
+        override fun cycleOutput(): Int = audioSessionController.cycleOutput()
 
+        override fun startAudio(): String = audioSessionController.startAudio()
 
-        override fun startAudio(): String {
-
-            syncFxNativeChain(readFxNativeChain(), reset = true)
-
-            val result =
-                audioEngine.nativeStart()
-
-
-            runOnUiThread {
-
-                status.value =
-                    result
-
-
-            }
-
-
-            return result
-        }
-
-
-        override fun stopAudio(): String {
-
-            audioEngine.nativeStop()
-
-
-            runOnUiThread {
-
-                status.value =
-                    "STOPPED"
-            }
-
-
-            return "STOPPED"
-        }
+        override fun stopAudio(): String = audioSessionController.stopAudio()
 
         fun toggleBypass(): Boolean {
 
@@ -1738,22 +1746,11 @@ return bypass
             }.start()
         }
 
-        override fun setFxBypass(fxIndex: Int, bypassed: Boolean) {
-            val entries = readFxChain()
-            val item = entries.getOrNull(fxIndex) ?: return
-            entries[fxIndex] = item.copy(bypass = bypassed)
-            persistFxChain(entries)
-            audioEngine.nativeSetFxImpulseResponseBypass(fxIndex, bypassed)
-        }
+        override fun setFxBypass(fxIndex: Int, bypassed: Boolean) =
+            fxParameterController.setFxBypass(fxIndex, bypassed)
 
-        override fun setFxMix(fxIndex: Int, mix: Double) {
-            val entries = readFxChain()
-            val item = entries.getOrNull(fxIndex) ?: return
-            val value = mix.toFloat().coerceIn(0f, 1f)
-            entries[fxIndex] = item.copy(mix = value)
-            persistFxChain(entries)
-            audioEngine.nativeSetFxImpulseResponseMix(fxIndex, value)
-        }
+        override fun setFxMix(fxIndex: Int, mix: Double) =
+            fxParameterController.setFxMix(fxIndex, mix)
 
         override fun addFxNative(effect: Int) {
             val entries = readFxNativeChain()
@@ -1786,105 +1783,48 @@ return bypass
             runOnUiThread { status.value = "FXNATIVE REMOVED\n$audio" }
         }
 
-        override fun setFxNativeBypass(nativeIndex: Int, bypassed: Boolean) {
-            val entries = readFxNativeChain()
-            val entry = entries.getOrNull(nativeIndex) ?: return
-            entries[nativeIndex] = entry.copy(bypass = bypassed)
-            persistFxNativeChain(entries)
-            audioEngine.nativeSetFxNativeBypass(nativeIndex, bypassed)
-        }
+        override fun setFxNativeBypass(nativeIndex: Int, bypassed: Boolean) =
+            fxParameterController.setNativeBypass(nativeIndex, bypassed)
 
-        override fun setFxNativeMix(nativeIndex: Int, mix: Double) {
-            val entries = readFxNativeChain()
-            val entry = entries.getOrNull(nativeIndex) ?: return
-            val value = mix.toFloat().coerceIn(0f, 1f)
-            entries[nativeIndex] = entry.copy(mix = value)
-            persistFxNativeChain(entries)
-            audioEngine.nativeSetFxNativeMix(nativeIndex, value)
-        }
+        override fun setFxNativeMix(nativeIndex: Int, mix: Double) =
+            fxParameterController.setNativeMix(nativeIndex, mix)
 
-        override fun setFxNativeParameter(nativeIndex: Int, parameter: Int, value: Double) {
-            val entries = readFxNativeChain()
-            val entry = entries.getOrNull(nativeIndex) ?: return
-            val effect = entry.effect
-            val normalized = when (parameter) {
-                0 -> value.toFloat().coerceIn(if (effect < 2) 20f else if (effect == 2) 500f else 50f,
-                    if (effect < 2) 2000f else if (effect == 2) 5000f else 250f)
-                1 -> value.toFloat().coerceIn(if (effect < 2) 0f else if (effect == 2) 0f else 1000f,
-                    if (effect < 2) 0.94f else if (effect == 2) 1f else 10000f)
-                else -> value.toFloat().coerceIn(-12f, 12f)
-            }
-            entries[nativeIndex] = when (parameter) {
-                0 -> entry.copy(param1 = normalized)
-                1 -> entry.copy(param2 = normalized)
-                else -> entry.copy(param3 = normalized)
-            }
-            persistFxNativeChain(entries)
-            audioEngine.nativeSetFxNativeParameter(nativeIndex, parameter, normalized)
-        }
+        override fun setFxNativeParameter(nativeIndex: Int, parameter: Int, value: Double) =
+            fxParameterController.setNativeParameter(nativeIndex, parameter, value)
 
-        override fun setFxNativeType(nativeIndex: Int, effect: Int) {
-            val entries = readFxNativeChain()
-            val entry = entries.getOrNull(nativeIndex) ?: return
-            val wasRunning = audioEngine.nativeIsRunning()
-            val selected = effect.coerceIn(0, 3)
-            entries[nativeIndex] = entry.copy(
-                effect = selected,
-                param1 = when (selected) { 0, 1 -> 350f; 2 -> 1500f; else -> 150f },
-                param2 = when (selected) { 0, 1 -> 0.35f; 2 -> 0.5f; else -> 5000f },
-                param3 = 12f,
-            )
-            persistFxNativeChain(entries)
-            syncFxNativeChain(entries, reset = true)
-            if (wasRunning) audioEngine.nativeStart()
-        }
+        override fun setFxNativeType(nativeIndex: Int, effect: Int) =
+            fxParameterController.setNativeType(nativeIndex, effect)
 
         override fun setCabinetBypass(bypassed: Boolean) {
-            audioEngine.nativeSetImpulseResponseBypass(bypassed)
-            prefs.edit().putBoolean(PREF_CABINET_IR_BYPASS, bypassed).apply()
+            cabinetParameterController.setBypass(bypassed)
         }
 
         fun moveCabinet(direction: Int) {
-            val maxPosition = audioEngine.nativeGetNamBlockCount().coerceIn(0, MAX_NAM_BLOCKS)
-            val current = prefs.getInt(PREF_CABINET_IR_POSITION, maxPosition).coerceIn(0, maxPosition)
-            val next = (current + direction.coerceIn(-1, 1)).coerceIn(0, maxPosition)
-            audioEngine.nativeSetImpulseResponsePosition(next)
-            prefs.edit().putInt(PREF_CABINET_IR_POSITION, next).apply()
+            cabinetParameterController.move(direction)
         }
 
         override fun setCabinetInGain(db: Double) {
-            val value = db.toFloat().coerceIn(-24.0f, 24.0f)
-            audioEngine.nativeSetImpulseResponseInGainDb(value)
-            prefs.edit().putFloat(PREF_CABINET_IR_IN_GAIN, value).apply()
+            cabinetParameterController.setInGain(db)
         }
 
         override fun setCabinetOutGain(db: Double) {
-            val value = db.toFloat().coerceIn(-24.0f, 12.0f)
-            audioEngine.nativeSetImpulseResponseOutGainDb(value)
-            prefs.edit().putFloat(PREF_CABINET_IR_OUT_GAIN, value).apply()
+            cabinetParameterController.setOutGain(db)
         }
 
         override fun setCabinetMix(mix: Double) {
-            val value = mix.toFloat().coerceIn(0.0f, 1.0f)
-            audioEngine.nativeSetImpulseResponseMix(value)
-            prefs.edit().putFloat(PREF_CABINET_IR_MIX, value).apply()
+            cabinetParameterController.setMix(mix)
         }
 
         override fun setCabinetEq(band: Int, db: Double) {
-            if (band !in 0 until 6) return
-            val value = db.toFloat().coerceIn(-12.0f, 12.0f)
-            audioEngine.nativeSetImpulseResponseEqDb(band, value)
-            prefs.edit().putFloat(PREF_CABINET_IR_EQ_PREFIX + band, value).apply()
+            cabinetParameterController.setEq(band, db)
         }
 
         fun setCabinetEqPosition(pre: Boolean) {
-            audioEngine.nativeSetImpulseResponseEqPre(pre)
-            prefs.edit().putBoolean(PREF_CABINET_IR_EQ_PRE, pre).apply()
+            cabinetParameterController.setEqPosition(pre)
         }
 
         override fun setCabinetEqEnabled(enabled: Boolean) {
-            audioEngine.nativeSetImpulseResponseEqEnabled(enabled)
-            prefs.edit().putBoolean(PREF_CABINET_IR_EQ_ENABLED, enabled).apply()
+            cabinetParameterController.setEqEnabled(enabled)
         }
 
 

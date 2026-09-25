@@ -18,6 +18,7 @@ internal object PresetPreferenceKeys {
     const val CABINET_IR_OUT_GAIN = "cabinet_ir_out_gain_db"
     const val CABINET_IR_MIX = "cabinet_ir_mix"
     const val CABINET_IR_EQ_PRE = "cabinet_ir_eq_pre"
+    const val CABINET_IR_EQ_ENABLED = "cabinet_ir_eq_enabled"
     const val CABINET_IR_EQ_PREFIX = "cabinet_ir_eq_"
     const val INPUT_GAIN = "input_gain_db"
     const val OUTPUT_GAIN = "output_gain_db"
