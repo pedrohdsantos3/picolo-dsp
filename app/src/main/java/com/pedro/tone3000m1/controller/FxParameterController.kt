@@ -11,9 +11,9 @@ internal class FxParameterController(
     private val setFxMixNative: (Int, Float) -> Unit,
     private val readNativeEntries: () -> MutableList<FxNativeEntry>,
     private val persistNativeEntries: (List<FxNativeEntry>) -> Unit,
-    private val setNativeBypass: (Int, Boolean) -> Unit,
-    private val setNativeMix: (Int, Float) -> Unit,
-    private val setNativeParameter: (Int, Int, Float) -> Unit,
+    private val applyNativeBypass: (Int, Boolean) -> Unit,
+    private val applyNativeMix: (Int, Float) -> Unit,
+    private val applyNativeParameter: (Int, Int, Float) -> Unit,
     private val isAudioRunning: () -> Boolean,
     private val syncNativeChain: (List<FxNativeEntry>) -> Unit,
     private val restartAudio: () -> Unit,
@@ -40,7 +40,7 @@ internal class FxParameterController(
         val entry = entries.getOrNull(nativeIndex) ?: return
         entries[nativeIndex] = entry.copy(bypass = bypassed)
         persistNativeEntries(entries)
-        setNativeBypass(nativeIndex, bypassed)
+        applyNativeBypass(nativeIndex, bypassed)
     }
 
     fun setNativeMix(nativeIndex: Int, mix: Double) {
@@ -49,7 +49,7 @@ internal class FxParameterController(
         val value = mix.toFloat().coerceIn(0f, 1f)
         entries[nativeIndex] = entry.copy(mix = value)
         persistNativeEntries(entries)
-        setNativeMix(nativeIndex, value)
+        applyNativeMix(nativeIndex, value)
     }
 
     fun setNativeParameter(nativeIndex: Int, parameter: Int, value: Double) {
@@ -63,7 +63,7 @@ internal class FxParameterController(
             else -> entry.copy(param3 = normalized)
         }
         persistNativeEntries(entries)
-        setNativeParameter(nativeIndex, parameter, normalized)
+        applyNativeParameter(nativeIndex, parameter, normalized)
     }
 
     fun setNativeType(nativeIndex: Int, effect: Int) {

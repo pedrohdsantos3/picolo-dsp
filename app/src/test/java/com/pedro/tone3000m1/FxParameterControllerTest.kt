@@ -14,7 +14,7 @@ class FxParameterControllerTest {
         val controller = controller(
             readNative = { entries.toMutableList() },
             persistNative = { entries = it.toMutableList() },
-            setNativeParameter = { index, parameter, value ->
+            applyNativeParameter = { index, parameter, value ->
                 nativeParameter = Triple(index, parameter, value)
             },
         )
@@ -31,13 +31,29 @@ class FxParameterControllerTest {
         var nativeCount = 0
         val controller = controller(
             persistNative = { persistCount++ },
-            setNativeParameter = { _, _, _ -> nativeCount++ },
+            applyNativeParameter = { _, _, _ -> nativeCount++ },
         )
 
         controller.setNativeParameter(nativeIndex = 0, parameter = 3, value = 10.0)
 
         assertEquals(0, persistCount)
         assertEquals(0, nativeCount)
+    }
+
+    @Test
+    fun nativeBypassIsPersistedAndAppliedOnceWithoutRecursion() {
+        var entries = mutableListOf(nativeEntry())
+        val nativeChanges = mutableListOf<Pair<Int, Boolean>>()
+        val controller = controller(
+            readNative = { entries.toMutableList() },
+            persistNative = { entries = it.toMutableList() },
+            applyNativeBypass = { index, bypassed -> nativeChanges += index to bypassed },
+        )
+
+        controller.setNativeBypass(nativeIndex = 0, bypassed = true)
+
+        assertEquals(true, entries.single().bypass)
+        assertEquals(listOf(0 to true), nativeChanges)
     }
 
     private fun controller(
@@ -47,9 +63,9 @@ class FxParameterControllerTest {
         setFxMix: (Int, Float) -> Unit = { _, _ -> },
         readNative: () -> MutableList<FxNativeEntry> = { mutableListOf(nativeEntry()) },
         persistNative: (List<FxNativeEntry>) -> Unit = {},
-        setNativeBypass: (Int, Boolean) -> Unit = { _, _ -> },
-        setNativeMix: (Int, Float) -> Unit = { _, _ -> },
-        setNativeParameter: (Int, Int, Float) -> Unit = { _, _, _ -> },
+        applyNativeBypass: (Int, Boolean) -> Unit = { _, _ -> },
+        applyNativeMix: (Int, Float) -> Unit = { _, _ -> },
+        applyNativeParameter: (Int, Int, Float) -> Unit = { _, _, _ -> },
     ) = FxParameterController(
         readFxEntries = readFx,
         persistFxEntries = persistFx,
@@ -57,9 +73,9 @@ class FxParameterControllerTest {
         setFxMixNative = setFxMix,
         readNativeEntries = readNative,
         persistNativeEntries = persistNative,
-        setNativeBypass = setNativeBypass,
-        setNativeMix = setNativeMix,
-        setNativeParameter = setNativeParameter,
+        applyNativeBypass = applyNativeBypass,
+        applyNativeMix = applyNativeMix,
+        applyNativeParameter = applyNativeParameter,
         isAudioRunning = { false },
         syncNativeChain = {},
         restartAudio = {},
