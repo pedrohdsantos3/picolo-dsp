@@ -80,6 +80,10 @@ PicoloActions (contrato tipado)
 - `PicoloAppContainer` monta o motor, os repositórios e os casos de uso sem
   depender da Activity. `AudioAppController` ainda está declarado dentro dela e
   usa helpers de navegação e importação da Activity.
+- `controller/AudioParameterController` concentra os limites, a chamada da
+  engine e a persistência dos controles globais de ganho, gate e EQ. A Activity
+  fornece callbacks concretos de JNI e SharedPreferences; o restante do
+  `AudioAppController` ainda coordena outras ações e será extraído em etapas.
 - `MainActivity` cuida do ciclo de vida Android, permissões, seletores e
   navegação OAuth; Compose é a única interface. OAuth, API, armazenamento dos
   presets, cache de captures, restauração do modelo ativo e importação NAM/FX/IR
@@ -93,9 +97,11 @@ PicoloActions (contrato tipado)
    chaves legados permanecem compatíveis e têm cobertura instrumentada.
 2. **Controlador da aplicação:** casos de uso coordenam presets, roteamento,
    OAuth/API, captures, restauração e importações. `PicoloAppContainer` monta as
-   dependências fora da Activity. Falta mover `AudioAppController` e a
-   coordenação de persistência restante para componentes sem referência à
-   Activity; os metadados finais da substituição NAM ainda são gravados nela.
+   dependências fora da Activity. Os controles globais de áudio já foram
+   extraídos para um controller testável. Falta mover o restante de
+   `AudioAppController` e a coordenação de persistência para componentes sem
+   referência à Activity; os metadados finais da substituição NAM ainda são
+   gravados nela.
 3. **Limite JNI:** concluído. `NativeAudioEngine` concentra a carga da
    biblioteca e declarações JNI, e os casos de uso de preset e roteamento usam
    interfaces de engine. O callback de áudio continua sem dependências Android.

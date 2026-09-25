@@ -28,6 +28,7 @@ import com.pedro.tone3000m1.data.repository.FxChainRepository
 import com.pedro.tone3000m1.data.repository.PresetRepositoryImpl
 import com.pedro.tone3000m1.data.repository.AudioRoutingRepositoryImpl
 import com.pedro.tone3000m1.data.repository.PresetPreferenceKeys
+import com.pedro.tone3000m1.controller.AudioParameterController
 import com.pedro.tone3000m1.ui.state.PicoloStateRepository
 import com.pedro.tone3000m1.ui.model.readPicoloState
 import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
@@ -172,7 +173,7 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_EQ_HIGH =
             PresetPreferenceKeys.EQ_HIGH
 
-        private const val PREF_EQ_ENABLED = "eq_enabled"
+        private const val PREF_EQ_ENABLED = PresetPreferenceKeys.EQ_ENABLED
 
         private const val PREF_EXTRA_NAM_CHAIN =
             PresetPreferenceKeys.EXTRA_NAM_CHAIN
@@ -271,6 +272,20 @@ class MainActivity : AppCompatActivity() {
 
     private val prefs get() = appContainer.preferences
     private val audioEngine get() = appContainer.audioEngine
+    private val audioParameterController by lazy {
+        AudioParameterController(
+            saveFloatPreference = { key, value -> prefs.edit().putFloat(key, value).apply() },
+            saveBooleanPreference = { key, value -> prefs.edit().putBoolean(key, value).apply() },
+            setInputGainNative = audioEngine::nativeSetInputGainDb,
+            setOutputGainNative = audioEngine::nativeSetOutputGainDb,
+            setGateEnabledNative = audioEngine::nativeSetGateEnabled,
+            setGateThresholdNative = audioEngine::nativeSetGateThresholdDb,
+            setEqLowNative = audioEngine::nativeSetEqLowDb,
+            setEqMidNative = audioEngine::nativeSetEqMidDb,
+            setEqHighNative = audioEngine::nativeSetEqHighDb,
+            setEqEnabledNative = audioEngine::nativeSetEqEnabled,
+        )
+    }
     private val namChainRepository get() = appContainer.namChainRepository
     private val fxChainRepository get() = appContainer.fxChainRepository
     private val importFxCaptureUseCase get() = appContainer.importFxCaptureUseCase
@@ -1238,189 +1253,21 @@ class MainActivity : AppCompatActivity() {
         }
 
 
-        override fun setInputGain(
-            db: Double
-        ) {
+        override fun setInputGain(db: Double) = audioParameterController.setInputGain(db)
 
-            val value =
-                db
-                    .toFloat()
-                    .coerceIn(
-                        -24.0f,
-                        24.0f
-                    )
+        override fun setOutputGain(db: Double) = audioParameterController.setOutputGain(db)
 
+        override fun setGateEnabled(enabled: Boolean) = audioParameterController.setGateEnabled(enabled)
 
-            audioEngine.nativeSetInputGainDb(
-                value
-            )
+        override fun setGateThreshold(db: Double) = audioParameterController.setGateThreshold(db)
 
+        override fun setEqLow(db: Double) = audioParameterController.setEqLow(db)
 
-            prefs
-                .edit()
-                .putFloat(
-                    PREF_INPUT_GAIN,
-                    value
-                )
-                .apply()
+        override fun setEqMid(db: Double) = audioParameterController.setEqMid(db)
 
+        override fun setEqHigh(db: Double) = audioParameterController.setEqHigh(db)
 
-}
-
-
-        override fun setOutputGain(
-            db: Double
-        ) {
-
-            val value =
-                db
-                    .toFloat()
-                    .coerceIn(
-                        -24.0f,
-                        12.0f
-                    )
-
-
-            audioEngine.nativeSetOutputGainDb(
-                value
-            )
-
-
-            prefs
-                .edit()
-                .putFloat(
-                    PREF_OUTPUT_GAIN,
-                    value
-                )
-                .apply()
-
-
-}
-
-
-        override fun setGateEnabled(
-            enabled: Boolean
-        ) {
-
-            audioEngine.nativeSetGateEnabled(
-                enabled
-            )
-
-
-            prefs
-                .edit()
-                .putBoolean(
-                    PREF_GATE_ENABLED,
-                    enabled
-                )
-                .apply()
-
-
-}
-
-
-        override fun setGateThreshold(
-            db: Double
-        ) {
-
-            val value =
-                db
-                    .toFloat()
-                    .coerceIn(
-                        -90.0f,
-                        -20.0f
-                    )
-
-
-            audioEngine.nativeSetGateThresholdDb(
-                value
-            )
-
-
-            prefs
-                .edit()
-                .putFloat(
-                    PREF_GATE_THRESHOLD,
-                    value
-                )
-                .apply()
-
-
-}
-
-
-        override fun setEqLow(
-            db: Double
-        ) {
-
-            setEqFromPlugin(
-                PREF_EQ_LOW,
-                db,
-                audioEngine::nativeSetEqLowDb
-            )
-        }
-
-
-        override fun setEqMid(
-            db: Double
-        ) {
-
-            setEqFromPlugin(
-                PREF_EQ_MID,
-                db,
-                audioEngine::nativeSetEqMidDb
-            )
-        }
-
-
-        override fun setEqHigh(
-            db: Double
-        ) {
-
-            setEqFromPlugin(
-                PREF_EQ_HIGH,
-                db,
-                audioEngine::nativeSetEqHighDb
-            )
-        }
-
-
-        override fun setEqEnabled(enabled: Boolean) {
-            audioEngine.nativeSetEqEnabled(enabled)
-            prefs.edit().putBoolean(PREF_EQ_ENABLED, enabled).apply()
-        }
-
-
-        private fun setEqFromPlugin(
-            prefKey: String,
-            db: Double,
-            setter: (Float) -> Unit
-        ) {
-
-            val value =
-                db
-                    .toFloat()
-                    .coerceIn(
-                        -12.0f,
-                        12.0f
-                    )
-
-
-            setter(
-                value
-            )
-
-
-            prefs
-                .edit()
-                .putFloat(
-                    prefKey,
-                    value
-                )
-                .apply()
-
-
-        }
+        override fun setEqEnabled(enabled: Boolean) = audioParameterController.setEqEnabled(enabled)
 
 
         fun cycleInput(): Int {
