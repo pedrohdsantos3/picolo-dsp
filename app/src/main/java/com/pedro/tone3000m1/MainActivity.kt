@@ -7,14 +7,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.Editable
-import android.text.TextWatcher
 import android.util.Log
-import android.view.View
 import android.view.WindowManager
-import android.widget.Button
-import android.widget.SeekBar
-import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -72,8 +66,9 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -225,51 +220,11 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var composeView: ComposeView
 
-    private lateinit var status: TextView
+    private val status = MutableStateFlow("")
     private var picoloStateRepository: PicoloStateRepository? = null
     private val stateSnapshotVersion = AtomicLong(0L)
-    private lateinit var currentModelText: TextView
-    private lateinit var audioDeviceText: TextView
-
-    private lateinit var inputGainText: TextView
-    private lateinit var outputGainText: TextView
-    private lateinit var routingText: TextView
-
-    private lateinit var inputRouteButton: Button
-    private lateinit var outputRouteButton: Button
-
-    private lateinit var presetText: TextView
-    private lateinit var savePresetButton: Button
-    private lateinit var loadPresetButton: Button
-
-    private lateinit var inputGainSlider: SeekBar
-    private lateinit var outputGainSlider: SeekBar
-
-    private lateinit var dspChainText: TextView
-    private lateinit var gateButton: Button
-    private lateinit var gateThresholdText: TextView
-    private lateinit var gateThresholdSlider: SeekBar
-
-    private lateinit var eqLowText: TextView
-    private lateinit var eqMidText: TextView
-    private lateinit var eqHighText: TextView
-
-    private lateinit var eqLowSlider: SeekBar
-    private lateinit var eqMidSlider: SeekBar
-    private lateinit var eqHighSlider: SeekBar
-
-    private lateinit var startButton: Button
-    private lateinit var bypassButton: Button
-
     private var bypass =
         false
-
-    private var gateEnabled =
-        false
-
-    private var applyingPresetUi =
-        false
-
 
     // ========================================================
     // OAUTH / LIFECYCLE
@@ -292,162 +247,59 @@ class MainActivity : AppCompatActivity() {
     // PREFS
     // ========================================================
 
-    private val prefs by lazy {
-        getSharedPreferences(
-            PREFS,
-            MODE_PRIVATE
-        )
-    }
-
-    private val audioEngine by lazy { NativeAudioEngine() }
-
-    private val namChainRepository by lazy {
-        NamChainRepository(prefs, PREF_EXTRA_NAM_CHAIN, PREF_LAST_MODEL_PATH)
-    }
-
-    private val fxChainRepository by lazy {
-        FxChainRepository(prefs, PREF_FX_CHAIN, PREF_FX_NATIVE_CHAIN)
-    }
-
-    private val importFxCaptureUseCase by lazy {
-        ImportFxCaptureUseCase(
-            downloadToneModelUseCase,
-            prepareImpulseResponseUseCase,
-            fxChainRepository,
-            audioEngine,
-        )
-    }
-
-    private val importCabinetImpulseUseCase by lazy {
-        ImportCabinetImpulseUseCase(
-            downloadToneModelUseCase,
-            prepareImpulseResponseUseCase,
-            CabinetImpulseRepositoryImpl(prefs),
-            audioEngine,
-        )
-    }
-
-    private val presetRepository: PresetRepository by lazy {
-        PresetRepositoryImpl(prefs, filesDir, PRESET_COUNT, MAX_NAM_BLOCKS)
-    }
-
-    private val audioRoutingUseCase by lazy {
-        AudioRoutingUseCase(
-            AudioRoutingRepositoryImpl(
-                preferences = prefs,
-                engine = audioEngine,
+    private val appContainer by lazy {
+        PicoloAppContainer(
+            context = applicationContext,
+            filesDirectory = filesDir,
+            config = PicoloAppContainer.Config(
+                preferencesName = PREFS,
+                apiBase = API_BASE,
+                publishableKey = PUBLISHABLE_KEY,
+                redirectUri = REDIRECT_URI,
+                lastModelPathKey = PREF_LAST_MODEL_PATH,
+                extraNamChainKey = PREF_EXTRA_NAM_CHAIN,
+                fxChainKey = PREF_FX_CHAIN,
+                fxNativeChainKey = PREF_FX_NATIVE_CHAIN,
                 inputChannelKey = PREF_INPUT_CHANNEL,
                 outputPairKey = PREF_OUTPUT_PAIR,
+                presetCount = PRESET_COUNT,
+                maxNamBlocks = MAX_NAM_BLOCKS,
             ),
         )
     }
 
-    private val savePresetUseCase by lazy {
-        SavePresetUseCase(presetRepository)
-    }
-
-    private val loadPresetUseCase by lazy {
-        LoadPresetUseCase(presetRepository, audioEngine)
-    }
-
-    private val tone3000ApiRepository by lazy {
-        Tone3000ApiRepository(API_BASE, PUBLISHABLE_KEY, REDIRECT_URI)
-    }
-
-    private val toneSessionRepository by lazy {
-        ToneSessionRepositoryImpl(AppPreferencesDataStore.get(applicationContext))
-    }
-
-    private val currentToneRepository by lazy {
-        CurrentToneRepositoryImpl(prefs)
-    }
-
-    private val activeToneRepository by lazy {
-        currentToneRepository
-    }
-
-    private val restorePreviousToneModelUseCase by lazy {
-        RestorePreviousToneModelUseCase(currentToneRepository, audioEngine)
-    }
-
-    private val tonePackageCaptureRepository by lazy {
-        TonePackageCaptureRepositoryImpl(AppPreferencesDataStore.get(applicationContext))
-    }
-
-    private val mergePackageCapturesUseCase by lazy {
-        MergePackageCapturesUseCase(tonePackageCaptureRepository)
-    }
-
-    private val loadPackageCapturesUseCase by lazy {
-        LoadPackageCapturesUseCase(
-            listToneModelsUseCase,
-            mergePackageCapturesUseCase,
-            tonePackageCaptureRepository,
-        )
-    }
-
-    private val toneImportRepository by lazy {
-        ToneImportRepositoryImpl(filesDir)
-    }
-
-    private val prepareToneAuthorizationUseCase by lazy {
-        PrepareToneAuthorizationUseCase(toneSessionRepository)
-    }
-
-    private val completeToneSelectionUseCase by lazy {
-        CompleteToneSelectionUseCase(tone3000ApiRepository, toneSessionRepository)
-    }
-
-    private val listToneModelsUseCase by lazy {
-        ListToneModelsUseCase(tone3000ApiRepository)
-    }
-
-    private val downloadToneModelUseCase by lazy {
-        DownloadToneModelUseCase(tone3000ApiRepository, toneImportRepository)
-    }
-
-    private val importLocalNamFileUseCase by lazy {
-        ImportLocalNamFileUseCase(toneImportRepository)
-    }
-
-    private val prepareImpulseResponseUseCase by lazy {
-        PrepareImpulseResponseUseCase(toneImportRepository)
-    }
-
-    private val commitCurrentToneModelUseCase by lazy {
-        CommitCurrentToneModelUseCase(toneImportRepository)
-    }
-
-    private val loadPrimaryToneCaptureUseCase by lazy {
-        LoadPrimaryToneCaptureUseCase(
-            commitCurrentToneModelUseCase,
-            activeToneRepository,
-            audioEngine,
-        )
-    }
-
-    private val prepareNamBlockReplacementUseCase by lazy {
-        PrepareNamBlockReplacementUseCase()
-    }
-
-    private val commitExtraToneModelUseCase by lazy {
-        CommitExtraToneModelUseCase(toneImportRepository)
-    }
-
-    private val addExtraNamCaptureUseCase by lazy {
-        AddExtraNamCaptureUseCase(commitExtraToneModelUseCase, namChainRepository, audioEngine)
-    }
-
-    private val rebuildNamChainUseCase by lazy { RebuildNamChainUseCase(audioEngine) }
-
-    private val replaceNamCaptureUseCase by lazy {
-        ReplaceNamCaptureUseCase(
-            commitExtraToneModelUseCase,
-            prepareNamBlockReplacementUseCase,
-            rebuildNamChainUseCase,
-            audioEngine,
-        )
-    }
+    private val prefs get() = appContainer.preferences
+    private val audioEngine get() = appContainer.audioEngine
+    private val namChainRepository get() = appContainer.namChainRepository
+    private val fxChainRepository get() = appContainer.fxChainRepository
+    private val importFxCaptureUseCase get() = appContainer.importFxCaptureUseCase
+    private val importCabinetImpulseUseCase get() = appContainer.importCabinetImpulseUseCase
+    private val presetRepository get() = appContainer.presetRepository
+    private val audioRoutingUseCase get() = appContainer.audioRoutingUseCase
+    private val savePresetUseCase get() = appContainer.savePresetUseCase
+    private val loadPresetUseCase get() = appContainer.loadPresetUseCase
+    private val tone3000ApiRepository get() = appContainer.tone3000ApiRepository
+    private val toneSessionRepository get() = appContainer.toneSessionRepository
+    private val currentToneRepository get() = appContainer.currentToneRepository
+    private val activeToneRepository get() = appContainer.activeToneRepository
+    private val restorePreviousToneModelUseCase get() = appContainer.restorePreviousToneModelUseCase
+    private val tonePackageCaptureRepository get() = appContainer.tonePackageCaptureRepository
+    private val mergePackageCapturesUseCase get() = appContainer.mergePackageCapturesUseCase
+    private val loadPackageCapturesUseCase get() = appContainer.loadPackageCapturesUseCase
+    private val toneImportRepository get() = appContainer.toneImportRepository
+    private val prepareToneAuthorizationUseCase get() = appContainer.prepareToneAuthorizationUseCase
+    private val completeToneSelectionUseCase get() = appContainer.completeToneSelectionUseCase
+    private val listToneModelsUseCase get() = appContainer.listToneModelsUseCase
+    private val downloadToneModelUseCase get() = appContainer.downloadToneModelUseCase
+    private val importLocalNamFileUseCase get() = appContainer.importLocalNamFileUseCase
+    private val prepareImpulseResponseUseCase get() = appContainer.prepareImpulseResponseUseCase
+    private val commitCurrentToneModelUseCase get() = appContainer.commitCurrentToneModelUseCase
+    private val loadPrimaryToneCaptureUseCase get() = appContainer.loadPrimaryToneCaptureUseCase
+    private val prepareNamBlockReplacementUseCase get() = appContainer.prepareNamBlockReplacementUseCase
+    private val commitExtraToneModelUseCase get() = appContainer.commitExtraToneModelUseCase
+    private val addExtraNamCaptureUseCase get() = appContainer.addExtraNamCaptureUseCase
+    private val rebuildNamChainUseCase get() = appContainer.rebuildNamChainUseCase
+    private val replaceNamCaptureUseCase get() = appContainer.replaceNamCaptureUseCase
 
 
     // ========================================================
@@ -470,7 +322,7 @@ class MainActivity : AppCompatActivity() {
 
             } else {
 
-                status.text =
+                status.value =
                     "RECORD_AUDIO permission denied"
             }
         }
@@ -501,9 +353,9 @@ class MainActivity : AppCompatActivity() {
                             .putInt(PREF_CABINET_IR_POSITION, position)
                             .apply()
                     }
-                    runOnUiThread { status.text = result }
+                    runOnUiThread { status.value = result }
                 } catch (e: Exception) {
-                    runOnUiThread { status.text = "IR LOAD FAILED\n${e.message}" }
+                    runOnUiThread { status.value = "IR LOAD FAILED\n${e.message}" }
                 }
             }.start()
         }
@@ -534,7 +386,6 @@ class MainActivity : AppCompatActivity() {
         restoreRoutingSettings()
         restoreDspSettings()
         syncFxNativeChain(readFxNativeChain(), reset = true)
-        refreshPresetUi()
 
         val launchedFromOAuth =
             isOAuthCallback(
@@ -593,7 +444,7 @@ class MainActivity : AppCompatActivity() {
                 "OAuth callback received"
             )
 
-            status.text = "TONE3000 callback received...\nPreparing selection..."
+            status.value = "TONE3000 callback received...\nPreparing selection..."
 
             // singleTask activities can receive onNewIntent while already
             // resumed; in that case Android does not call onResume again.
@@ -609,11 +460,6 @@ class MainActivity : AppCompatActivity() {
         processPendingOAuthIntent()
     }
 
-    @Deprecated("Use back navigation in the active Compose destination")
-    override fun onBackPressed() {
-        super.onBackPressed()
-    }
-
     private fun processPendingOAuthIntent() {
 
         val pending =
@@ -625,8 +471,7 @@ class MainActivity : AppCompatActivity() {
 
         mainHandler.postDelayed(
             {
-                showComposeUi()
-                status.text = "TONE3000 selection received...\nConnecting to catalog..."
+                status.value = "TONE3000 selection received...\nConnecting to catalog..."
                 handleOAuthIntent(pending)
             },
             500
@@ -656,39 +501,10 @@ class MainActivity : AppCompatActivity() {
     // ========================================================
 
     private fun createUi() {
-        // Compose is the only attached UI. These View instances remain as temporary
-        // adapters for existing status and control code while that code moves out.
-        status = TextView(this).apply {
-            addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
-                override fun afterTextChanged(s: Editable?) { publishComposeState() }
-            })
+        // Compose is the only attached UI. Collect status changes to publish snapshots.
+        lifecycleScope.launch {
+            status.collect { publishComposeState() }
         }
-        currentModelText = TextView(this)
-        audioDeviceText = TextView(this)
-        inputGainText = TextView(this)
-        outputGainText = TextView(this)
-        routingText = TextView(this)
-        inputRouteButton = Button(this)
-        outputRouteButton = Button(this)
-        presetText = TextView(this)
-        savePresetButton = Button(this)
-        loadPresetButton = Button(this)
-        inputGainSlider = SeekBar(this)
-        outputGainSlider = SeekBar(this)
-        dspChainText = TextView(this)
-        gateButton = Button(this)
-        gateThresholdText = TextView(this)
-        gateThresholdSlider = SeekBar(this)
-        eqLowText = TextView(this)
-        eqMidText = TextView(this)
-        eqHighText = TextView(this)
-        eqLowSlider = SeekBar(this)
-        eqMidSlider = SeekBar(this)
-        eqHighSlider = SeekBar(this)
-        startButton = Button(this)
-        bypassButton = Button(this)
 
         val composeViewModel = ViewModelProvider(this)[PicoloComposeViewModel::class.java]
         val composeActions = AudioAppController()
@@ -719,7 +535,7 @@ class MainActivity : AppCompatActivity() {
         val requestVersion = stateSnapshotVersion.incrementAndGet()
         lifecycleScope.launch(Dispatchers.IO) {
             val serializedState = pluginStateJson()
-            val statusText = withContext(Dispatchers.Main.immediate) { status.text?.toString().orEmpty() }
+            val statusText = withContext(Dispatchers.Main.immediate) { status.value }
             if (requestVersion == stateSnapshotVersion.get()) {
                 repository.publish(serializedState, statusText)
             }
@@ -926,9 +742,7 @@ class MainActivity : AppCompatActivity() {
 
             runOnUiThread {
                 val otherModulesRemain = readFxChain().isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null)?.let { File(it).exists() } == true
-                startButton.isEnabled = entries.isNotEmpty() || otherModulesRemain
-                updateBypassButton()
-                status.text = if (entries.isEmpty() && !otherModulesRemain) {
+                status.value = if (entries.isEmpty() && !otherModulesRemain) {
                     "NAM CHAIN EMPTY\n\nUse ADD NAM to insert a block."
                 } else {
                     result
@@ -1033,7 +847,7 @@ class MainActivity : AppCompatActivity() {
 
             runOnUiThread {
 
-                status.text =
+                status.value =
                     "EXTRA NAM BLOCKS CLEARED"
             }
 
@@ -1044,11 +858,6 @@ class MainActivity : AppCompatActivity() {
     // ========================================================
     // ANDROID APP UI
     // ========================================================
-
-    private fun showComposeUi() {
-        composeView.visibility = View.VISIBLE
-    }
-
 
     private fun pluginStateJson(): String {
 
@@ -1317,7 +1126,7 @@ class MainActivity : AppCompatActivity() {
                 signalChain.put(JSONObject()
                     .put("type", "CABINET_IR")
                     .put("position", position)
-                    .put("name", cabinetPath?.let { File(it).name } ?: "Cabinet IR"))
+                    .put("name", File(cabinetPath).name))
             }
             fxChain.forEachIndexed { index, fx ->
                 if (fx.position == position) {
@@ -1455,24 +1264,7 @@ class MainActivity : AppCompatActivity() {
                 .apply()
 
 
-            runOnUiThread {
-
-                applyingPresetUi =
-                    true
-
-                inputGainSlider.progress =
-                    (
-                            (
-                                    value +
-                                            24.0f
-                                    ) *
-                                    2.0f
-                            ).roundToInt()
-
-                applyingPresetUi =
-                    false
-            }
-        }
+}
 
 
         override fun setOutputGain(
@@ -1502,33 +1294,12 @@ class MainActivity : AppCompatActivity() {
                 .apply()
 
 
-            runOnUiThread {
-
-                applyingPresetUi =
-                    true
-
-                outputGainSlider.progress =
-                    (
-                            (
-                                    value +
-                                            24.0f
-                                    ) *
-                                    2.0f
-                            ).roundToInt()
-
-                applyingPresetUi =
-                    false
-            }
-        }
+}
 
 
         override fun setGateEnabled(
             enabled: Boolean
         ) {
-
-            gateEnabled =
-                enabled
-
 
             audioEngine.nativeSetGateEnabled(
                 enabled
@@ -1544,11 +1315,7 @@ class MainActivity : AppCompatActivity() {
                 .apply()
 
 
-            runOnUiThread {
-
-                refreshDspChainUi()
-            }
-        }
+}
 
 
         override fun setGateThreshold(
@@ -1578,24 +1345,7 @@ class MainActivity : AppCompatActivity() {
                 .apply()
 
 
-            runOnUiThread {
-
-                applyingPresetUi =
-                    true
-
-                gateThresholdSlider.progress =
-                    (
-                            (
-                                    value +
-                                            90.0f
-                                    ) *
-                                    2.0f
-                            ).roundToInt()
-
-                applyingPresetUi =
-                    false
-            }
-        }
+}
 
 
         override fun setEqLow(
@@ -1605,8 +1355,7 @@ class MainActivity : AppCompatActivity() {
             setEqFromPlugin(
                 PREF_EQ_LOW,
                 db,
-                audioEngine::nativeSetEqLowDb,
-                eqLowSlider
+                audioEngine::nativeSetEqLowDb
             )
         }
 
@@ -1618,8 +1367,7 @@ class MainActivity : AppCompatActivity() {
             setEqFromPlugin(
                 PREF_EQ_MID,
                 db,
-                audioEngine::nativeSetEqMidDb,
-                eqMidSlider
+                audioEngine::nativeSetEqMidDb
             )
         }
 
@@ -1631,8 +1379,7 @@ class MainActivity : AppCompatActivity() {
             setEqFromPlugin(
                 PREF_EQ_HIGH,
                 db,
-                audioEngine::nativeSetEqHighDb,
-                eqHighSlider
+                audioEngine::nativeSetEqHighDb
             )
         }
 
@@ -1646,8 +1393,7 @@ class MainActivity : AppCompatActivity() {
         private fun setEqFromPlugin(
             prefKey: String,
             db: Double,
-            setter: (Float) -> Unit,
-            slider: SeekBar
+            setter: (Float) -> Unit
         ) {
 
             val value =
@@ -1673,35 +1419,16 @@ class MainActivity : AppCompatActivity() {
                 .apply()
 
 
-            runOnUiThread {
-
-                applyingPresetUi =
-                    true
-
-                slider.progress =
-                    (
-                            (
-                                    value +
-                                            12.0f
-                                    ) *
-                                    2.0f
-                            ).roundToInt()
-
-                applyingPresetUi =
-                    false
-            }
         }
 
 
         fun cycleInput(): Int {
             val selected = audioRoutingUseCase.cycleInput()
-            runOnUiThread { refreshRoutingUi() }
             return selected
         }
 
         override fun cycleOutput(): Int {
             val selected = audioRoutingUseCase.cycleOutput()
-            runOnUiThread { refreshRoutingUi() }
             return selected
         }
 
@@ -1716,13 +1443,10 @@ class MainActivity : AppCompatActivity() {
 
             runOnUiThread {
 
-                status.text =
+                status.value =
                     result
 
-                audioDeviceText.text =
-                    audioEngine.nativeGetAudioDeviceInfo()
 
-                refreshRoutingUi()
             }
 
 
@@ -1737,7 +1461,7 @@ class MainActivity : AppCompatActivity() {
 
             runOnUiThread {
 
-                status.text =
+                status.value =
                     "STOPPED"
             }
 
@@ -1758,13 +1482,7 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putBoolean(PREF_NAM_BYPASS, bypass).apply()
 
 
-            runOnUiThread {
-
-                updateBypassButton()
-            }
-
-
-            return bypass
+return bypass
         }
 
 
@@ -1795,7 +1513,7 @@ class MainActivity : AppCompatActivity() {
 
                 runOnUiThread {
 
-                    status.text =
+                    status.value =
                         "NAM CHAIN FULL\n\nMaximum: $MAX_NAM_BLOCKS blocks."
                 }
 
@@ -1852,7 +1570,6 @@ class MainActivity : AppCompatActivity() {
                 persistNamChainEntries(entries)
                 val result = rebuildNativeNamChain(entries)
                 if (!result.contains("failed", ignoreCase = true) && !result.contains("error", ignoreCase = true)) {
-                    runOnUiThread { showComposeUi() }
                     JSONObject().put("blockId", "nam-$target").toString()
                 } else {
                     JSONObject().put("error", result).toString()
@@ -1914,14 +1631,13 @@ class MainActivity : AppCompatActivity() {
             }
 
             runOnUiThread {
-                status.text = "Loading captures from:\n${source.toneTitle}"
+                status.value = "Loading captures from:\n${source.toneTitle}"
             }
             Thread {
                 try {
                     val token = runBlocking { toneSessionRepository.accessToken() }
                     if (token.isNullOrBlank()) {
                         runOnUiThread {
-                            showComposeUi()
                             showPackageCaptureUnavailable("Sign in to TONE3000 to view this package's captures.")
                         }
                         return@Thread
@@ -1930,7 +1646,6 @@ class MainActivity : AppCompatActivity() {
                         loadPackageCapturesUseCase.execute(source.toneId, source.moduleType, token)
                     }
                     runOnUiThread {
-                        showComposeUi()
                         if (models.isEmpty()) {
                             showPackageCaptureUnavailable("No captures found in ${source.toneTitle}.")
                             return@runOnUiThread
@@ -1969,7 +1684,6 @@ class MainActivity : AppCompatActivity() {
                 } catch (error: Exception) {
                     Log.e(API_TAG, "Could not list package captures for ${source.blockId}", error)
                     runOnUiThread {
-                        showComposeUi()
                         showPackageCaptureUnavailable("Couldn't load this package's captures. Check your connection and sign-in.")
                     }
                 }
@@ -1989,11 +1703,11 @@ class MainActivity : AppCompatActivity() {
                 val audio = importCabinetImpulseUseCase.execute(toneId, toneTitle, imageUrl, model, token, moduleType)
                 prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
                 runOnUiThread {
-                    status.text = "CABINET IR READY\n\n$toneTitle\n${model.name}\n$audio"
+                    status.value = "CABINET IR READY\n\n$toneTitle\n${model.name}\n$audio"
                 }
             } catch (error: Exception) {
                 Log.e(API_TAG, "Cabinet IR download/load failed", error)
-                runOnUiThread { status.text = "CABINET IR LOAD FAILED\n\n${error.message}" }
+                runOnUiThread { status.value = "CABINET IR LOAD FAILED\n\n${error.message}" }
             }
         }
 
@@ -2014,12 +1728,11 @@ class MainActivity : AppCompatActivity() {
                     )
                     prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
                     runOnUiThread {
-                        status.text = "FX READY\n\n$toneTitle\n${model.name}\n${imported.audioResult}"
-                        showComposeUi()
+                        status.value = "FX READY\n\n$toneTitle\n${model.name}\n${imported.audioResult}"
                     }
                 } catch (error: Exception) {
                     Log.e(API_TAG, "FX import failed", error)
-                    runOnUiThread { status.text = "FX LOAD FAILED\n${error.message}" }
+                    runOnUiThread { status.value = "FX LOAD FAILED\n${error.message}" }
                 }
             }.start()
         }
@@ -2039,7 +1752,7 @@ class MainActivity : AppCompatActivity() {
                 val importMode = prefs.getString(PREF_PENDING_IMPORT_MODE, "add") ?: "add"
                 val replaceIndex = importMode.removePrefix("replace-fx:").toIntOrNull()
                 if (readFxChain().size >= 8 && replaceIndex == null) {
-                    runOnUiThread { status.text = "FX CHAIN FULL\nMaximum 8 space effects." }
+                    runOnUiThread { status.value = "FX CHAIN FULL\nMaximum 8 space effects." }
                 } else {
                     downloadAndLoadFx(toneId, toneTitle, "", model, token)
                 }
@@ -2093,7 +1806,7 @@ class MainActivity : AppCompatActivity() {
             val hasOtherModules = audioEngine.nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty()
             val audioResult = if (resumeAudio && hasOtherModules) audioEngine.nativeStart() else ""
             runOnUiThread {
-                status.text = if (audioResult.startsWith("AUDIO ACTIVE")) {
+                status.value = if (audioResult.startsWith("AUDIO ACTIVE")) {
                     "CABINET IR REMOVED\n$audioResult"
                 } else if (resumeAudio && hasOtherModules) {
                     "CABINET IR REMOVED\n$audioResult"
@@ -2113,7 +1826,7 @@ class MainActivity : AppCompatActivity() {
                 entries.forEachIndexed { slot, item ->
                     val loaded = audioEngine.nativeLoadFxImpulseResponse(slot, item.path)
                     if (!loaded.startsWith("FX LOADED")) {
-                        runOnUiThread { status.text = "FX CHAIN RELOAD FAILED\n$loaded" }
+                        runOnUiThread { status.value = "FX CHAIN RELOAD FAILED\n$loaded" }
                         return@Thread
                     }
                     audioEngine.nativeSetFxImpulseResponseBypass(slot, item.bypass)
@@ -2125,7 +1838,7 @@ class MainActivity : AppCompatActivity() {
                 try { File(removed.path).delete() } catch (_: Exception) { }
                 val hasModules = audioEngine.nativeGetNamBlockCount() > 0 || entries.isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null
                 val audio = if (wasRunning && hasModules) audioEngine.nativeStart() else ""
-                runOnUiThread { status.text = "FX REMOVED\n$audio" }
+                runOnUiThread { status.value = "FX REMOVED\n$audio" }
             }.start()
         }
 
@@ -2149,7 +1862,7 @@ class MainActivity : AppCompatActivity() {
         override fun addFxNative(effect: Int) {
             val entries = readFxNativeChain()
             if (entries.size >= 8) {
-                runOnUiThread { status.text = "FXNATIVE CHAIN FULL\nMaximum 8 native effects." }
+                runOnUiThread { status.value = "FXNATIVE CHAIN FULL\nMaximum 8 native effects." }
                 return
             }
             val wasRunning = audioEngine.nativeIsRunning()
@@ -2163,7 +1876,7 @@ class MainActivity : AppCompatActivity() {
             persistFxNativeChain(entries)
             syncFxNativeChain(entries, reset = true)
             val audio = if (wasRunning) audioEngine.nativeStart() else ""
-            runOnUiThread { status.text = "FXNATIVE ADDED\nStereo post NAM/CAB\n$audio" }
+            runOnUiThread { status.value = "FXNATIVE ADDED\nStereo post NAM/CAB\n$audio" }
         }
 
         override fun removeFxNative(nativeIndex: Int) {
@@ -2174,7 +1887,7 @@ class MainActivity : AppCompatActivity() {
             persistFxNativeChain(entries)
             syncFxNativeChain(entries, reset = true)
             val audio = if (wasRunning && (audioEngine.nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null)) audioEngine.nativeStart() else ""
-            runOnUiThread { status.text = "FXNATIVE REMOVED\n$audio" }
+            runOnUiThread { status.value = "FXNATIVE REMOVED\n$audio" }
         }
 
         override fun setFxNativeBypass(nativeIndex: Int, bypassed: Boolean) {
@@ -2317,8 +2030,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 runOnUiThread {
-                    updateBypassButton()
-                    status.text = result
+                    status.value = result
                 }
             }.start()
         }
@@ -2406,12 +2118,12 @@ class MainActivity : AppCompatActivity() {
                     }
                     persistFxChain(reorderedFx)
                     val audio = if (wasRunning && (reordered.isNotEmpty() || reorderedFx.isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null)) audioEngine.nativeStart() else ""
-                    runOnUiThread { status.text = if (audio.isBlank()) result else "$result\n$audio" }
+                    runOnUiThread { status.value = if (audio.isBlank()) result else "$result\n$audio" }
                     true
                 } else {
                     val rollback = rebuildNativeNamChain(entries)
                     runOnUiThread {
-                        status.text = if (rollback.startsWith("NAM CHAIN READY")) {
+                        status.value = if (rollback.startsWith("NAM CHAIN READY")) {
                             "Reordenação cancelada: $result"
                         } else {
                             "Falha ao reordenar e restaurar cadeia: $rollback"
@@ -2486,12 +2198,7 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putBoolean(PREF_NAM_BYPASS, enabled).apply()
 
 
-                runOnUiThread {
-
-                    updateBypassButton()
-                }
-
-                return
+return
             }
 
 
@@ -2595,18 +2302,18 @@ class MainActivity : AppCompatActivity() {
             val entries = readNamChainEntries()
             if (chainIndex !in entries.indices) return
             if (full && entries[chainIndex].moduleType != "AMP") {
-                runOnUiThread { status.text = "A2 Full is available for AMP blocks only." }
+                runOnUiThread { status.value = "A2 Full is available for AMP blocks only." }
                 return
             }
             val result = audioEngine.nativeSetChainNamQuality(chainIndex, full)
             if (!result.startsWith("A2 ")) {
-                runOnUiThread { status.text = result }
+                runOnUiThread { status.value = result }
                 return
             }
             val all = entries.toMutableList()
             all[chainIndex] = all[chainIndex].copy(a2Full = full)
             persistNamChainEntries(all)
-            runOnUiThread { status.text = result }
+            runOnUiThread { status.value = result }
         }
 
         private fun setNamControl(chainIndex: Int, rawDb: Double, control: Int) {
@@ -2703,38 +2410,6 @@ class MainActivity : AppCompatActivity() {
             return audioEngine.nativeGetStats()
         }
 
-        fun getAudioDeviceState(): String {
-            return JSONObject()
-                .put("running", audioEngine.nativeIsRunning())
-                .put("standalone", true)
-                .put("deviceType", "TinyALSA")
-                .put("deviceName", audioEngine.nativeGetAudioDeviceInfo())
-                .put("sampleRate", 48000)
-                .put("bufferSize", 128)
-                .put("inputChannels", 2)
-                .put("outputChannels", 2)
-                .put("supportsInput", true)
-                .put("supportsOutput", true)
-                .toString()
-        }
-
-        fun restartAudioDevice(): String {
-            audioEngine.nativeStop()
-            return audioEngine.nativeStart()
-        }
-
-        fun getAudioInputLevels(): String {
-            return audioEngine.nativeGetStats()
-        }
-
-
-        fun showDebugUi() {
-            runOnUiThread {
-                // The legacy Android debug screen is no longer a valid
-                // destination now that Compose is the primary UI.
-                showComposeUi()
-            }
-        }
     }
 
 
@@ -2744,11 +2419,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun restoreRoutingSettings() {
         audioRoutingUseCase.restoreSavedRoutes()
-        refreshRoutingUi()
-    }
-
-    private fun refreshRoutingUi() {
-        routingText.text = "\n" + audioRoutingUseCase.routingInfo()
     }
 
 
@@ -2756,71 +2426,9 @@ class MainActivity : AppCompatActivity() {
     // DSP CHAIN
     // ========================================================
 
-    private fun eqSeekListener(
-        label: TextView,
-        prefix: String,
-        prefKey: String,
-        nativeSetter: (Float) -> Unit
-    ): SeekBar.OnSeekBarChangeListener {
-
-        return object :
-            SeekBar.OnSeekBarChangeListener {
-
-            override fun onProgressChanged(
-                seekBar: SeekBar?,
-                progress: Int,
-                fromUser: Boolean
-            ) {
-
-                val db =
-                    -12.0f +
-                            progress *
-                            0.5f
-
-
-                label.text =
-                    String.format(
-                        Locale.US,
-                        "\n%s: %.1f dB",
-                        prefix,
-                        db
-                    )
-
-
-                if (!applyingPresetUi) {
-
-                    nativeSetter(db)
-                }
-
-
-                if (fromUser) {
-
-                    prefs
-                        .edit()
-                        .putFloat(
-                            prefKey,
-                            db
-                        )
-                        .apply()
-                }
-            }
-
-            override fun onStartTrackingTouch(
-                seekBar: SeekBar?
-            ) {
-            }
-
-            override fun onStopTrackingTouch(
-                seekBar: SeekBar?
-            ) {
-            }
-        }
-    }
-
-
     private fun restoreDspSettings() {
 
-        gateEnabled =
+        val gateEnabled =
             prefs.getBoolean(
                 PREF_GATE_ENABLED,
                 false
@@ -2880,66 +2488,6 @@ class MainActivity : AppCompatActivity() {
         )
 
 
-        gateThresholdSlider.progress =
-            (
-                    (
-                            gateThreshold +
-                                    90.0f
-                            ) *
-                            2.0f
-                    ).roundToInt()
-
-
-        eqLowSlider.progress =
-            (
-                    (
-                            lowDb +
-                                    12.0f
-                            ) *
-                            2.0f
-                    ).roundToInt()
-
-
-        eqMidSlider.progress =
-            (
-                    (
-                            midDb +
-                                    12.0f
-                            ) *
-                            2.0f
-                    ).roundToInt()
-
-
-        eqHighSlider.progress =
-            (
-                    (
-                            highDb +
-                                    12.0f
-                            ) *
-                            2.0f
-                    ).roundToInt()
-
-
-        refreshDspChainUi()
-    }
-
-
-    private fun refreshDspChainUi() {
-
-        gateButton.text =
-            if (gateEnabled) {
-
-                "GATE: ON"
-
-            } else {
-
-                "GATE: OFF"
-            }
-
-
-        dspChainText.text =
-            "\n" +
-                    audioEngine.nativeGetDspChainInfo()
     }
 
 
@@ -2950,40 +2498,6 @@ class MainActivity : AppCompatActivity() {
     private fun readPreset(slot: Int): PresetData? = presetRepository.read(slot)
 
     private fun presetLabel(slot: Int): String = presetRepository.label(slot)
-
-
-    private fun refreshPresetUi(
-        activeSlot: Int? = null
-    ) {
-
-        presetText.text =
-            buildString {
-
-                append(
-                    "\nPRESET\n"
-                )
-
-
-                if (activeSlot != null) {
-
-                    append(
-                        "Active: "
-                    )
-
-                    append(
-                        presetLabel(
-                            activeSlot
-                        )
-                    )
-
-                } else {
-
-                    append(
-                        "Active: current session"
-                    )
-                }
-            }
-    }
 
 
     private fun showSavePresetDialog() {
@@ -3000,7 +2514,7 @@ class MainActivity : AppCompatActivity() {
             !File(currentPath).exists()
         ) {
 
-            status.text =
+            status.value =
                 "PRESET SAVE FAILED\n\nNo NAM model is currently loaded."
 
             return
@@ -3046,19 +2560,18 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun savePreset(slot: Int) {
-        status.text = "Saving preset $slot..."
+        status.value = "Saving preset $slot..."
 
         Thread {
             try {
                 val savedLabel = savePresetUseCase.execute(slot, bypass)
                 runOnUiThread {
-                    refreshPresetUi(slot)
-                    status.text = "PRESET $slot SAVED\n\n$savedLabel"
+                    status.value = "PRESET $slot SAVED\n\n$savedLabel"
                 }
             } catch (error: Exception) {
                 Log.e(API_TAG, "Preset save failed", error)
                 runOnUiThread {
-                    status.text = "PRESET SAVE FAILED\n\n${error.message ?: error}"
+                    status.value = "PRESET SAVE FAILED\n\n${error.message ?: error}"
                 }
             }
         }.start()
@@ -3081,7 +2594,7 @@ class MainActivity : AppCompatActivity() {
 
         if (availableSlots.isEmpty()) {
 
-            status.text =
+            status.value =
                 "No saved presets."
 
             return
@@ -3134,18 +2647,16 @@ class MainActivity : AppCompatActivity() {
             )
                 ?: run {
 
-                    status.text =
+                    status.value =
                         "PRESET LOAD FAILED\n\nPreset $slot is empty."
 
                     return
                 }
 
 
-        startButton.isEnabled =
-            false
 
 
-        status.text =
+        status.value =
             "LOADING PRESET $slot...\n\n" +
                     presetLabel(
                         slot
@@ -3175,110 +2686,6 @@ class MainActivity : AppCompatActivity() {
 
 
                 runOnUiThread {
-
-                    applyingPresetUi =
-                        true
-
-
-                    inputGainSlider.progress =
-                        (
-                                (
-                                        preset.inputGainDb +
-                                                24.0f
-                                        ) *
-                                        2.0f
-                                ).roundToInt()
-
-
-                    outputGainSlider.progress =
-                        (
-                                (
-                                        preset.outputGainDb +
-                                                24.0f
-                                        ) *
-                                        2.0f
-                                ).roundToInt()
-
-
-                    currentModelText.text =
-                        buildString {
-
-                            if (
-                                !preset.toneTitle.isNullOrBlank()
-                            ) {
-
-                                append(
-                                    "Tone: ${preset.toneTitle}\n"
-                                )
-                            }
-
-                            append(
-                                "Capture: ${preset.modelName}"
-                            )
-
-                            append(
-                                "\nSize: ${preset.modelSize.uppercase()}\n"
-                            )
-                        }
-
-
-                    gateEnabled =
-                        preset.gateEnabled
-
-
-                    gateThresholdSlider.progress =
-                        (
-                                (
-                                        preset.gateThresholdDb +
-                                                90.0f
-                                        ) *
-                                        2.0f
-                                ).roundToInt()
-
-
-                    eqLowSlider.progress =
-                        (
-                                (
-                                        preset.eqLowDb +
-                                                12.0f
-                                        ) *
-                                        2.0f
-                                ).roundToInt()
-
-
-                    eqMidSlider.progress =
-                        (
-                                (
-                                        preset.eqMidDb +
-                                                12.0f
-                                        ) *
-                                        2.0f
-                                ).roundToInt()
-
-
-                    eqHighSlider.progress =
-                        (
-                                (
-                                        preset.eqHighDb +
-                                                12.0f
-                                        ) *
-                                        2.0f
-                                ).roundToInt()
-
-
-                    applyingPresetUi =
-                        false
-
-
-                    refreshDspChainUi()
-
-                    refreshRoutingUi()
-
-                    refreshPresetUi(
-                        slot
-                    )
-
-
                     bypass =
                         false
 
@@ -3287,16 +2694,13 @@ class MainActivity : AppCompatActivity() {
                     )
 
                     val audioResult = audioEngine.nativeStart()
-                    status.text = status.text.toString() + "\n\n" + audioResult
-
-                    updateBypassButton()
+                    status.value += "\n\n$audioResult"
 
 
-                    startButton.isEnabled =
-                        true
 
 
-                    status.text =
+
+                    status.value =
                         "PRESET $slot READY\n\n" +
                                 result + "\n" + restoredChain
                 }
@@ -3315,10 +2719,8 @@ class MainActivity : AppCompatActivity() {
 
                 runOnUiThread {
 
-                    startButton.isEnabled =
-                        false
 
-                    status.text =
+                    status.value =
                         "PRESET LOAD FAILED\n\n" +
                                 (
                                         e.message
@@ -3375,24 +2777,8 @@ class MainActivity : AppCompatActivity() {
         )
 
 
-        inputGainSlider.progress =
-            (
-                    (
-                            inputGain +
-                                    24.0f
-                            ) *
-                            2.0f
-                    ).roundToInt()
 
 
-        outputGainSlider.progress =
-            (
-                    (
-                            outputGain +
-                                    24.0f
-                            ) *
-                            2.0f
-                    ).roundToInt()
     }
 
 
@@ -3416,18 +2802,15 @@ class MainActivity : AppCompatActivity() {
                     val restored = rebuildNativeNamChain(extraEntries)
                     val audio = if (restored.startsWith("NAM CHAIN READY")) audioEngine.nativeStart() else restored
                     runOnUiThread {
-                        startButton.isEnabled = restored.startsWith("NAM CHAIN READY")
-                        status.text = restored + "\n" + audio
+                        status.value = restored + "\n" + audio
                     }
                 }.start()
                 return
             }
 
-            status.text =
+            status.value =
                 "Ready.\n\nNo saved model."
 
-            currentModelText.text =
-                "Capture: none\n"
 
             return
         }
@@ -3443,11 +2826,9 @@ class MainActivity : AppCompatActivity() {
 
             activeToneRepository.clear()
 
-            status.text =
+            status.value =
                 "Saved model file no longer exists."
 
-            currentModelText.text =
-                "Capture: none\n"
 
             return
         }
@@ -3474,7 +2855,7 @@ class MainActivity : AppCompatActivity() {
             )
 
 
-        status.text =
+        status.value =
             "Loading saved model..."
 
 
@@ -3532,35 +2913,11 @@ class MainActivity : AppCompatActivity() {
                     )
                 ) {
 
-                    startButton.isEnabled =
-                        true
 
 
-                    currentModelText.text =
-                        buildString {
-
-                            if (
-                                !toneTitle.isNullOrBlank()
-                            ) {
-
-                                append(
-                                    "Tone: $toneTitle\n"
-                                )
-                            }
-
-                            append(
-                                "Capture: $name"
-                            )
-
-                            append(
-                                "\nSize: ${size.uppercase()}"
-                            )
-
-                            append("\n")
-                        }
 
 
-                    status.text =
+                    status.value =
                         "SAVED MODEL LOADED\n\n" +
                                 result +
                                 "\n\n" +
@@ -3574,14 +2931,11 @@ class MainActivity : AppCompatActivity() {
                         false
                     )
 
-                    updateBypassButton()
 
                 } else {
 
-                    startButton.isEnabled =
-                        false
 
-                    status.text =
+                    status.value =
                         result
                 }
             }
@@ -3623,7 +2977,7 @@ class MainActivity : AppCompatActivity() {
             )
         ) {
 
-            status.text =
+            status.value =
                 "Configure PUBLISHABLE_KEY primeiro."
 
             return
@@ -3638,8 +2992,6 @@ class MainActivity : AppCompatActivity() {
          */
         audioEngine.nativeStop()
 
-        startButton.isEnabled =
-            false
 
 
         prefs
@@ -3683,11 +3035,11 @@ class MainActivity : AppCompatActivity() {
                     .appendQueryParameter("preview", "true")
                     .build()
 
-                status.text = "Opening TONE3000...\n\nCurrent model preserved until a new capture is loaded."
+                status.value = "Opening TONE3000...\n\nCurrent model preserved until a new capture is loaded."
                 CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(this@MainActivity, uri)
             } catch (error: Exception) {
                 Log.e(API_TAG, "Could not prepare TONE3000 authorization", error)
-                status.text = "Could not open TONE3000.\n${error.message}"
+                status.value = "Could not open TONE3000.\n${error.message}"
                 restoreCurrentModelAvailability("TONE3000 authorization setup failed.")
             }
         }
@@ -3801,8 +3153,6 @@ class MainActivity : AppCompatActivity() {
             true
 
 
-        startButton.isEnabled =
-            false
 
 
         setIntent(
@@ -3850,7 +3200,6 @@ class MainActivity : AppCompatActivity() {
 
 
                 runOnUiThread {
-                    showComposeUi()
                     if (architecture == null) {
                         if (models.isEmpty()) {
                             restoreCurrentModelAvailability("No impulse response found for:\n${tone.title}")
@@ -3934,7 +3283,7 @@ class MainActivity : AppCompatActivity() {
 
         runOnUiThread {
 
-            status.text =
+            status.value =
                 value
         }
     }
@@ -3988,13 +3337,11 @@ class MainActivity : AppCompatActivity() {
             )
 
 
-            status.text =
+            status.value =
                 "1 compatible A2 capture found.\n\n" +
                         "Loading:\n${model.name}"
 
 
-            startButton.isEnabled =
-                false
 
 
             downloadAndLoadModel(
@@ -4051,11 +3398,9 @@ class MainActivity : AppCompatActivity() {
                 .toTypedArray()
 
 
-        startButton.isEnabled =
-            false
 
 
-        status.text =
+        status.value =
             "$toneTitle\n\n" +
                     "${sorted.size} compatible captures found.\n" +
                     "Select a capture to continue."
@@ -4123,7 +3468,7 @@ class MainActivity : AppCompatActivity() {
                     )
 
 
-                    status.text =
+                    status.value =
                         "$toneTitle\n\n" +
                                 "Selected capture:\n" +
                                 if (hidePedalTier) "${selected.name} • #${selected.id}"
@@ -4192,7 +3537,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         fun loadSelected(model: OnlineModel) {
-            status.text = "$toneTitle\n\nSelected space capture:\n${model.name}\nLoading..."
+            status.value = "$toneTitle\n\nSelected space capture:\n${model.name}\nLoading..."
             Thread {
                 AudioAppController().loadSelectedCabinet(
                     toneId = toneId,
@@ -4220,7 +3565,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             "ADD FX — SELECT SPACE CAPTURE"
         }
-        status.text = "$toneTitle\n\n${models.size} space captures found. Select one to continue."
+        status.value = "$toneTitle\n\n${models.size} space captures found. Select one to continue."
         val dialog = AlertDialog.Builder(this)
             .setTitle(title)
             .setItems(labels) { _, index -> loadSelected(models[index]) }
@@ -4247,7 +3592,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         fun loadSelected(model: OnlineModel) {
-            status.text = "$toneTitle\n\nSelected cabinet capture:\n${model.name}\nLoading..."
+            status.value = "$toneTitle\n\nSelected cabinet capture:\n${model.name}\nLoading..."
             Thread {
                 AudioAppController().loadSelectedCabinet(
                     toneId = toneId,
@@ -4302,11 +3647,9 @@ class MainActivity : AppCompatActivity() {
         val imageUrl = prefs.getString(PREF_PENDING_TONE_IMAGE, "") ?: ""
         val moduleType = prefs.getString(PREF_PENDING_TONE_TYPE, "AMP") ?: "AMP"
 
-        startButton.isEnabled =
-            false
 
 
-        status.text =
+        status.value =
             "DOWNLOADING CAPTURE...\n\n" +
                     "Tone: $toneTitle\n" +
                     "Capture: ${model.name}\n" +
@@ -4381,14 +3724,9 @@ class MainActivity : AppCompatActivity() {
 
                     runOnUiThread {
 
-                        startButton.isEnabled =
-                            prefs.getString(
-                                PREF_LAST_MODEL_PATH,
-                                null
-                            ) != null
 
 
-                        status.text =
+                        status.value =
                             "NAM BLOCK ADDED\n\n" +
                                     "Tone: $toneTitle\n" +
                                     "Capture: ${model.name}\n" +
@@ -4424,8 +3762,7 @@ class MainActivity : AppCompatActivity() {
                     prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
 
                     runOnUiThread {
-                        startButton.isEnabled = true
-                        status.text = "NAM BLOCK ${replacementIndex + 1} REPLACED\n\n" +
+                        status.value = "NAM BLOCK ${replacementIndex + 1} REPLACED\n\n" +
                                 "Tone: $toneTitle\n" +
                                 "Capture: ${model.name}\n" +
                                 "Size: ${model.size.uppercase()}\n\n" +
@@ -4451,15 +3788,9 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
 
                 runOnUiThread {
-                    startButton.isEnabled = true
-                    currentModelText.text = "Tone: $toneTitle\n" +
-                        "Capture: ${model.name}\n" +
-                        "Size: ${model.size.uppercase()}\n" +
-                        "Model ID: ${model.id}\n"
                     bypass = false
                     audioEngine.nativeSetBypass(false)
-                    updateBypassButton()
-                    status.text = "TONE3000 CAPTURE READY\n\n$loadResult\n$audioResult"
+                    status.value = "TONE3000 CAPTURE READY\n\n$loadResult\n$audioResult"
                 }
 
             } catch (
@@ -4486,8 +3817,6 @@ class MainActivity : AppCompatActivity() {
 
                 runOnUiThread {
 
-                    startButton.isEnabled =
-                        previous.first
 
 
                     if (previous.first) {
@@ -4499,11 +3828,10 @@ class MainActivity : AppCompatActivity() {
                             false
                         )
 
-                        updateBypassButton()
                     }
 
 
-                    status.text =
+                    status.value =
                         "CAPTURE ERROR\n\n" +
                                 e.javaClass.simpleName +
                                 "\n" +
@@ -4540,11 +3868,9 @@ class MainActivity : AppCompatActivity() {
                     File(path).exists()
 
 
-        startButton.isEnabled =
-            available
 
 
-        status.text =
+        status.value =
             buildString {
 
                 append(
@@ -4581,16 +3907,4 @@ class MainActivity : AppCompatActivity() {
     // UI STATE
     // ========================================================
 
-    private fun updateBypassButton() {
-
-        bypassButton.text =
-            if (bypass) {
-
-                "MODE: BYPASS"
-
-            } else {
-
-                "MODE: NAM"
-            }
-    }
 }

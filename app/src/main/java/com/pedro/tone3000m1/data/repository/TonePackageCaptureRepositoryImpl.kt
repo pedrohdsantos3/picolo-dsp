@@ -11,7 +11,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
 
-/** Persists package capture lists using the app's existing SharedPreferences JSON format. */
+/** Persists package capture lists as JSON values in Preferences DataStore. */
 internal class TonePackageCaptureRepositoryImpl(
     private val preferences: DataStore<Preferences>,
 ) : TonePackageCaptureRepository {

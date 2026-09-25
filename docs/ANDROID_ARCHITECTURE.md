@@ -11,10 +11,12 @@ Jetpack Compose + PicoloComposeViewModel
         ↓ estado e ações
 PicoloActions (contrato tipado)
         ↓
-        AudioAppController (adaptador ainda hospedado em MainActivity)
-        ├── casos de uso e contratos de domínio
-        ├── repositórios: DataStore / SharedPreferences / API / arquivos
+        AudioAppController (ainda hospedado em MainActivity)
+        ├── PicoloAppContainer (monta repositórios e casos de uso)
+        ├── contratos de domínio
         └── NativeAudioEngine (fachada JNI)
+              ↓
+        repositórios: DataStore / SharedPreferences / API / arquivos
                     ↓
              C++: TinyALSA + NAM + IR + efeitos
 ```
@@ -72,38 +74,38 @@ PicoloActions (contrato tipado)
 - `PicoloComposeViewModel` mantém estado de UI e coleta snapshots publicados
   após comandos da UI e alterações no status. `PicoloStateRepository` consulta
   periodicamente apenas as métricas contínuas de áudio necessárias aos
-  indicadores de desempenho. `AudioAppController` ainda depende da Activity.
-- `MainActivity` cuida do ciclo de vida Android e é a única dona da tela Compose;
-  a árvore de Views antiga foi removida. OAuth, API, armazenamento dos presets,
-  cache de captures, restauração do modelo ativo e importação NAM/FX/IR já passam
-  por limites próprios. Alguns adaptadores de status e controles ainda ficam na
-  Activity.
+  indicadores de desempenho. O status é mantido como estado observável; não há
+  `TextView`, `Button` ou `SeekBar` auxiliares sem conexão com a tela.
+- `PicoloAppContainer` monta o motor, os repositórios e os casos de uso sem
+  depender da Activity. `AudioAppController` ainda está declarado dentro dela e
+  usa helpers de navegação e importação da Activity.
+- `MainActivity` cuida do ciclo de vida Android, permissões, seletores e
+  navegação OAuth; Compose é a única interface. OAuth, API, armazenamento dos
+  presets, cache de captures, restauração do modelo ativo e importação NAM/FX/IR
+  passam por limites próprios. Parte da coordenação de ações ainda pertence ao
+  controller hospedado na Activity.
 
 ## Sequência de refatoração
 
-1. **Modelagem e persistência:** estado Compose, blocos NAM adicionais,
-   presets, dados de FX/IR, modelo ativo e cache de captures usam modelos Kotlin
-   nas fronteiras internas. Os formatos JSON e as chaves antigas continuam
-   compatíveis e têm cobertura instrumentada. A migração para DataStore fica
-   pendente enquanto a Activity ainda lê e grava preferências diretamente.
-2. **Controlador da aplicação:** presets, roteamento, OAuth/API, carga de
-  captures, validação do modelo principal, restauração e importação de FX/IR já
-  usam casos de uso e contratos. Os fluxos add/replace NAM e FX/IR já usam casos
-  de uso; a Activity ainda persiste os metadados do replace e atualiza os
-  componentes visuais após o resultado.
-3. **Limite JNI:** extraímos as declarações e a carga da biblioteca para
-   `NativeAudioEngine`, junto com a atualização coordenada dos símbolos C++.
-   Os casos de uso de preset e roteamento dependem de interfaces de engine. O
-   motor continua sem dependências Android e sem trabalho bloqueante no
-   processamento.
-4. **Estado de tela:** ações Compose e alterações no status publicam snapshots
-   imutáveis. A consulta periódica de 700 ms foi reduzida às métricas contínuas
-   do áudio necessárias aos indicadores de desempenho.
-5. **Preferências:** migração gradual para DataStore iniciada pelo cache de
-   captures e pela sessão OAuth, com cobertura instrumentada dos formatos
-   legados. As demais preferências ainda usam SharedPreferences e devem migrar
-   após extração e cobertura de compatibilidade dos repositórios
-   correspondentes.
+1. **Modelagem e persistência:** modelos Kotlin e repositórios já cobrem o estado
+   Compose, cadeias NAM/FX/IR, presets, modelo ativo e captures. Os formatos e
+   chaves legados permanecem compatíveis e têm cobertura instrumentada.
+2. **Controlador da aplicação:** casos de uso coordenam presets, roteamento,
+   OAuth/API, captures, restauração e importações. `PicoloAppContainer` monta as
+   dependências fora da Activity. Falta mover `AudioAppController` e a
+   coordenação de persistência restante para componentes sem referência à
+   Activity; os metadados finais da substituição NAM ainda são gravados nela.
+3. **Limite JNI:** concluído. `NativeAudioEngine` concentra a carga da
+   biblioteca e declarações JNI, e os casos de uso de preset e roteamento usam
+   interfaces de engine. O callback de áudio continua sem dependências Android.
+4. **Estado de tela:** snapshots são publicados após ações e mudanças de status;
+   só as métricas contínuas do áudio são consultadas a cada 700 ms. Os controles
+   Android auxiliares e a ponte por `TextWatcher` foram removidos. A geração do
+   snapshot ainda serializa estado em JSON antes da conversão para `PicoloUiState`.
+5. **Preferências:** DataStore migrou cache de captures e sessão OAuth. NAM,
+   FX/IR, presets, roteamento, modelo ativo e configurações de áudio ainda usam
+   SharedPreferences; a migração desses grupos requer adaptar os contratos
+   síncronos e cobrir a compatibilidade de cada grupo.
 
 Cada etapa deve ser pequena o bastante para preservar o áudio ativo, os
 presets salvos, imports locais e a seleção TONE3000.
