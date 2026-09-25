@@ -29,6 +29,7 @@ import com.pedro.tone3000m1.data.repository.PresetRepositoryImpl
 import com.pedro.tone3000m1.data.repository.AudioRoutingRepositoryImpl
 import com.pedro.tone3000m1.data.repository.PresetPreferenceKeys
 import com.pedro.tone3000m1.controller.AudioParameterController
+import com.pedro.tone3000m1.controller.NamParameterController
 import com.pedro.tone3000m1.ui.state.PicoloStateRepository
 import com.pedro.tone3000m1.ui.model.readPicoloState
 import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
@@ -284,6 +285,22 @@ class MainActivity : AppCompatActivity() {
             setEqMidNative = audioEngine::nativeSetEqMidDb,
             setEqHighNative = audioEngine::nativeSetEqHighDb,
             setEqEnabledNative = audioEngine::nativeSetEqEnabled,
+        )
+    }
+    private val namParameterController by lazy {
+        NamParameterController(
+            readEntries = ::readNamChainEntries,
+            persistEntry = ::persistNamControlEntry,
+            setBypassNative = audioEngine::nativeSetChainNamBypass,
+            setGainNative = audioEngine::nativeSetChainNamGainDb,
+            setInGainNative = audioEngine::nativeSetChainNamInGainDb,
+            setMixNative = audioEngine::nativeSetChainNamMix,
+            setEqNative = audioEngine::nativeSetChainNamEqDb,
+            setEqPositionNative = audioEngine::nativeSetChainNamEqPre,
+            setEqEnabledNative = audioEngine::nativeSetChainNamEqEnabled,
+            setNormalizeNative = audioEngine::nativeSetChainNamNormalize,
+            setQualityNative = audioEngine::nativeSetChainNamQuality,
+            publishStatus = { message -> runOnUiThread { status.value = message } },
         )
     }
     private val namChainRepository get() = appContainer.namChainRepository
@@ -704,6 +721,37 @@ class MainActivity : AppCompatActivity() {
             audioEngine.nativeSetFxImpulseResponsePosition(index, position)
         }
         persistFxChain(fxEntries)
+    }
+
+    private fun persistNamControlEntry(chainIndex: Int, entry: ExtraNamEntry) {
+        val primaryPath = prefs.getString(PREF_LAST_MODEL_PATH, null)
+        val hasPrimary = primaryPath != null && File(primaryPath).exists()
+        if (hasPrimary && chainIndex == 0) {
+            bypass = entry.bypass
+            prefs.edit()
+                .putFloat(PREF_NAM_GAIN_DB, entry.gainDb)
+                .putFloat(PREF_NAM_IN_GAIN_DB, entry.inGainDb)
+                .putFloat(PREF_NAM_MIX, entry.mix)
+                .putFloat(PREF_NAM_EQ_LOW_DB, entry.eqLowDb)
+                .putFloat(PREF_NAM_EQ_MID_DB, entry.eqMidDb)
+                .putFloat(PREF_NAM_EQ_HIGH_DB, entry.eqHighDb)
+                .putFloat(PREF_NAM_EQ_BAND3_DB, entry.eqBand3Db)
+                .putFloat(PREF_NAM_EQ_BAND4_DB, entry.eqBand4Db)
+                .putFloat(PREF_NAM_EQ_BAND5_DB, entry.eqBand5Db)
+                .putBoolean(PREF_NAM_BYPASS, entry.bypass)
+                .putBoolean(PREF_NAM_EQ_PRE, entry.eqPre)
+                .putBoolean(PREF_NAM_EQ_ENABLED, entry.eqEnabled)
+                .putBoolean(PREF_NAM_NORMALIZE, entry.normalize)
+                .putBoolean(PREF_NAM_A2_FULL, entry.a2Full)
+                .apply()
+            return
+        }
+
+        val extraIndex = chainIndex - if (hasPrimary) 1 else 0
+        val extras = readExtraNamChain()
+        if (extraIndex !in extras.indices) return
+        extras[extraIndex] = entry
+        persistExtraNamChain(extras)
     }
 
 
@@ -2027,164 +2075,32 @@ return bypass
         }
 
 
-        override fun setNamBypass(
-            chainIndex: Int,
-            enabled: Boolean
-        ) {
+        override fun setNamBypass(chainIndex: Int, enabled: Boolean) =
+            namParameterController.setBypass(chainIndex, enabled)
 
-            audioEngine.nativeSetChainNamBypass(
-                chainIndex,
-                enabled
-            )
+        override fun setNamGain(chainIndex: Int, db: Double) =
+            namParameterController.setGain(chainIndex, db)
 
+        override fun setNamInGain(chainIndex: Int, db: Double) =
+            namParameterController.setInGain(chainIndex, db)
 
-            if (chainIndex == 0) {
+        override fun setNamMix(chainIndex: Int, mix: Double) =
+            namParameterController.setMix(chainIndex, mix)
 
-                bypass =
-                    enabled
+        override fun setNamEq(chainIndex: Int, band: Int, db: Double) =
+            namParameterController.setEq(chainIndex, band, db)
 
-                prefs.edit().putBoolean(PREF_NAM_BYPASS, enabled).apply()
+        override fun setNamEqPosition(chainIndex: Int, pre: Boolean) =
+            namParameterController.setEqPosition(chainIndex, pre)
 
+        override fun setNamEqEnabled(chainIndex: Int, enabled: Boolean) =
+            namParameterController.setEqEnabled(chainIndex, enabled)
 
-return
-            }
+        override fun setNamNormalize(chainIndex: Int, enabled: Boolean) =
+            namParameterController.setNormalize(chainIndex, enabled)
 
-
-            val entries =
-                readExtraNamChain()
-
-
-            val metadataIndex =
-                chainIndex -
-                        1
-
-
-            if (
-                metadataIndex in
-                entries.indices
-            ) {
-
-                val current =
-                    entries[
-                        metadataIndex
-                    ]
-
-
-                entries[
-                    metadataIndex
-                ] =
-                    current.copy(
-                        bypass =
-                            enabled
-                    )
-
-
-                persistExtraNamChain(
-                    entries
-                )
-            }
-        }
-
-
-        override fun setNamGain(chainIndex: Int, db: Double) {
-            setNamControl(chainIndex, db, 0)
-        }
-
-        override fun setNamInGain(chainIndex: Int, db: Double) {
-            val entries = readNamChainEntries()
-            if (chainIndex !in entries.indices) return
-            val value = db.toFloat().coerceIn(-24.0f, 24.0f)
-            val all = entries.toMutableList()
-            all[chainIndex] = all[chainIndex].copy(inGainDb = value)
-            persistNamChainEntries(all)
-            audioEngine.nativeSetChainNamInGainDb(chainIndex, value)
-        }
-
-        override fun setNamMix(chainIndex: Int, mix: Double) {
-            val entries = readNamChainEntries()
-            if (chainIndex !in entries.indices) return
-            val value = mix.toFloat().coerceIn(0.0f, 1.0f)
-            val all = entries.toMutableList()
-            all[chainIndex] = all[chainIndex].copy(mix = value)
-            persistNamChainEntries(all)
-            audioEngine.nativeSetChainNamMix(chainIndex, value)
-        }
-
-        override fun setNamEq(chainIndex: Int, band: Int, db: Double) {
-            setNamControl(chainIndex, db, band + 1)
-        }
-
-        override fun setNamEqPosition(chainIndex: Int, pre: Boolean) {
-            val entries = readNamChainEntries()
-            if (chainIndex !in entries.indices) return
-            val all = entries.toMutableList()
-            all[chainIndex] = all[chainIndex].copy(eqPre = pre)
-            persistNamChainEntries(all)
-            audioEngine.nativeSetChainNamEqPre(chainIndex, pre)
-        }
-
-        override fun setNamEqEnabled(chainIndex: Int, enabled: Boolean) {
-            if (chainIndex == 0) {
-                prefs.edit().putBoolean(PREF_NAM_EQ_ENABLED, enabled).apply()
-            } else {
-                val entries = readNamChainEntries()
-                val extraIndex = chainIndex - 1
-                if (extraIndex !in entries.indices) return
-                val all = entries.toMutableList()
-                all[extraIndex] = all[extraIndex].copy(eqEnabled = enabled)
-                persistNamChainEntries(all)
-            }
-            audioEngine.nativeSetChainNamEqEnabled(chainIndex, enabled)
-        }
-
-        override fun setNamNormalize(chainIndex: Int, enabled: Boolean) {
-            val entries = readNamChainEntries()
-            if (chainIndex !in entries.indices) return
-            val all = entries.toMutableList()
-            all[chainIndex] = all[chainIndex].copy(normalize = enabled)
-            persistNamChainEntries(all)
-            audioEngine.nativeSetChainNamNormalize(chainIndex, enabled)
-        }
-
-        override fun setNamQuality(chainIndex: Int, full: Boolean) {
-            val entries = readNamChainEntries()
-            if (chainIndex !in entries.indices) return
-            if (full && entries[chainIndex].moduleType != "AMP") {
-                runOnUiThread { status.value = "A2 Full is available for AMP blocks only." }
-                return
-            }
-            val result = audioEngine.nativeSetChainNamQuality(chainIndex, full)
-            if (!result.startsWith("A2 ")) {
-                runOnUiThread { status.value = result }
-                return
-            }
-            val all = entries.toMutableList()
-            all[chainIndex] = all[chainIndex].copy(a2Full = full)
-            persistNamChainEntries(all)
-            runOnUiThread { status.value = result }
-        }
-
-        private fun setNamControl(chainIndex: Int, rawDb: Double, control: Int) {
-            val entries = readNamChainEntries()
-            if (chainIndex !in entries.indices) return
-            val current = entries[chainIndex]
-            val value = rawDb.toFloat().coerceIn(if (control == 0) -24.0f else -12.0f,
-                if (control == 0) 12.0f else 12.0f)
-            val updated = when (control) {
-                0 -> current.copy(gainDb = value)
-                1 -> current.copy(eqLowDb = value)
-                2 -> current.copy(eqMidDb = value)
-                3 -> current.copy(eqHighDb = value)
-                4 -> current.copy(eqBand3Db = value)
-                5 -> current.copy(eqBand4Db = value)
-                else -> current.copy(eqBand5Db = value)
-            }
-            val all = entries.toMutableList()
-            all[chainIndex] = updated
-            persistNamChainEntries(all)
-            if (control == 0) audioEngine.nativeSetChainNamGainDb(chainIndex, value)
-            else audioEngine.nativeSetChainNamEqDb(chainIndex, control - 1, value)
-        }
+        override fun setNamQuality(chainIndex: Int, full: Boolean) =
+            namParameterController.setQuality(chainIndex, full)
 
 
         fun clearExtraNams() {
