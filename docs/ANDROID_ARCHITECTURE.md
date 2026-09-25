@@ -68,14 +68,15 @@ PicoloActions (contrato tipado)
   respostas parciais.
 - `ImportCabinetImpulseUseCase` coordena o download, normalização WAV, carga no motor e início do áudio. `CabinetImpulseRepositoryImpl` mantém as chaves e defaults legados de cabinet IR.
 - `ui/model/PicoloUiState.kt` mantém os modelos de apresentação e converte o
-  snapshot nativo separado dos Composables.
+  snapshot legado para `PicoloUiState` na borda Android, separado dos Composables.
 - `ui/actions/PicoloActions.kt` descreve as ações que a UI pode executar. Os
   Composables dependem desse contrato, sem referenciar a Activity.
-- `PicoloComposeViewModel` mantém estado de UI e coleta snapshots publicados
-  após comandos da UI e alterações no status. `PicoloStateRepository` consulta
-  periodicamente apenas as métricas contínuas de áudio necessárias aos
-  indicadores de desempenho. O status é mantido como estado observável; não há
-  `TextView`, `Button` ou `SeekBar` auxiliares sem conexão com a tela.
+- `PicoloComposeViewModel` mantém estado de UI e coleta snapshots tipados
+  publicados após comandos da UI e alterações no status. `ui/state/PicoloStateRepository`
+  consulta periodicamente apenas as métricas contínuas de áudio necessárias aos
+  indicadores de desempenho. JSON não atravessa mais o repositório nem a
+  ViewModel; o status é parte de `PicoloUiState`. Não há `TextView`, `Button` ou
+  `SeekBar` auxiliares sem conexão com a tela.
 - `PicoloAppContainer` monta o motor, os repositórios e os casos de uso sem
   depender da Activity. `AudioAppController` ainda está declarado dentro dela e
   usa helpers de navegação e importação da Activity.
@@ -98,10 +99,11 @@ PicoloActions (contrato tipado)
 3. **Limite JNI:** concluído. `NativeAudioEngine` concentra a carga da
    biblioteca e declarações JNI, e os casos de uso de preset e roteamento usam
    interfaces de engine. O callback de áudio continua sem dependências Android.
-4. **Estado de tela:** snapshots são publicados após ações e mudanças de status;
-   só as métricas contínuas do áudio são consultadas a cada 700 ms. Os controles
-   Android auxiliares e a ponte por `TextWatcher` foram removidos. A geração do
-   snapshot ainda serializa estado em JSON antes da conversão para `PicoloUiState`.
+4. **Estado de tela:** snapshots tipados são publicados após ações e mudanças de
+   status; só as métricas contínuas do áudio são consultadas a cada 700 ms. Os
+   controles Android auxiliares e a ponte por `TextWatcher` foram removidos.
+   A serialização JSON ainda existe na borda Android para ler o estado legado;
+   o repositório e a ViewModel recebem apenas `PicoloUiState`.
 5. **Preferências:** DataStore migrou cache de captures e sessão OAuth. NAM,
    FX/IR, presets, roteamento, modelo ativo e configurações de áudio ainda usam
    SharedPreferences; a migração desses grupos requer adaptar os contratos

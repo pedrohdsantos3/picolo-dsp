@@ -28,7 +28,8 @@ import com.pedro.tone3000m1.data.repository.FxChainRepository
 import com.pedro.tone3000m1.data.repository.PresetRepositoryImpl
 import com.pedro.tone3000m1.data.repository.AudioRoutingRepositoryImpl
 import com.pedro.tone3000m1.data.repository.PresetPreferenceKeys
-import com.pedro.tone3000m1.data.repository.PicoloStateRepository
+import com.pedro.tone3000m1.ui.state.PicoloStateRepository
+import com.pedro.tone3000m1.ui.model.readPicoloState
 import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
 import com.pedro.tone3000m1.data.repository.ToneImportRepositoryImpl
 import com.pedro.tone3000m1.data.repository.ToneSessionRepositoryImpl
@@ -537,7 +538,7 @@ class MainActivity : AppCompatActivity() {
             val serializedState = pluginStateJson()
             val statusText = withContext(Dispatchers.Main.immediate) { status.value }
             if (requestVersion == stateSnapshotVersion.get()) {
-                repository.publish(serializedState, statusText)
+                repository.publish(readPicoloState(serializedState, statusText))
             }
         }
     }
