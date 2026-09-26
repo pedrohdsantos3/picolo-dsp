@@ -3,6 +3,7 @@ package com.pedro.tone3000m1
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.OpenableColumns
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -23,6 +24,7 @@ import org.json.JSONObject
 import com.pedro.tone3000m1.domain.model.ExtraNamEntry
 import com.pedro.tone3000m1.domain.model.FxImpulseEntry
 import com.pedro.tone3000m1.domain.model.FxNativeEntry
+import com.pedro.tone3000m1.domain.model.DualDelayTiming
 import com.pedro.tone3000m1.data.repository.NamChainRepository
 import com.pedro.tone3000m1.data.repository.FxChainRepository
 import com.pedro.tone3000m1.data.repository.PresetRepositoryImpl
@@ -40,11 +42,15 @@ import com.pedro.tone3000m1.controller.FxNativeChainController
 import com.pedro.tone3000m1.controller.FxChainRemovalController
 import com.pedro.tone3000m1.controller.NamChainEditController
 import com.pedro.tone3000m1.controller.SignalChainReorderController
+import com.pedro.tone3000m1.controller.NamImportPlacementController
 import com.pedro.tone3000m1.controller.ResetToDefaultController
 import com.pedro.tone3000m1.controller.LocalNamImportController
+import com.pedro.tone3000m1.controller.OnlineCaptureImportController
 import com.pedro.tone3000m1.ui.state.PicoloStateRepository
-import com.pedro.tone3000m1.ui.model.readPicoloState
-import com.pedro.tone3000m1.ui.model.PicoloLegacyStateJsonFactory
+import com.pedro.tone3000m1.ui.model.PicoloUiStateFactory
+import com.pedro.tone3000m1.ui.model.UiLocalNamCapture
+import com.pedro.tone3000m1.ui.CaptureSelectionAdapter
+import com.pedro.tone3000m1.ui.actions.PicoloActionsCoordinator
 import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
 import com.pedro.tone3000m1.data.repository.ToneImportRepositoryImpl
 import com.pedro.tone3000m1.data.repository.ToneSessionRepositoryImpl
@@ -75,7 +81,6 @@ import com.pedro.tone3000m1.domain.usecase.MergePackageCapturesUseCase
 import com.pedro.tone3000m1.domain.usecase.PrepareImpulseResponseUseCase
 import com.pedro.tone3000m1.domain.usecase.PrepareToneAuthorizationUseCase
 import com.pedro.tone3000m1.domain.usecase.RestorePreviousToneModelUseCase
-import com.pedro.tone3000m1.ui.actions.PicoloActions
 import com.pedro.tone3000m1.ui.actions.StatePublishingPicoloActions
 import java.io.File
 import java.io.FileOutputStream
@@ -87,7 +92,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
@@ -235,6 +239,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var composeView: ComposeView
 
     private val status = MutableStateFlow("")
+    private val loadingMessage = MutableStateFlow<String?>(null)
     private val selectedModuleTypeState = MutableStateFlow("AMP")
     private var picoloStateRepository: PicoloStateRepository? = null
     private val stateSnapshotVersion = AtomicLong(0L)
@@ -300,15 +305,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val prefs get() = appContainer.preferences
-    private val legacyStateJsonFactory by lazy {
-        PicoloLegacyStateJsonFactory(
-            preferences = prefs,
-            engine = audioEngine,
+    private val picoloUiStateFactory by lazy {
+        PicoloUiStateFactory(
+            preferenceDataStore = appContainer.preferenceDataStore,
+            isRunning = audioEngine::nativeIsRunning,
+            readRouting = audioEngine::nativeGetRoutingInfo,
+            readAudioDevice = audioEngine::nativeGetAudioDeviceInfo,
             readExtras = ::readExtraNamChain,
             readFxChain = ::readFxChain,
             readFxNativeChain = ::readFxNativeChain,
             presetReader = ::readPreset,
             presetLabeler = ::presetLabel,
+            presetCount = PRESET_COUNT,
+            maxNamBlocks = MAX_NAM_BLOCKS,
+            readLocalNamLibrary = { appContainer.localNamLibraryRepository.list() },
         )
     }
     private val audioEngine get() = appContainer.audioEngine
@@ -363,6 +373,8 @@ class MainActivity : AppCompatActivity() {
             applyNativeBypass = audioEngine::nativeSetFxNativeBypass,
             applyNativeMix = audioEngine::nativeSetFxNativeMix,
             applyNativeParameter = audioEngine::nativeSetFxNativeParameter,
+            applyNativeOutputGainDb = audioEngine::nativeSetFxNativeOutputGainDb,
+            readGlobalTapTempoBpm = { prefs.getFloat(PresetPreferenceKeys.GLOBAL_TAP_TEMPO_BPM, 120f) },
             isAudioRunning = audioEngine::nativeIsRunning,
             syncNativeChain = { entries -> syncFxNativeChain(entries, reset = true) },
             restartAudio = { audioEngine.nativeStart() },
@@ -418,11 +430,30 @@ class MainActivity : AppCompatActivity() {
             setFxPosition = audioEngine::nativeSetFxImpulseResponsePosition,
             hasModules = {
                 audioEngine.nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty() ||
-                    prefs.getString(PREF_CABINET_IR_PATH, null) != null
+                    readFxNativeChain().isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null
             },
             restartAudio = audioEngine::nativeStart,
             publishStatus = { message -> runOnUiThread { status.value = message } },
             reportError = { error -> Log.e(API_TAG, "Chain reorder failed", error) },
+            readNativeEntries = ::readFxNativeChain,
+            persistNativeEntries = ::persistFxNativeChain,
+            syncNativeChain = { entries -> syncFxNativeChain(entries, reset = true) },
+        )
+    }
+    private val namImportPlacementController by lazy {
+        NamImportPlacementController(
+            readNamEntries = ::readNamChainEntries,
+            persistNamEntries = ::persistNamChainEntries,
+            rebuildNamChain = ::rebuildNativeNamChain,
+            cabinetIsLoaded = {
+                prefs.getString(PREF_CABINET_IR_PATH, null)?.let { File(it).isFile } == true
+            },
+            readCabinetPosition = { default -> prefs.getInt(PREF_CABINET_IR_POSITION, default) },
+            persistCabinetPosition = { position -> prefs.edit().putInt(PREF_CABINET_IR_POSITION, position).apply() },
+            setCabinetPosition = audioEngine::nativeSetImpulseResponsePosition,
+            readFxEntries = ::readFxChain,
+            persistFxEntries = ::persistFxChain,
+            setFxPosition = audioEngine::nativeSetFxImpulseResponsePosition,
         )
     }
     private val cabinetParameterController by lazy {
@@ -486,7 +517,7 @@ class MainActivity : AppCompatActivity() {
             clearNamChain = audioEngine::nativeClearNamChain,
             clearImpulseResponse = audioEngine::nativeClearImpulseResponse,
             clearFxImpulseResponse = audioEngine::nativeClearFxImpulseResponse,
-            clearActiveTone = activeToneRepository::clear,
+            clearActiveTone = ::clearActiveToneAsync,
             clearExtraNamChain = { persistExtraNamChain(emptyList()) },
             setEqLow = audioEngine::nativeSetEqLowDb,
             setEqMid = audioEngine::nativeSetEqMidDb,
@@ -584,6 +615,21 @@ class MainActivity : AppCompatActivity() {
     private val fxChainRepository get() = appContainer.fxChainRepository
     private val importFxCaptureUseCase get() = appContainer.importFxCaptureUseCase
     private val importCabinetImpulseUseCase get() = appContainer.importCabinetImpulseUseCase
+    private val onlineCaptureImportController by lazy {
+        OnlineCaptureImportController(
+            importCabinet = importCabinetImpulseUseCase,
+            importFx = importFxCaptureUseCase,
+            pendingImportMode = appContainer.pendingImportModeRepository,
+            readFxCount = { fxChainRepository.readImpulseChain().size },
+            namBlockCount = audioEngine::nativeGetNamBlockCount,
+            cabinetIsLoaded = {
+                prefs.getString(PREF_CABINET_IR_PATH, null)?.let { File(it).isFile } == true
+            },
+            readCabinetPosition = { default -> prefs.getInt(PREF_CABINET_IR_POSITION, default) },
+            publishStatus = { message -> withContext(Dispatchers.Main.immediate) { status.value = message } },
+            reportFailure = { message, error -> Log.e(API_TAG, message, error) },
+        )
+    }
     private val presetRepository get() = appContainer.presetRepository
     private val audioRoutingUseCase get() = appContainer.audioRoutingUseCase
     private val savePresetUseCase get() = appContainer.savePresetUseCase
@@ -593,6 +639,10 @@ class MainActivity : AppCompatActivity() {
     private val currentToneRepository get() = appContainer.currentToneRepository
     private val activeToneRepository get() = appContainer.activeToneRepository
     private val restorePreviousToneModelUseCase get() = appContainer.restorePreviousToneModelUseCase
+
+    private fun clearActiveToneAsync() {
+        lifecycleScope.launch(Dispatchers.IO) { activeToneRepository.clear() }
+    }
     private val tonePackageCaptureRepository get() = appContainer.tonePackageCaptureRepository
     private val mergePackageCapturesUseCase get() = appContainer.mergePackageCapturesUseCase
     private val toneImportRepository get() = appContainer.toneImportRepository
@@ -635,7 +685,10 @@ class MainActivity : AppCompatActivity() {
                     pendingOAuthIntent ==
                     null
                 ) {
-                    restoreLastModel()
+                    lifecycleScope.launch {
+                        prefs.awaitLoaded()
+                        restoreLastModel()
+                    }
                 }
 
             } else {
@@ -678,6 +731,50 @@ class MainActivity : AppCompatActivity() {
             }.start()
         }
 
+    private var pendingLocalNamImportMode: String = "add"
+    private val openNamFile =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            val importMode = pendingLocalNamImportMode
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val displayName = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val nameColumn = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (nameColumn >= 0 && cursor.moveToFirst()) cursor.getString(nameColumn) else null
+                    } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "imported.nam"
+                    require(displayName.substringAfterLast('.', "").equals("nam", ignoreCase = true)) {
+                        "Escolha um arquivo .nam A2."
+                    }
+                    val moduleType = importMode.substringAfterLast(':').uppercase(Locale.US)
+                    val item = contentResolver.openInputStream(uri)?.use { input ->
+                        appContainer.localNamLibraryRepository.save(
+                            input = input,
+                            originalName = displayName,
+                            moduleType = moduleType,
+                            toneTitle = "Importado do dispositivo",
+                            toneId = "local-device",
+                        )
+                    } ?: error("Não foi possível abrir o arquivo selecionado.")
+                    val capture = UiLocalNamCapture(
+                        path = item.file.absolutePath,
+                        modelName = item.modelName,
+                        modelSize = item.modelSize,
+                        toneTitle = item.toneTitle,
+                        toneId = item.toneId,
+                        imageUrl = item.imageUrl,
+                        moduleType = item.moduleType,
+                        modelId = item.modelId,
+                    )
+                    withContext(Dispatchers.Main) { loadLocalNam(capture, importMode.substringBeforeLast(':')) }
+                } catch (error: Exception) {
+                    Log.e(API_TAG, "Could not import local NAM", error)
+                    runOnUiThread { status.value = "NAM IMPORT FAILED\n\n${error.message ?: error}" }
+                } finally {
+                    withContext(Dispatchers.Main) { publishComposeState() }
+                }
+            }
+        }
+
 
     // ========================================================
     // ACTIVITY
@@ -699,11 +796,14 @@ class MainActivity : AppCompatActivity() {
 
         createUi()
 
-        applyRequestedAudioDefaultsOnce()
-        restoreGainSettings()
-        restoreRoutingSettings()
-        restoreDspSettings()
-        audioGraphCommands.execute { syncFxNativeChain(readFxNativeChain(), reset = true) }
+        lifecycleScope.launch {
+            prefs.awaitLoaded()
+            applyRequestedAudioDefaultsOnce()
+            restoreGainSettings()
+            restoreRoutingSettings()
+            restoreDspSettings()
+            audioGraphCommands.execute { syncFxNativeChain(readFxNativeChain(), reset = true) }
+        }
 
         val launchedFromOAuth =
             isOAuthCallback(
@@ -724,7 +824,10 @@ class MainActivity : AppCompatActivity() {
         ) {
 
             if (!launchedFromOAuth) {
-                restoreLastModel()
+                lifecycleScope.launch {
+                    prefs.awaitLoaded()
+                    restoreLastModel()
+                }
             }
 
         } else {
@@ -828,14 +931,48 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             status.collect { publishComposeState() }
         }
+        lifecycleScope.launch {
+            loadingMessage.collect { publishComposeState() }
+        }
 
         val composeViewModel = ViewModelProvider(this)[PicoloComposeViewModel::class.java]
-        val composeActions = AudioAppController()
         val stateRepository = PicoloStateRepository(readStats = {
-            withContext(Dispatchers.IO) { composeActions.getStats() }
+            withContext(Dispatchers.IO) { audioEngine.nativeGetStats() }
         })
         picoloStateRepository = stateRepository
         composeViewModel.observe(stateRepository)
+        val composeActions = PicoloActionsCoordinator(
+            audioParameters = audioParameterController,
+            audioSession = audioSessionController,
+            namParameters = namParameterController,
+            cabinetParameters = cabinetParameterController,
+            fxParameters = fxParameterController,
+            removeCabinet = cabinetRemovalController,
+            removeFxChain = fxChainRemovalController,
+            removeNamAction = ::removeNamBlock,
+            packageCaptureAction = packageCaptureController,
+            localNamAction = { capture, importMode -> loadLocalNam(capture, importMode) },
+            moveModuleAction = ::moveAudioModule,
+            addFxNativeAction = { effect -> audioGraphCommands.execute { fxNativeChainController.add(effect) } },
+            removeFxNativeAction = { index -> audioGraphCommands.execute { fxNativeChainController.remove(index) } },
+            setFxNativeTypeAction = { index, effect ->
+                audioGraphCommands.execute { fxParameterController.setNativeType(index, effect) }
+            },
+            persistGlobalTapTempo = { bpm ->
+                prefs.edit().putFloat(PresetPreferenceKeys.GLOBAL_TAP_TEMPO_BPM, bpm).apply()
+            },
+            loadPresetAction = { slot -> if (slot in 1..PRESET_COUNT) runOnUiThread { loadPreset(slot) } },
+            savePresetAction = { slot -> if (slot in 1..PRESET_COUNT) runOnUiThread { savePreset(slot) } },
+            scanUsbAudioAction = audioEngine::nativeScanUsbAudio,
+            startAudioAction = {
+                audioGraphCommands.execute { audioSessionController.startAudio() }
+                "STARTING"
+            },
+            stopAudioAction = {
+                audioGraphCommands.execute { audioSessionController.stopAudio() }
+                "STOPPING"
+            },
+        )
         val publishingActions = StatePublishingPicoloActions(composeActions, ::publishComposeState)
         composeView = ComposeView(this).apply {
             setViewCompositionStrategy(
@@ -845,7 +982,16 @@ class MainActivity : AppCompatActivity() {
                 PicoloComposeApp(
                     actions = publishingActions,
                     viewModel = composeViewModel,
-                    onBrowse = { mode -> startTone3000SelectFlow(mode) },
+                    onBrowse = { mode ->
+                        if (mode.startsWith("pick-local-nam:")) {
+                            pendingLocalNamImportMode = mode.removePrefix("pick-local-nam:")
+                            openNamFile.launch(arrayOf("*/*"))
+                        } else if (mode == "add-cabinet") {
+                            startTone3000SelectFlow(importMode = "add", forcedModuleType = "IR")
+                        } else {
+                            startTone3000SelectFlow(mode)
+                        }
+                    },
                 )
             }
         }
@@ -857,12 +1003,155 @@ class MainActivity : AppCompatActivity() {
         val repository = picoloStateRepository ?: return
         val requestVersion = stateSnapshotVersion.incrementAndGet()
         lifecycleScope.launch(Dispatchers.IO) {
-            val serializedState = pluginStateJson()
-            val statusText = withContext(Dispatchers.Main.immediate) { status.value }
+            val (bypassValue, statusText, loadingText) = withContext(Dispatchers.Main.immediate) {
+                Triple(bypass, status.value, loadingMessage.value)
+            }
+            val screenState = picoloUiStateFactory.build(bypassValue, statusText, loadingText)
             if (requestVersion == stateSnapshotVersion.get()) {
-                repository.publish(readPicoloState(serializedState, statusText))
+                repository.publish(screenState)
             }
         }
+    }
+
+    private fun loadOnlineCapture(
+        toneId: String,
+        toneTitle: String,
+        imageUrl: String,
+        model: OnlineModel,
+        token: String,
+        moduleType: String,
+    ) {
+        setLoadingMessage("Baixando e carregando ${model.name}…")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                onlineCaptureImportController.loadSelected(toneId, toneTitle, imageUrl, model, token, moduleType)
+            } finally {
+                clearLoadingMessage()
+            }
+        }
+    }
+
+    private fun setLoadingMessage(message: String) {
+        loadingMessage.value = message
+        publishComposeState()
+    }
+
+    private fun clearLoadingMessage() {
+        loadingMessage.value = null
+        publishComposeState()
+    }
+
+    private fun loadLocalNam(capture: UiLocalNamCapture, importMode: String): Boolean {
+        setLoadingMessage("Carregando ${capture.modelName} da biblioteca…")
+        lifecycleScope.launch(Dispatchers.IO) {
+            var pendingFile: File? = null
+            try {
+                val originalSource = File(capture.path)
+                check(originalSource.isFile && originalSource.exists()) { "Este arquivo NAM não está mais disponível." }
+                val durable = appContainer.localNamLibraryRepository.save(
+                    originalSource, capture.modelName, capture.moduleType, capture.toneTitle,
+                    capture.toneId, capture.imageUrl, capture.modelId,
+                )
+                val source = durable.file
+                check(source.isFile && source.exists()) { "Este arquivo NAM não está mais disponível." }
+                val staging = File(cacheDir, "local-nam-selection-${System.currentTimeMillis()}.nam")
+                source.copyTo(staging, overwrite = true)
+                pendingFile = staging
+                audioEngine.nativeStop()
+                saveSelectedModuleType(capture.moduleType)
+                val model = OnlineModel(
+                    id = capture.modelId,
+                    name = capture.modelName,
+                    size = capture.modelSize,
+                    modelUrl = "",
+                )
+                val replacementIndex = importMode.removePrefix("replace:").toIntOrNull()
+
+                when {
+                    importMode == "add" -> {
+                        check(audioEngine.nativeGetNamBlockCount() < MAX_NAM_BLOCKS) { "NAM chain full" }
+                        val added = addExtraNamCaptureUseCase.execute(
+                            pendingFile = staging,
+                            toneId = capture.toneId,
+                            toneTitle = capture.toneTitle,
+                            imageUrl = capture.imageUrl,
+                            model = model,
+                            moduleType = capture.moduleType,
+                        )
+                        appContainer.localNamLibraryRepository.save(
+                            File(added.entry.path), capture.modelName, capture.moduleType,
+                            capture.toneTitle, capture.toneId, capture.imageUrl, capture.modelId,
+                        )
+                        val placementWarning = namImportPlacementController.placeImportedNam(added.entry.path)
+                        pendingFile = null
+                        runOnUiThread {
+                            status.value = "NAM ADDED FROM LIBRARY\n\n${capture.modelName}\n${added.audioResult}" +
+                                placementWarning?.let { "\n$it" }.orEmpty()
+                        }
+                    }
+
+                    replacementIndex != null -> {
+                        val replaced = replaceNamCaptureUseCase.execute(
+                            currentEntries = readNamChainEntries(),
+                            replacementIndex = replacementIndex,
+                            pendingFile = staging,
+                            toneId = capture.toneId,
+                            toneTitle = capture.toneTitle,
+                            imageUrl = capture.imageUrl,
+                            model = model,
+                            moduleType = capture.moduleType,
+                        )
+                        appContainer.localNamLibraryRepository.save(
+                            File(replaced.replacement.path), capture.modelName, capture.moduleType,
+                            capture.toneTitle, capture.toneId, capture.imageUrl, capture.modelId,
+                        )
+                        pendingFile = null
+                        persistNamChainEntries(replaced.entries)
+                        deleteNamFileIfUnreferenced(replaced.previousPath)
+                        runOnUiThread {
+                            status.value = "NAM BLOCK ${replacementIndex + 1} REPLACED FROM LIBRARY\n\n" +
+                                "${capture.modelName}\n${replaced.audioResult}"
+                        }
+                    }
+
+                    else -> {
+                        val loaded = loadPrimaryToneCaptureUseCase.execute(
+                            toneId = capture.toneId,
+                            toneTitle = capture.toneTitle,
+                            model = model,
+                            moduleType = capture.moduleType,
+                            downloadedFile = staging,
+                        )
+                        appContainer.localNamLibraryRepository.save(
+                            loaded.file, capture.modelName, capture.moduleType,
+                            capture.toneTitle, capture.toneId, capture.imageUrl, capture.modelId,
+                        )
+                        pendingFile = null
+                        runOnUiThread {
+                            bypass = false
+                            audioEngine.nativeSetBypass(false)
+                            status.value = "NAM LOADED FROM LIBRARY\n\n${capture.modelName}\n${loaded.audioResult}"
+                        }
+                    }
+                }
+            } catch (error: Exception) {
+                pendingFile?.delete()
+                Log.e(API_TAG, "Could not load local NAM", error)
+                runOnUiThread {
+                    status.value = "LOCAL NAM LOAD FAILED\n\n${error.message ?: error}"
+                }
+            } finally {
+                clearLoadingMessage()
+            }
+        }
+        return true
+    }
+
+    private fun deleteNamFileIfUnreferenced(path: String) {
+        val referencedByActive = prefs.getString(PREF_LAST_MODEL_PATH, null) == path
+        val referencedByChain = readExtraNamChain().any { it.path == path }
+        val referencedByPreset = (1..PRESET_COUNT).any { presetRepository.read(it)?.modelPath == path }
+        if (!referencedByActive && !referencedByChain && !referencedByPreset) File(path).delete()
     }
 
 
@@ -923,33 +1212,39 @@ class MainActivity : AppCompatActivity() {
 
     private fun persistFxNativeChain(entries: List<FxNativeEntry>) = fxChainRepository.persistNativeChain(entries)
 
-    private fun FxImpulseEntry.toUiJson() = JSONObject()
-        .put("toneId", toneId).put("title", title).put("image", image)
-        .put("modelId", modelId).put("modelName", modelName).put("path", path)
-        .put("bypass", bypass).put("mix", mix).put("position", position)
-
-    private fun FxNativeEntry.toUiJson() = JSONObject()
-        .put("effect", effect).put("bypass", bypass).put("mix", mix)
-        .put("param1", param1).put("param2", param2).put("param3", param3)
-
     private fun syncFxNativeChain(entries: List<FxNativeEntry>, reset: Boolean = false) {
         if (reset) for (slot in 0 until 8) audioEngine.nativeClearFxNative(slot)
         entries.forEachIndexed { slot, item ->
-            val type = item.effect.coerceIn(0, 3)
-            if (reset) audioEngine.nativeConfigureFxNative(slot, type, MAX_NAM_BLOCKS)
+            val type = item.effect.coerceIn(0, 11)
+            if (reset) audioEngine.nativeConfigureFxNative(slot, type, item.position)
             audioEngine.nativeSetFxNativeBypass(slot, item.bypass)
             audioEngine.nativeSetFxNativeMix(slot, item.mix)
-            audioEngine.nativeSetFxNativeParameter(slot, 0, item.param1)
-            audioEngine.nativeSetFxNativeParameter(slot, 1, item.param2)
-            audioEngine.nativeSetFxNativeParameter(slot, 2, item.param3)
-            audioEngine.nativeSetFxNativePosition(slot, MAX_NAM_BLOCKS)
+            audioEngine.nativeSetFxNativeOutputGainDb(slot, item.outputGainDb)
+            val bpm = prefs.getFloat(PresetPreferenceKeys.GLOBAL_TAP_TEMPO_BPM, 120f).coerceIn(40f, 240f)
+            val parameter1 = when {
+                !item.tempoSync -> item.param1
+                type == 11 -> item.param1
+                type == 10 -> DualDelayTiming.toMilliseconds(item.leftNote, bpm)
+                type in setOf(0, 1, 5, 9) -> DualDelayTiming.toMilliseconds(item.leftNote, bpm)
+                else -> item.param1
+            }
+            val parameter2 = if (type == 11 && item.tempoSync) {
+                DualDelayTiming.toHertz(item.leftNote, bpm)
+            } else item.param2
+            val parameter3 = if (type == 10 && item.tempoSync) {
+                DualDelayTiming.toMilliseconds(item.rightNote, bpm)
+            } else item.param3
+            audioEngine.nativeSetFxNativeParameter(slot, 0, parameter1)
+            audioEngine.nativeSetFxNativeParameter(slot, 1, parameter2)
+            audioEngine.nativeSetFxNativeParameter(slot, 2, parameter3)
+            audioEngine.nativeSetFxNativePosition(slot, item.position)
         }
     }
 
 
     private fun persistNamChainEntries(entries: List<ExtraNamEntry>) {
         if (entries.isEmpty()) {
-            activeToneRepository.clear()
+            clearActiveToneAsync()
             persistExtraNamChain(emptyList())
             bypass = false
             prefs.edit()
@@ -1070,8 +1365,18 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun removeNamBlock(chainIndex: Int) {
-        Thread {
-            val removal = namChainEditController.removeBlock(chainIndex) ?: return@Thread
+        lifecycleScope.launch(Dispatchers.IO) {
+            readNamChainEntries().getOrNull(chainIndex)?.let { entry ->
+                runCatching {
+                    appContainer.localNamLibraryRepository.save(
+                        File(entry.path), entry.modelName, entry.moduleType, entry.toneTitle,
+                        entry.toneId, entry.imageUrl, entry.modelId,
+                    )
+                }.onFailure { error -> Log.w(API_TAG, "Could not preserve NAM in local library", error) }
+            }
+            val removal = namChainEditController.removeBlock(chainIndex) ?: return@launch
+
+            prefs.awaitPendingWrites()
 
             runOnUiThread {
                 val otherModulesRemain = readFxChain().isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null)?.let { File(it).exists() } == true
@@ -1081,7 +1386,7 @@ class MainActivity : AppCompatActivity() {
                     removal.rebuildResult
                 }
             }
-        }.start()
+        }
     }
 
 
@@ -1152,7 +1457,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun clearExtraNamChain() {
 
-        Thread {
+        lifecycleScope.launch(Dispatchers.IO) {
 
             audioEngine.nativeClearExtraNamBlocks()
 
@@ -1192,464 +1497,32 @@ class MainActivity : AppCompatActivity() {
     // ANDROID APP UI
     // ========================================================
 
-    private fun pluginStateJson(): String = legacyStateJsonFactory.build(bypass)
-
-    internal inner class AudioAppController : PicoloActions {
-
-        fun getState(): String {
-
-            return pluginStateJson()
-        }
-
-
-        override fun setInputGain(db: Double) = audioParameterController.setInputGain(db)
-
-        override fun setOutputGain(db: Double) = audioParameterController.setOutputGain(db)
-
-        override fun setGateEnabled(enabled: Boolean) = audioParameterController.setGateEnabled(enabled)
-
-        override fun setGateThreshold(db: Double) = audioParameterController.setGateThreshold(db)
-
-        override fun setEqLow(db: Double) = audioParameterController.setEqLow(db)
-
-        override fun setEqMid(db: Double) = audioParameterController.setEqMid(db)
-
-        override fun setEqHigh(db: Double) = audioParameterController.setEqHigh(db)
-
-        override fun setEqEnabled(enabled: Boolean) = audioParameterController.setEqEnabled(enabled)
-
-
-        fun cycleInput(): Int = audioSessionController.cycleInput()
-
-        override fun cycleOutput(): Int = audioSessionController.cycleOutput()
-
-        override fun startAudio(): String {
-            audioGraphCommands.execute { audioSessionController.startAudio() }
-            return "STARTING"
-        }
-
-        override fun stopAudio(): String {
-            audioGraphCommands.execute { audioSessionController.stopAudio() }
-            return "STOPPING"
-        }
-
-        fun toggleBypass(): Boolean {
-
-            bypass =
-                !bypass
-
-
-            audioEngine.nativeSetBypass(
-                bypass
-            )
-
-            prefs.edit().putBoolean(PREF_NAM_BYPASS, bypass).apply()
-
-
-return bypass
-        }
-
-
-        fun browseTone3000() {
-
-            runOnUiThread {
-
-                startTone3000SelectFlow(
-                    "replace"
-                )
-            }
-        }
-
-        fun setSelectedAddType(type: String) {
-            updateSelectedModuleType(type)
-        }
-
-
-        fun addNam() {
-
-            if (
-                audioEngine.nativeGetNamBlockCount() >=
-                MAX_NAM_BLOCKS
-            ) {
-
-                runOnUiThread {
-
-                    status.value =
-                        "NAM CHAIN FULL\n\nMaximum: $MAX_NAM_BLOCKS blocks."
-                }
-
-                return
-            }
-
-
-            runOnUiThread {
-
-                startTone3000SelectFlow(
-                    if (audioEngine.nativeGetNamBlockCount() == 0) {
-                        "replace"
-                    } else {
-                        "add"
-                    }
-                )
-            }
-        }
-
-        /** Receives a local .nam payload from the native import flow. */
-        fun loadLocalTone(title: String, filesJson: String, targetBlockId: String): String {
-            return try {
-                val files = JSONArray(filesJson)
-                if (files.length() == 0) return JSONObject().put("error", "No local file").toString()
-                val source = files.getJSONObject(0)
-                val name = source.optString("name", "$title.nam")
-                val encoded = source.optString("data")
-                when (val result = localNamImportController.import(title, name, encoded, targetBlockId)) {
-                    is LocalNamImportController.Result.Success -> JSONObject().put("blockId", result.blockId).toString()
-                    is LocalNamImportController.Result.Failure -> JSONObject().put("error", result.message).toString()
-                }
-            } catch (error: Exception) {
-                Log.e(API_TAG, "Local tone import failed", error)
-                JSONObject().put("error", error.message ?: "Local import failed").toString()
-            }
-        }
-
-        /** Starts the authenticated downloader for package captures selected in Compose. */
-        override fun selectPackageCaptures(blockId: String): Boolean =
-            packageCaptureController.selectPackageCaptures(blockId)
-
-       private fun downloadAndLoadCabinet(
-            toneId: String,
-            toneTitle: String,
-            imageUrl: String,
-            model: OnlineModel,
-            token: String,
-            moduleType: String
-        ) {
+    private fun moveAudioModule(blockId: String, direction: Int) {
+        val bypassValue = bypass
+        val statusText = status.value
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val audio = importCabinetImpulseUseCase.execute(toneId, toneTitle, imageUrl, model, token, moduleType)
-                prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
-                runOnUiThread {
-                    status.value = "CABINET IR READY\n\n$toneTitle\n${model.name}\n$audio"
-                }
+                val ids = picoloUiStateFactory.build(bypassValue, statusText).modules
+                    .map { it.id }
+                    .toMutableList()
+                val current = ids.indexOf(blockId)
+                if (current < 0 || ids.isEmpty()) return@launch
+                val target = (current + direction).coerceIn(0, ids.lastIndex)
+                if (target == current) return@launch
+                val moved = ids.removeAt(current)
+                ids.add(target, moved)
+                signalChainReorderController.reorder(ids)
             } catch (error: Exception) {
-                Log.e(API_TAG, "Cabinet IR download/load failed", error)
-                runOnUiThread { status.value = "CABINET IR LOAD FAILED\n\n${error.message}" }
+                Log.e(API_TAG, "Compose module reorder failed", error)
             }
         }
-
-        private fun downloadAndLoadFx(
-            toneId: String, toneTitle: String, imageUrl: String, model: OnlineModel, token: String
-        ) {
-            val requestedReplacementIndex = prefs.getString(PREF_PENDING_IMPORT_MODE, "add")
-                ?.removePrefix("replace-fx:")?.toIntOrNull()
-            Thread {
-                try {
-                    val imported = importFxCaptureUseCase.execute(
-                        toneId = toneId,
-                        toneTitle = toneTitle,
-                        imageUrl = imageUrl,
-                        model = model,
-                        token = token,
-                        requestedReplacementIndex = requestedReplacementIndex,
-                    )
-                    prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
-                    runOnUiThread {
-                        status.value = "FX READY\n\n$toneTitle\n${model.name}\n${imported.audioResult}"
-                    }
-                } catch (error: Exception) {
-                    Log.e(API_TAG, "FX import failed", error)
-                    runOnUiThread { status.value = "FX LOAD FAILED\n${error.message}" }
-                }
-            }.start()
-        }
-
-        fun loadSelectedCabinet(
-            toneId: String,
-            toneTitle: String,
-            modelId: Long,
-            modelName: String,
-            modelSize: String,
-            modelUrl: String,
-            token: String,
-            moduleType: String
-        ) {
-            val model = OnlineModel(modelId, modelName, modelSize, modelUrl)
-            if (moduleType == "FX") {
-                val importMode = prefs.getString(PREF_PENDING_IMPORT_MODE, "add") ?: "add"
-                val replaceIndex = importMode.removePrefix("replace-fx:").toIntOrNull()
-                if (readFxChain().size >= 8 && replaceIndex == null) {
-                    runOnUiThread { status.value = "FX CHAIN FULL\nMaximum 8 space effects." }
-                } else {
-                    downloadAndLoadFx(toneId, toneTitle, "", model, token)
-                }
-            } else {
-                downloadAndLoadCabinet(
-                    toneId = toneId,
-                    toneTitle = toneTitle,
-                    imageUrl = "",
-                    model = model,
-                    token = token,
-                    moduleType = moduleType
-                )
-            }
-        }
-
-        fun addCabinetIr() {
-            runOnUiThread {
-                openIrFile.launch(arrayOf("audio/wav", "audio/x-wav", "audio/*"))
-            }
-        }
-
-        override fun removeCabinetIr() {
-            cabinetRemovalController.remove()
-        }
-
-        override fun removeFx(fxIndex: Int) {
-            Thread {
-                fxChainRemovalController.remove(fxIndex)
-            }.start()
-        }
-
-        override fun setFxBypass(fxIndex: Int, bypassed: Boolean) =
-            fxParameterController.setFxBypass(fxIndex, bypassed)
-
-        override fun setFxMix(fxIndex: Int, mix: Double) =
-            fxParameterController.setFxMix(fxIndex, mix)
-
-        override fun addFxNative(effect: Int) {
-            audioGraphCommands.execute { fxNativeChainController.add(effect) }
-        }
-
-        override fun removeFxNative(nativeIndex: Int) {
-            audioGraphCommands.execute { fxNativeChainController.remove(nativeIndex) }
-        }
-
-        override fun setFxNativeBypass(nativeIndex: Int, bypassed: Boolean) =
-            fxParameterController.setNativeBypass(nativeIndex, bypassed)
-
-        override fun setFxNativeMix(nativeIndex: Int, mix: Double) =
-            fxParameterController.setNativeMix(nativeIndex, mix)
-
-        override fun setFxNativeParameter(nativeIndex: Int, parameter: Int, value: Double) =
-            fxParameterController.setNativeParameter(nativeIndex, parameter, value)
-
-        override fun setFxNativeType(nativeIndex: Int, effect: Int) {
-            audioGraphCommands.execute { fxParameterController.setNativeType(nativeIndex, effect) }
-        }
-
-        override fun setCabinetBypass(bypassed: Boolean) {
-            cabinetParameterController.setBypass(bypassed)
-        }
-
-        fun moveCabinet(direction: Int) {
-            cabinetParameterController.move(direction)
-        }
-
-        override fun setCabinetInGain(db: Double) {
-            cabinetParameterController.setInGain(db)
-        }
-
-        override fun setCabinetOutGain(db: Double) {
-            cabinetParameterController.setOutGain(db)
-        }
-
-        override fun setCabinetMix(mix: Double) {
-            cabinetParameterController.setMix(mix)
-        }
-
-        override fun setCabinetEq(band: Int, db: Double) {
-            cabinetParameterController.setEq(band, db)
-        }
-
-        fun setCabinetEqPosition(pre: Boolean) {
-            cabinetParameterController.setEqPosition(pre)
-        }
-
-        override fun setCabinetEqEnabled(enabled: Boolean) {
-            cabinetParameterController.setEqEnabled(enabled)
-        }
-
-
-        fun changeNam(chainIndex: Int) {
-            if (chainIndex !in 0 until audioEngine.nativeGetNamBlockCount()) {
-                return
-            }
-
-            runOnUiThread {
-                startTone3000SelectFlow("replace:$chainIndex")
-            }
-        }
-
-
-        override fun removeNam(chainIndex: Int) {
-            removeNamBlock(chainIndex)
-        }
-
-
-        fun moveNam(chainIndex: Int, direction: Int) {
-            Thread {
-                val result = namChainEditController.moveBlock(chainIndex, direction) ?: return@Thread
-
-                runOnUiThread {
-                    status.value = result
-                }
-            }.start()
-        }
-
-        /** Reorders the mixed NAM + cabinet chain, matching the Compose tile
-         * order. The native graph and persisted IR position are changed by
-         * the same rollback-safe reorder routine used by the Web UI. */
-        override fun moveModule(blockId: String, direction: Int) {
-            Thread {
-                try {
-                    val chain = JSONObject(pluginStateJson()).optJSONArray("signalChain") ?: return@Thread
-                    val ids = buildList {
-                        for (index in 0 until chain.length()) {
-                            val item = chain.optJSONObject(index) ?: continue
-                            add(when (item.optString("type")) {
-                                "CABINET_IR" -> "cabinet-ir"
-                                "FX" -> "fx-${item.optInt("fxIndex", index)}"
-                                else -> "nam-${item.optInt("chainIndex", index)}"
-                            })
-                        }
-                    }.toMutableList()
-                    val current = ids.indexOf(blockId)
-                    if (current < 0 || ids.isEmpty()) return@Thread
-                    val target = (current + direction).coerceIn(0, ids.lastIndex)
-                    if (target == current) return@Thread
-                    val moved = ids.removeAt(current)
-                    ids.add(target, moved)
-                    val requested = JSONArray()
-                    ids.forEach { requested.put(it) }
-                    reorderChain(requested.toString())
-                } catch (error: Exception) {
-                    Log.e(API_TAG, "Compose module reorder failed", error)
-                }
-            }.start()
-        }
-
-        fun reorderChain(blockIdsJson: String): Boolean {
-            return try {
-                val requested = JSONArray(blockIdsJson)
-                    .let { array -> (0 until array.length()).map { array.optString(it) } }
-                signalChainReorderController.reorder(requested)
-            } catch (error: Exception) {
-                Log.e(API_TAG, "Chain reorder failed", error)
-                false
-            }
-        }
-
-        fun resetToDefault(): Boolean {
-            return resetToDefaultController.reset()
-        }
-
-
-        override fun setNamBypass(chainIndex: Int, enabled: Boolean) =
-            namParameterController.setBypass(chainIndex, enabled)
-
-        override fun setNamGain(chainIndex: Int, db: Double) =
-            namParameterController.setGain(chainIndex, db)
-
-        override fun setNamInGain(chainIndex: Int, db: Double) =
-            namParameterController.setInGain(chainIndex, db)
-
-        override fun setNamMix(chainIndex: Int, mix: Double) =
-            namParameterController.setMix(chainIndex, mix)
-
-        override fun setNamEq(chainIndex: Int, band: Int, db: Double) =
-            namParameterController.setEq(chainIndex, band, db)
-
-        override fun setNamEqPosition(chainIndex: Int, pre: Boolean) =
-            namParameterController.setEqPosition(chainIndex, pre)
-
-        override fun setNamEqEnabled(chainIndex: Int, enabled: Boolean) =
-            namParameterController.setEqEnabled(chainIndex, enabled)
-
-        override fun setNamNormalize(chainIndex: Int, enabled: Boolean) =
-            namParameterController.setNormalize(chainIndex, enabled)
-
-        override fun setNamQuality(chainIndex: Int, full: Boolean) =
-            namParameterController.setQuality(chainIndex, full)
-
-
-        fun clearExtraNams() {
-
-            clearExtraNamChain()
-        }
-
-
-        override fun loadPreset(
-            slot: Int
-        ) {
-
-            if (
-                slot !in
-                1..PRESET_COUNT
-            ) {
-                return
-            }
-
-
-            runOnUiThread {
-
-                loadPreset(
-                    slot
-                )
-            }
-        }
-
-
-        override fun savePreset(
-            slot: Int
-        ) {
-
-            if (
-                slot !in
-                1..PRESET_COUNT
-            ) {
-                return
-            }
-
-
-            runOnUiThread {
-
-                savePreset(
-                    slot
-                )
-            }
-        }
-
-        fun renamePreset(slot: Int, name: String): Boolean {
-            return presetRepository.rename(slot, name)
-        }
-
-        fun deletePreset(slot: Int): Boolean {
-            return presetRepository.delete(slot)
-        }
-
-        fun movePreset(slot: Int, delta: Int): Boolean {
-            return presetRepository.move(slot, delta)
-        }
-
-
-        override fun scanUsbAudio(): String {
-
-            return audioEngine.nativeScanUsbAudio()
-        }
-
-
-        fun getStats(): String {
-
-            return audioEngine.nativeGetStats()
-        }
-
     }
-
 
     // ========================================================
     // ROUTING
     // ========================================================
 
-    private fun restoreRoutingSettings() {
+    private suspend fun restoreRoutingSettings() {
         audioRoutingUseCase.restoreSavedRoutes()
     }
 
@@ -2056,7 +1929,7 @@ return bypass
 
         if (!file.exists()) {
 
-            activeToneRepository.clear()
+            clearActiveToneAsync()
 
             status.value =
                 "Saved model file no longer exists."
@@ -2181,8 +2054,16 @@ return bypass
     // ========================================================
 
     private fun startTone3000SelectFlow(
-        importMode: String = "replace"
+        importMode: String = "replace",
+        forcedModuleType: String? = null,
     ) {
+        if (forcedModuleType != null) {
+            lifecycleScope.launch {
+                saveSelectedModuleType(forcedModuleType)
+                openTone3000SelectFlow(importMode)
+            }
+            return
+        }
         val labels = arrayOf("PEDAL", "AMP (NAM A2-Lite)", "FX (reverb / IR)", "IR (cabinet)")
         AlertDialog.Builder(this)
             .setTitle("Adicionar módulo")
@@ -2384,6 +2265,8 @@ return bypass
         oauthCallbackInProgress =
             true
 
+        setLoadingMessage("Conectando à TONE3000 e buscando capturas…")
+
 
 
 
@@ -2395,33 +2278,32 @@ return bypass
         )
 
 
-        Thread {
+        lifecycleScope.launch(Dispatchers.IO) {
 
             try {
+                prefs.awaitLoaded()
 
                 stage(
-                    "1/3 - EXCHANGING TOKEN..."
+                    "Conectando à TONE3000…"
                 )
 
 
-                val selectedType = runBlocking { appContainer.selectedModuleTypeRepository.read() }
+                val selectedType = appContainer.selectedModuleTypeRepository.read()
                 selectedModuleTypeState.value = selectedType
                 prefs.edit()
                     .putString(PREF_PENDING_TONE_TYPE, selectedType)
                     .apply()
-                val selection = runBlocking {
-                    completeToneSelectionUseCase.execute(
-                        code = code,
-                        returnedState = returnedState,
-                        toneId = toneId,
-                        moduleType = selectedType,
-                        onProgress = ::stage,
-                    )
-                }
+                val selection = completeToneSelectionUseCase.execute(
+                    code = code,
+                    returnedState = returnedState,
+                    toneId = toneId,
+                    moduleType = selectedType,
+                    onProgress = ::stage,
+                )
                 val token = selection.token.accessToken
                 val tone = selection.tone
                 val models = selection.models
-                runBlocking { tonePackageCaptureRepository.save(toneId, selectedType, models) }
+                tonePackageCaptureRepository.save(toneId, selectedType, models)
                 val architecture = if (selection.moduleType == "IR" || selection.moduleType == "FX") null else 2
 
 
@@ -2444,20 +2326,9 @@ return bypass
                                 token = token
                             )
                         } else {
-                            stage("Loading impulse response:\n${models.first().name}")
+                            stage("Carregando resposta de impulso: ${models.first().name}…")
                             val selectedModel = models.first()
-                            Thread {
-                                AudioAppController().loadSelectedCabinet(
-                                    toneId = toneId,
-                                    toneTitle = tone.title,
-                                    modelId = selectedModel.id,
-                                    modelName = selectedModel.name,
-                                    modelSize = selectedModel.size,
-                                    modelUrl = selectedModel.modelUrl,
-                                    token = token,
-                                    moduleType = selectedType
-                                )
-                            }.start()
+                            loadOnlineCapture(toneId, tone.title, "", selectedModel, token, selectedType)
                         }
                     } else {
                         showModelSelectionDialog(
@@ -2500,7 +2371,7 @@ return bypass
                     false
             }
 
-        }.start()
+        }
     }
 
     private fun stage(
@@ -2511,6 +2382,9 @@ return bypass
             API_TAG,
             value
         )
+
+        loadingMessage.value = value
+        publishComposeState()
 
 
         runOnUiThread {
@@ -2583,6 +2457,8 @@ return bypass
             return
         }
 
+        clearLoadingMessage()
+
 
         val order =
             mapOf(
@@ -2611,17 +2487,6 @@ return bypass
 
 
         val hidePedalTier = selectedModuleType == "PEDAL"
-        val labels =
-            sorted
-                .map {
-                    if (hidePedalTier) "${it.name} • #${it.id}"
-                    else "${it.size.uppercase()} • ${it.name} • #${it.id}"
-                }
-                .toTypedArray()
-
-
-
-
         status.value =
             "$toneTitle\n\n" +
                     "${sorted.size} compatible captures found.\n" +
@@ -2673,8 +2538,15 @@ return bypass
                     actionTitle
                 )
 
-                .setItems(
-                    labels
+                .setAdapter(
+                    CaptureSelectionAdapter(
+                        context = this,
+                        models = sorted,
+                        iconResource = if (hidePedalTier) R.drawable.ic_picolo_drive else R.drawable.ic_picolo_amp,
+                        accentColor = if (hidePedalTier) 0xFF23D6C5.toInt() else 0xFFFF6A1A.toInt(),
+                        instrumentLabel = if (hidePedalTier) "Pedal" else "Amplificador",
+                        showModelSize = !hidePedalTier,
+                    )
                 ) { _, index ->
 
                     val selected =
@@ -2760,18 +2632,7 @@ return bypass
 
         fun loadSelected(model: OnlineModel) {
             status.value = "$toneTitle\n\nSelected space capture:\n${model.name}\nLoading..."
-            Thread {
-                AudioAppController().loadSelectedCabinet(
-                    toneId = toneId,
-                    toneTitle = toneTitle,
-                    modelId = model.id,
-                    modelName = model.name,
-                    modelSize = model.size,
-                    modelUrl = model.modelUrl,
-                    token = token,
-                    moduleType = "FX",
-                )
-            }.start()
+            loadOnlineCapture(toneId, toneTitle, imageUrl, model, token, "FX")
         }
 
         if (models.size == 1) {
@@ -2779,7 +2640,8 @@ return bypass
             return
         }
 
-        val labels = models.map { "${it.name} • #${it.id}" }.toTypedArray()
+        clearLoadingMessage()
+
         val importMode = prefs.getString(PREF_PENDING_IMPORT_MODE, "add") ?: "add"
         val targetIndex = importMode.removePrefix("replace-fx:").toIntOrNull()
         val title = if (targetIndex != null) {
@@ -2790,7 +2652,15 @@ return bypass
         status.value = "$toneTitle\n\n${models.size} space captures found. Select one to continue."
         val dialog = AlertDialog.Builder(this)
             .setTitle(title)
-            .setItems(labels) { _, index -> loadSelected(models[index]) }
+            .setAdapter(
+                CaptureSelectionAdapter(
+                    context = this,
+                    models = models,
+                    iconResource = R.drawable.ic_picolo_ir,
+                    accentColor = 0xFF568BFF.toInt(),
+                    instrumentLabel = "Efeito",
+                )
+            ) { _, index -> loadSelected(models[index]) }
             .setNegativeButton("CANCEL") { _, _ ->
                 prefs.edit().remove(PREF_PENDING_IMPORT_MODE).apply()
                 restoreCurrentModelAvailability("Space selection canceled.\nCurrent chain kept.")
@@ -2815,18 +2685,7 @@ return bypass
 
         fun loadSelected(model: OnlineModel) {
             status.value = "$toneTitle\n\nSelected cabinet capture:\n${model.name}\nLoading..."
-            Thread {
-                AudioAppController().loadSelectedCabinet(
-                    toneId = toneId,
-                    toneTitle = toneTitle,
-                    modelId = model.id,
-                    modelName = model.name,
-                    modelSize = model.size,
-                    modelUrl = model.modelUrl,
-                    token = token,
-                    moduleType = "IR",
-                )
-            }.start()
+            loadOnlineCapture(toneId, toneTitle, imageUrl, model, token, "IR")
         }
 
         if (models.size == 1) {
@@ -2834,10 +2693,19 @@ return bypass
             return
         }
 
-        val labels = models.map { "${it.name} • #${it.id}" }.toTypedArray()
+        clearLoadingMessage()
+
         AlertDialog.Builder(this)
             .setTitle("CABINET IR — SELECT CAPTURE")
-            .setItems(labels) { _, index -> loadSelected(models[index]) }
+            .setAdapter(
+                CaptureSelectionAdapter(
+                    context = this,
+                    models = models,
+                    iconResource = R.drawable.ic_picolo_cabinet,
+                    accentColor = 0xFFFFC43D.toInt(),
+                    instrumentLabel = "Cabinet",
+                )
+            ) { _, index -> loadSelected(models[index]) }
             .setNegativeButton("CANCEL") { _, _ ->
                 restoreCurrentModelAvailability("Cabinet selection canceled.\nCurrent chain kept.")
             }
@@ -2910,6 +2778,8 @@ return bypass
         val imageUrl = prefs.getString(PREF_PENDING_TONE_IMAGE, "") ?: ""
         val moduleType = prefs.getString(PREF_PENDING_TONE_TYPE, "AMP") ?: "AMP"
 
+        setLoadingMessage("Baixando e carregando ${model.name}…")
+
 
 
         status.value =
@@ -2920,7 +2790,7 @@ return bypass
                     "Model ID: ${model.id}"
 
 
-        Thread {
+        lifecycleScope.launch(Dispatchers.IO) {
 
             var pendingFile: File? =
                 null
@@ -2974,6 +2844,10 @@ return bypass
                         model = model,
                         moduleType = moduleType,
                     )
+                    appContainer.localNamLibraryRepository.save(
+                        File(added.entry.path), model.name, moduleType, toneTitle, toneId, imageUrl, model.id,
+                    )
+                    val placementWarning = namImportPlacementController.placeImportedNam(added.entry.path)
                     pendingFile = null
 
 
@@ -2983,6 +2857,10 @@ return bypass
                             PREF_PENDING_IMPORT_MODE
                         )
                         .apply()
+
+                    // Compose builds its module list from DataStore snapshots. Wait for the
+                    // chain and metadata writes above before publishing the completed import.
+                    prefs.awaitPendingWrites()
 
 
                     runOnUiThread {
@@ -2994,11 +2872,12 @@ return bypass
                                     "Tone: $toneTitle\n" +
                                     "Capture: ${model.name}\n" +
                                     "Size: ${model.size.uppercase()}\n\n" +
-                                    added.chainResult + "\n" + added.audioResult
+                                    added.chainResult + "\n" + added.audioResult +
+                                    placementWarning?.let { "\n$it" }.orEmpty()
                     }
 
 
-                    return@Thread
+                    return@launch
                 }
 
 
@@ -3014,6 +2893,9 @@ return bypass
                         imageUrl = imageUrl,
                         model = model,
                         moduleType = moduleType,
+                    )
+                    appContainer.localNamLibraryRepository.save(
+                        File(replaced.replacement.path), model.name, moduleType, toneTitle, toneId, imageUrl, model.id,
                     )
                     pendingFile = null
 
@@ -3032,7 +2914,7 @@ return bypass
                                 replaced.rebuildResult + "\n" + replaced.audioResult
                     }
 
-                    return@Thread
+                    return@launch
                 }
 
 
@@ -3043,6 +2925,9 @@ return bypass
                     model = model,
                     moduleType = moduleType,
                     downloadedFile = downloaded,
+                )
+                appContainer.localNamLibraryRepository.save(
+                    loadedCapture.file, model.name, moduleType, toneTitle, toneId, imageUrl, model.id,
                 )
                 pendingFile = null
                 val loadResult = loadedCapture.loadResult
@@ -3074,8 +2959,7 @@ return bypass
                  * A failed switch must not leave the app in an ambiguous state.
                  * Reload the previously persisted model explicitly.
                  */
-                val previous =
-                    reloadPersistedModelAfterFailedSwitch()
+                val previous = reloadPersistedModelAfterFailedSwitch()
 
 
                 runOnUiThread {
@@ -3110,14 +2994,18 @@ return bypass
                                             previous.second
                                 }
                 }
+            } finally {
+                clearLoadingMessage()
             }
 
-        }.start()
+        }
     }
 
     private fun restoreCurrentModelAvailability(
         message: String
     ) {
+
+        clearLoadingMessage()
 
         val path =
             prefs.getString(
@@ -3157,7 +3045,7 @@ return bypass
     }
 
 
-    private fun reloadPersistedModelAfterFailedSwitch(): Pair<Boolean, String> {
+    private suspend fun reloadPersistedModelAfterFailedSwitch(): Pair<Boolean, String> {
         val result = restorePreviousToneModelUseCase.execute()
         return result.restored to result.details
     }

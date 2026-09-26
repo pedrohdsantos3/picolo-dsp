@@ -13,7 +13,7 @@ internal class RestorePreviousToneModelUseCase(
     private val currentTone: CurrentToneRepository,
     private val engine: ToneModelEngine,
 ) {
-    fun execute(): ToneModelRestoreResult {
+    suspend fun execute(): ToneModelRestoreResult {
         val file = currentTone.currentModelFile()
             ?: return ToneModelRestoreResult(false, "No persisted model path.")
         if (!file.exists()) return ToneModelRestoreResult(false, "Persisted model file does not exist.")

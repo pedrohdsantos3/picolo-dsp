@@ -10,6 +10,7 @@
 .DS_Store
 /build
 /captures
+/audio_qa/renders/
 .externalNativeBuild
 .cxx
 local.properties

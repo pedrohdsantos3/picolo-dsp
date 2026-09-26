@@ -23,8 +23,10 @@ class FxNativeChainControllerTest {
 
         assertTrue(controller.add(effect = 99))
 
-        assertEquals(3, entries.single().effect)
-        assertEquals(150f, entries.single().param1)
+        assertEquals(11, entries.single().effect)
+        assertEquals(8f, entries.single().param1)
+        assertEquals(0.8f, entries.single().param2)
+        assertEquals(16000f, entries.single().param3)
         assertEquals(listOf("persist", "sync:1", "restart", "FXNATIVE ADDED\nStereo post NAM/CAB\nAUDIO ACTIVE"), events)
     }
 

@@ -4,6 +4,7 @@ import com.pedro.tone3000m1.ui.actions.PicoloActions
 import com.pedro.tone3000m1.ui.model.PicoloUiState
 import com.pedro.tone3000m1.ui.model.UiModule
 import com.pedro.tone3000m1.ui.model.UiPreset
+import com.pedro.tone3000m1.ui.model.UiLocalNamCapture
 import com.pedro.tone3000m1.ui.model.PicoloStateSnapshot
 import com.pedro.tone3000m1.ui.state.PicoloStateRepository
 import androidx.compose.foundation.background
@@ -13,8 +14,10 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -39,6 +43,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -49,17 +54,21 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -92,6 +101,8 @@ private val PicoloTeal = Color(0xFF23D6C5)
 private val PicoloYellow = Color(0xFFFFC43D)
 private val PicoloPurple = Color(0xFFA75AF2)
 private val PicoloBlue = Color(0xFF3C9BFF)
+private val PicoloPink = Color(0xFFFF4F9A)
+private val PicoloRed = Color(0xFFFF5266)
 
 private enum class PicoloPage(val title: String, val icon: Int) {
     PRESETS("Presets", R.drawable.ic_picolo_presets),
@@ -164,7 +175,10 @@ internal fun PicoloComposeApp(
 ) {
     var page by remember { mutableStateOf(PicoloPage.EDITOR) }
     var selectedModuleId by remember { mutableStateOf<String?>(null) }
+    var localLibraryMode by remember { mutableStateOf<String?>(null) }
+    var localLibraryCategory by remember { mutableStateOf("AMP") }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    BackHandler(enabled = state.loadingMessage != null) { }
     MaterialTheme(colorScheme = darkColorScheme(
         primary = PicoloOrange, onPrimary = PicoloBackground,
         secondary = PicoloTeal, onSecondary = PicoloBackground,
@@ -172,34 +186,298 @@ internal fun PicoloComposeApp(
         surface = PicoloSurface, onSurface = PicoloText,
         surfaceVariant = PicoloSurfaceRaised, onSurfaceVariant = PicoloSecondary,
     )) {
-        Column(Modifier.fillMaxSize().background(PicoloBackground).statusBarsPadding()) {
-            TopBar(
-                state, actions,
-                onOpenPresets = { page = PicoloPage.PRESETS },
-                onOpenFootswitch = { page = PicoloPage.FOOTSWITCH },
-                onOpenSettings = { page = PicoloPage.SETTINGS },
-            )
-            when (page) {
-                PicoloPage.EDITOR -> EditorPage(state, actions, onBrowse, selectedModuleId, { selectedModuleId = it }, { page = PicoloPage.PRESETS }, Modifier.weight(1f))
-                PicoloPage.PRESETS -> PresetsPage(state, actions, Modifier.weight(1f))
-                PicoloPage.FOOTSWITCH -> FootswitchPage(state, Modifier.weight(1f))
-                PicoloPage.SETTINGS -> SettingsPage(state, actions, Modifier.weight(1f))
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().background(PicoloBackground).statusBarsPadding()) {
+                TopBar(
+                    state, actions,
+                    onOpenPresets = { page = PicoloPage.PRESETS },
+                    onOpenFootswitch = { page = PicoloPage.FOOTSWITCH },
+                    onOpenSettings = { page = PicoloPage.SETTINGS },
+                )
+                when (page) {
+                    PicoloPage.EDITOR -> EditorPage(
+                        state,
+                        actions,
+                        onBrowse = { mode ->
+                            if (mode == "add-cabinet") {
+                                onBrowse(mode)
+                            } else {
+                                localLibraryMode = mode
+                                localLibraryCategory = if (state.selectedModuleType == "PEDAL") "PEDAL" else "AMP"
+                            }
+                        },
+                        selectedModuleId,
+                        { selectedModuleId = it },
+                        { page = PicoloPage.PRESETS },
+                        Modifier.weight(1f),
+                    )
+                    PicoloPage.PRESETS -> PresetsPage(state, actions, Modifier.weight(1f))
+                    PicoloPage.FOOTSWITCH -> FootswitchPage(state, Modifier.weight(1f))
+                    PicoloPage.SETTINGS -> SettingsPage(state, actions, Modifier.weight(1f))
+                }
+                Row(Modifier.fillMaxWidth().navigationBarsPadding().height(64.dp).background(PicoloSurface), verticalAlignment = Alignment.CenterVertically) {
+                    PicoloPage.entries.forEach { destination ->
+                        val selected = page == destination
+                        Column(
+                            Modifier.weight(1f).height(64.dp).clickable { page = destination }.padding(top = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Image(
+                                painter = painterResource(destination.icon),
+                                contentDescription = destination.title,
+                                modifier = Modifier.size(24.dp),
+                                colorFilter = ColorFilter.tint(if (selected) PicoloOrange else PicoloSecondary),
+                            )
+                            Text(destination.title, color = if (selected) PicoloOrange else PicoloSecondary, fontSize = 11.sp)
+                        }
+                    }
+                }
             }
-            Row(Modifier.fillMaxWidth().navigationBarsPadding().height(64.dp).background(PicoloSurface), verticalAlignment = Alignment.CenterVertically) {
-                PicoloPage.entries.forEach { destination ->
-                    val selected = page == destination
-                    Column(
-                        Modifier.weight(1f).height(64.dp).clickable { page = destination }.padding(top = 6.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Image(
-                            painter = painterResource(destination.icon),
-                            contentDescription = destination.title,
-                            modifier = Modifier.size(24.dp),
-                            colorFilter = ColorFilter.tint(if (selected) PicoloOrange else PicoloSecondary),
+            localLibraryMode?.let { mode ->
+                LocalNamLibraryDialog(
+                    captures = state.localNamCaptures,
+                    category = localLibraryCategory,
+                    importMode = mode,
+                    onCategorySelected = { localLibraryCategory = it },
+                    onSelect = { capture ->
+                        actions.selectLocalNam(capture, mode)
+                        localLibraryMode = null
+                    },
+                    onBrowseWeb = {
+                        localLibraryMode = null
+                        onBrowse(mode)
+                    },
+                    onImportFromDevice = {
+                        localLibraryMode = null
+                        onBrowse("pick-local-nam:$mode:$localLibraryCategory")
+                    },
+                    onDismiss = { localLibraryMode = null },
+                )
+            }
+            state.loadingMessage?.let { LoadingOverlay(it) }
+        }
+    }
+}
+
+@Composable
+private fun LocalNamLibraryDialog(
+    captures: List<UiLocalNamCapture>,
+    category: String,
+    importMode: String,
+    onCategorySelected: (String) -> Unit,
+    onSelect: (UiLocalNamCapture) -> Unit,
+    onBrowseWeb: () -> Unit,
+    onImportFromDevice: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val filtered = captures.filter { it.moduleType == category }
+    val isAdd = importMode == "add"
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
+            color = PicoloSurface,
+            shape = RoundedCornerShape(22.dp),
+            tonalElevation = 0.dp,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("NAM LIBRARY", color = PicoloText, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            if (isAdd) "Escolha um modelo salvo ou explore a web"
+                            else "Escolha um modelo local para substituir este bloco",
+                            color = PicoloSecondary,
+                            fontSize = 12.sp,
                         )
-                        Text(destination.title, color = if (selected) PicoloOrange else PicoloSecondary, fontSize = 11.sp)
+                    }
+                    Text("✕", color = PicoloSecondary, fontSize = 20.sp, modifier = Modifier.clickable(onClick = onDismiss).padding(8.dp))
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    listOf("AMP", "PEDAL").forEach { type ->
+                        val selected = category == type
+                        val accent = if (type == "PEDAL") PicoloRed else PicoloBlue
+                        Surface(
+                            modifier = Modifier.weight(1f).clickable { onCategorySelected(type) },
+                            color = if (selected) {
+                                if (type == "PEDAL") Color(0xFF301319) else Color(0xFF101D30)
+                            } else PicoloSurfaceRaised,
+                            shape = RoundedCornerShape(12.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (selected) accent else Color.Transparent,
+                            ),
+                        ) {
+                            Column(
+                                Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Text(if (type == "PEDAL") "DRIVE" else "AMP", color = accent, fontWeight = FontWeight.Bold)
+                                val count = captures.count { it.moduleType == type }
+                                Text(if (count == 1) "1 salvo" else "$count salvos", color = PicoloSecondary, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+
+                Text("CAPTURAS SALVAS NO APP", color = PicoloSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                if (filtered.isEmpty()) {
+                    Box(Modifier.fillMaxWidth().heightIn(min = 112.dp), contentAlignment = Alignment.Center) {
+                        Text("Nenhum NAM de ${if (category == "PEDAL") "DRIVE" else "AMP"} salvo ainda.", color = PicoloSecondary, fontSize = 13.sp)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 340.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(filtered, key = { it.path }) { capture ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth().clickable { onSelect(capture) },
+                                colors = CardDefaults.cardColors(containerColor = PicoloSurfaceRaised),
+                                shape = RoundedCornerShape(12.dp),
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(13.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    Image(
+                                        painter = painterResource(if (category == "PEDAL") R.drawable.ic_picolo_drive else R.drawable.ic_picolo_nam),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(30.dp),
+                                        colorFilter = ColorFilter.tint(if (category == "PEDAL") PicoloRed else PicoloBlue),
+                                    )
+                                    Column(Modifier.weight(1f)) {
+                                        Text(capture.modelName, color = PicoloText, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                        Text(
+                                            listOf(
+                                                capture.toneTitle,
+                                                capture.modelSize.takeUnless {
+                                                    it.isBlank() || it.equals("null", true) || it.equals("unknown", true)
+                                                }?.uppercase().orEmpty(),
+                                            )
+                                                .filter(String::isNotBlank).joinToString(" · "),
+                                            color = PicoloSecondary,
+                                            fontSize = 11.sp,
+                                        )
+                                    }
+                                    Text("›", color = PicoloSecondary, fontSize = 24.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = onImportFromDevice,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = PicoloSurfaceRaised, contentColor = PicoloText),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text("IMPORTAR .NAM DO DISPOSITIVO", fontWeight = FontWeight.Bold)
+                }
+
+                Button(
+                    onClick = onBrowseWeb,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = PicoloOrange, contentColor = PicoloBackground),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text("EXPLORAR TONE3000 NA WEB", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LoadingOverlay(message: String) {
+    val interactionSource = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.76f))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {},
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp),
+        colors = CardDefaults.cardColors(containerColor = PicoloSurfaceRaised),
+        shape = RoundedCornerShape(20.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Text(
+                "TONE3000",
+                color = PicoloOrange,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.4.sp,
+            )
+            androidx.compose.material3.CircularProgressIndicator(
+                modifier = Modifier.size(56.dp),
+                color = PicoloOrange,
+                strokeWidth = 5.dp,
+            )
+            Text(
+                message,
+                color = PicoloText,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth(),
+                color = PicoloOrange,
+                trackColor = PicoloSurface,
+            )
+            Text("Aguarde um instante", color = PicoloSecondary, fontSize = 12.sp)
+        }
+    }
+        }
+}
+
+@Composable
+private fun TempoDivisionControl(
+    tempoSync: Boolean,
+    division: String,
+    bpm: Float,
+    color: Color,
+    onToggle: () -> Unit,
+    onDivision: (String) -> Unit,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Button(onClick = onToggle, colors = ButtonDefaults.buttonColors(containerColor = PicoloSurfaceRaised)) {
+            Text(if (tempoSync) "SYNC · ${bpm.toInt()} BPM" else "FREE MS", color = color)
+        }
+        if (tempoSync) {
+            androidx.compose.foundation.layout.Box {
+                Button(onClick = { menuExpanded = true }, colors = ButtonDefaults.buttonColors(containerColor = PicoloSurfaceRaised)) {
+                    Text("♩ $division", color = color)
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    listOf("1/16", "1/8", "1/8.", "1/4", "1/4T", "1/4.", "1/2").forEach { note ->
+                        DropdownMenuItem(text = { Text(note) }, onClick = { menuExpanded = false; onDivision(note) })
                     }
                 }
             }
@@ -216,6 +494,7 @@ private fun TopBar(
     onOpenSettings: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    var lastGlobalTapAt by remember { mutableStateOf(0L) }
     Row(
         Modifier.fillMaxWidth().background(PicoloSurface).height(60.dp).padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -226,6 +505,21 @@ private fun TopBar(
             Text("PicoloDSP", color = PicoloText, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    val now = System.currentTimeMillis()
+                    val interval = now - lastGlobalTapAt
+                    if (lastGlobalTapAt != 0L && interval in 250L..1500L) {
+                        actions.setGlobalTapTempoBpm((60000f / interval).coerceIn(40f, 240f))
+                    }
+                    lastGlobalTapAt = now
+                },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 9.dp, vertical = 0.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = PicoloSurfaceRaised),
+                modifier = Modifier.height(38.dp),
+            ) {
+                Text("TAP ${state.globalTapTempoBpm.toInt()}", color = PicoloOrange, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
             IconButton(onClick = onOpenPresets) {
                 Image(painterResource(R.drawable.ic_picolo_folder), contentDescription = "Presets", Modifier.size(24.dp), colorFilter = ColorFilter.tint(PicoloSecondary))
             }
@@ -389,10 +683,10 @@ private fun SignalChain(
                     ChainConnector(highlighted = dropTargetIndex == moduleIndex)
                     val accent = moduleAccent(module, state)
                     val title = when (module.type) {
-                        "FX_NATIVE" -> "NATIVE"
+                                "FX_NATIVE" -> nativeFxCategory(module.nativeEffect)
                         "CABINET_IR" -> if (state.cabinetType == "FX") "FX" else "IR"
                         "FX" -> "FX"
-                        else -> if (module.moduleType == "PEDAL") "PEDAL" else "NAM"
+                                else -> when (module.moduleType) { "PEDAL" -> "DRIVE"; "AMP" -> "AMP"; else -> "NAM" }
                     }
                     val icon = when {
                         module.type == "NAM" && module.moduleType == "PEDAL" -> R.drawable.ic_picolo_drive
@@ -441,19 +735,264 @@ private fun SignalChain(
                 }
                 ChainConnector(highlighted = dropTargetIndex == state.modules.size)
                 androidx.compose.foundation.layout.Box {
-                    var addMenuExpanded by remember { mutableStateOf(false) }
-                    ChainTile("+", PicoloTeal, false, null, onClick = { addMenuExpanded = true })
-                    DropdownMenu(expanded = addMenuExpanded, onDismissRequest = { addMenuExpanded = false }) {
-                        DropdownMenuItem(text = { Text("Browse TONE3000…") }, onClick = { addMenuExpanded = false; onBrowse("add") })
-                        DropdownMenuItem(text = { Text("FXNative · ChowMatrix Delay") }, onClick = { addMenuExpanded = false; actions.addFxNative(0) })
-                        DropdownMenuItem(text = { Text("FXNative · BYOD BBD Delay") }, onClick = { addMenuExpanded = false; actions.addFxNative(1) })
-                        DropdownMenuItem(text = { Text("FXNative · BYOD Smooth Reverb") }, onClick = { addMenuExpanded = false; actions.addFxNative(2) })
-                        DropdownMenuItem(text = { Text("FXNative · BYOD Shimmer Reverb") }, onClick = { addMenuExpanded = false; actions.addFxNative(3) })
+                    var addSheetExpanded by remember { mutableStateOf(false) }
+                    ChainTile("+", PicoloTeal, false, null, onClick = { addSheetExpanded = true })
+                    if (addSheetExpanded) {
+                        AddModuleSheet(
+                            onDismiss = { addSheetExpanded = false },
+                            onBrowseNam = {
+                                addSheetExpanded = false
+                                onBrowse("add")
+                            },
+                            onBrowseCabinet = {
+                                addSheetExpanded = false
+                                onBrowse("add-cabinet")
+                            },
+                            onAddFxNative = { effectIndex ->
+                                addSheetExpanded = false
+                                actions.addFxNative(effectIndex)
+                            },
+                        )
                     }
                 }
                 ChainConnector()
                 ChainTile("OUT", Color(0xFF68737A), selectedId == "output", null, onClick = { onSelect("output") })
             }
+        }
+    }
+}
+
+@Composable
+private fun AddModuleSheet(
+    onDismiss: () -> Unit,
+    onBrowseNam: () -> Unit,
+    onBrowseCabinet: () -> Unit,
+    onAddFxNative: (Int) -> Unit,
+) {
+    var fxCategory by remember { mutableStateOf<String?>(null) }
+    val fxNames = listOf(
+        "ChowMatrix Delay",
+        "BYOD BBD Delay",
+        "BYOD Smooth Reverb",
+        "BYOD Shimmer Reverb",
+        "Spring Reverb",
+        "Ping-Pong Delay",
+        "Plate Reverb",
+        "Airwindows kPlate140",
+        "MVerb Reverb",
+        "Airwindows Tape Delay 2",
+        "Dual Delay",
+        "Chorus",
+    )
+    val visibleFx = when (fxCategory) {
+        "DELAY" -> listOf(0, 1, 5, 9, 10)
+        "REVERB" -> listOf(2, 3, 4, 6, 7, 8)
+        "MODULATION" -> listOf(11)
+        else -> emptyList()
+    }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 680.dp),
+                color = PicoloSurface,
+                shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+                tonalElevation = 0.dp,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Surface(Modifier.size(width = 38.dp, height = 4.dp), color = Color(0xFF45525A), shape = CircleShape) {}
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (fxCategory != null) {
+                            IconButton(onClick = {
+                                fxCategory = if (fxCategory == "CHOOSE") null else "CHOOSE"
+                            }) {
+                                Text("‹", color = PicoloSecondary, fontSize = 30.sp)
+                            }
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                when (fxCategory) {
+                                    "DELAY" -> "Delay FXNative"
+                                    "REVERB" -> "Reverb FXNative"
+                                    "MODULATION" -> "Modulação FXNative"
+                                    "CHOOSE" -> "FXNative"
+                                    else -> "Adicionar à cadeia"
+                                },
+                                color = PicoloText,
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                when (fxCategory) {
+                                    "DELAY", "REVERB", "MODULATION" -> "Escolha um efeito"
+                                    "CHOOSE" -> "Escolha Delay, Reverb ou Modulação"
+                                    else -> "Escolha um tipo de bloco"
+                                },
+                                color = PicoloSecondary,
+                                fontSize = 13.sp,
+                            )
+                        }
+                        IconButton(onClick = onDismiss) {
+                            Text("✕", color = PicoloSecondary, fontSize = 20.sp)
+                        }
+                    }
+                    when (fxCategory) {
+                        null -> {
+                            AddModuleChoiceCard(
+                                title = "NAM",
+                                subtitle = "Modelos AMP e DRIVE salvos ou TONE3000",
+                                icon = R.drawable.ic_picolo_nam,
+                                accent = PicoloOrange,
+                                iconBackground = Color(0xFF332116),
+                                onClick = onBrowseNam,
+                            )
+                            AddModuleChoiceCard(
+                                title = "CAB / IR",
+                                subtitle = "Cabinet impulse response do TONE3000",
+                                icon = R.drawable.ic_picolo_cabinet,
+                                accent = PicoloYellow,
+                                iconBackground = Color(0xFF332B14),
+                                onClick = onBrowseCabinet,
+                            )
+                            AddModuleChoiceCard(
+                                title = "FXNative",
+                                subtitle = "Delay, reverb e modulação",
+                                icon = null,
+                                accent = PicoloYellow,
+                                iconBackground = Color(0xFF29231A),
+                                onClick = { fxCategory = "CHOOSE" },
+                            )
+                        }
+                        "CHOOSE" -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                AddModuleCategoryCard(
+                                    title = "Delay",
+                                    subtitle = "5 efeitos",
+                                    modifier = Modifier.weight(1f),
+                                    accent = PicoloPink,
+                                    onClick = { fxCategory = "DELAY" },
+                                )
+                                AddModuleCategoryCard(
+                                    title = "Reverb",
+                                    subtitle = "6 efeitos",
+                                    modifier = Modifier.weight(1f),
+                                    accent = PicoloTeal,
+                                    onClick = { fxCategory = "REVERB" },
+                                )
+                                }
+                                AddModuleCategoryCard(
+                                    title = "Modulation",
+                                    subtitle = "Chorus",
+                                    modifier = Modifier.fillMaxWidth(),
+                                    accent = PicoloPurple,
+                                    onClick = { fxCategory = "MODULATION" },
+                                )
+                            }
+                        }
+                        else -> visibleFx.forEach { index ->
+                            AddModuleChoiceCard(
+                                title = fxNames[index],
+                                subtitle = when (fxCategory) {
+                                    "DELAY" -> "Delay"
+                                    "REVERB" -> "Reverb"
+                                    else -> "Modulação"
+                                },
+                                icon = null,
+                                accent = nativeFxAccent(index),
+                                iconBackground = nativeFxSurface(index),
+                                onClick = { onAddFxNative(index) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddModuleCategoryCard(
+    title: String,
+    subtitle: String,
+    modifier: Modifier = Modifier,
+    accent: Color = PicoloTeal,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = modifier.height(116.dp).clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = PicoloSurfaceRaised),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(
+            Modifier.fillMaxSize().padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Surface(Modifier.size(38.dp), color = accent.copy(alpha = 0.16f), shape = CircleShape) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(title.take(1), color = accent, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(title, color = PicoloText, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = PicoloSecondary, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
+private fun AddModuleChoiceCard(
+    title: String,
+    subtitle: String,
+    icon: Int?,
+    accent: Color,
+    iconBackground: Color,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 70.dp).clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = PicoloSurfaceRaised),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Surface(Modifier.size(46.dp), color = iconBackground, shape = RoundedCornerShape(14.dp)) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (icon != null) {
+                        Image(
+                            painter = painterResource(icon),
+                            contentDescription = null,
+                            modifier = Modifier.size(26.dp),
+                            colorFilter = ColorFilter.tint(accent),
+                        )
+                    } else {
+                        Text(if (title == "FXNative") "FX" else title.take(1).uppercase(), color = accent, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, color = PicoloText, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, color = PicoloSecondary, fontSize = 12.sp)
+            }
+            Text("›", color = accent, fontSize = 28.sp)
         }
     }
 }
@@ -491,7 +1030,7 @@ private fun ChainTile(
     val cancelNow by androidx.compose.runtime.rememberUpdatedState(onDragCancel)
     val lift by animateFloatAsState(if (isDragging) 1f else 0f, label = "blockLift")
     val tileWidth = if (label == "OUT") 48.dp else 54.dp
-    val dragModifier = if (onDragStart == null || label == "NATIVE") Modifier else Modifier.pointerInput(label) {
+    val dragModifier = if (onDragStart == null) Modifier else Modifier.pointerInput(label) {
         detectDragGesturesAfterLongPress(
             onDragStart = { startNow?.invoke() },
             onDragEnd = { endNow?.invoke() },
@@ -571,10 +1110,10 @@ private fun ModuleCard(module: UiModule, actions: PicoloActions, state: PicoloUi
     val color = moduleAccent(module, state)
     Card(
         colors = CardDefaults.cardColors(containerColor = when {
-            module.type == "NAM" && module.moduleType == "PEDAL" -> Color(0xFF0D302D)
-            module.type == "NAM" -> Color(0xFF21150F)
-            module.type == "FX_NATIVE" -> Color(0xFF10201F)
-                    module.type == "CABINET_IR" && state.cabinetType != "FX" -> Color(0xFF211D0C)
+            module.type == "NAM" && module.moduleType == "PEDAL" -> Color(0xFF301319)
+            module.type == "NAM" -> Color(0xFF101D30)
+            module.type == "FX_NATIVE" -> nativeFxSurface(module.nativeEffect)
+            module.type == "CABINET_IR" && state.cabinetType != "FX" -> Color(0xFF211D0C)
             else -> Color(0xFF10201F)
         }),
         shape = RoundedCornerShape(12.dp),
@@ -597,9 +1136,9 @@ private fun ModuleCard(module: UiModule, actions: PicoloActions, state: PicoloUi
                     Column {
                         Text(when (module.type) {
                             "CABINET_IR" -> if (state.cabinetType == "FX") "FX / SPACE" else "IR / CABINET"
-                            "FX_NATIVE" -> "FX NATIVE · CHOW"
+                            "FX_NATIVE" -> "${nativeFxCategory(module.nativeEffect)} · CHOW"
                             "FX" -> "FX / SPACE"
-                            else -> if (module.moduleType == "PEDAL") "DRIVE" else "NAM"
+                            else -> when (module.moduleType) { "PEDAL" -> "DRIVE"; "AMP" -> "AMP"; else -> "NAM" }
                         }, color = PicoloText, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
@@ -662,30 +1201,130 @@ private fun ModuleCard(module: UiModule, actions: PicoloActions, state: PicoloUi
                 ModelSelector(module.name, "Captures from this package", color) { actions.selectPackageCaptures(module.id) }
                 RotaryKnob("MIX", module.mix, 0f..1f, "%", color) { actions.setFxMix(module.index, it.toDouble()) }
             } else if (module.type == "FX_NATIVE") {
-                val effects = listOf("ChowMatrix Delay", "BYOD BBD Delay", "BYOD Smooth Reverb", "BYOD Shimmer Reverb")
+                val effects = listOf("ChowMatrix Delay", "BYOD BBD Delay", "BYOD Smooth Reverb", "BYOD Shimmer Reverb", "Spring Reverb", "Ping-Pong Delay", "Plate Reverb", "Airwindows kPlate140", "MVerb Reverb", "Airwindows Tape Delay 2", "Dual Delay", "Chorus")
                 var effectMenuExpanded by remember(module.id) { mutableStateOf(false) }
                 androidx.compose.foundation.layout.Box {
-                    ModelSelector(effects.getOrElse(module.nativeEffect) { effects.first() }, "STEREO · AFTER NAM / CAB", color) { effectMenuExpanded = true }
+                    val routingLabel = if (module.nativePosition <= 4) {
+                        "MONO · IN NAM / CAB CHAIN"
+                    } else {
+                        "STEREO · POST NAM / CAB"
+                    }
+                    ModelSelector(effects.getOrElse(module.nativeEffect) { effects.first() }, routingLabel, color) { effectMenuExpanded = true }
                     DropdownMenu(expanded = effectMenuExpanded, onDismissRequest = { effectMenuExpanded = false }) {
                         effects.forEachIndexed { index, label ->
                             DropdownMenuItem(text = { Text(label) }, onClick = { effectMenuExpanded = false; actions.setFxNativeType(module.index, index) })
                         }
                     }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    RotaryKnob("MIX", module.mix, 0f..1f, "%", color) { actions.setFxNativeMix(module.index, it.toDouble()) }
-                    RotaryKnob(when (module.nativeEffect) { 0, 1 -> "TIME"; 2 -> "DECAY"; else -> "SIZE" }, module.nativeParam1,
-                        when (module.nativeEffect) { 0, 1 -> 20f..2000f; 2 -> 500f..5000f; else -> 50f..250f },
-                        if (module.nativeEffect == 2) "ms" else "ms", color) {
-                        actions.setFxNativeParameter(module.index, 0, it.toDouble())
+                if (module.nativeEffect == 11) {
+                    TempoDivisionControl(
+                        tempoSync = module.fxTempoSync,
+                        division = module.fxSyncLeftNote,
+                        bpm = state.globalTapTempoBpm,
+                        color = color,
+                        onToggle = { actions.setFxNativeTiming(module.index, !module.fxTempoSync, module.fxSyncLeftNote, module.fxSyncRightNote) },
+                        onDivision = { actions.setFxNativeTiming(module.index, true, it, module.fxSyncRightNote) },
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        RotaryKnob("MIX", module.mix, 0f..1f, "%", color) {
+                            actions.setFxNativeMix(module.index, it.toDouble())
+                        }
+                        RotaryKnob("OUTPUT", module.nativeOutputGainDb, -12f..12f, "dB", color) {
+                            actions.setFxNativeOutputGainDb(module.index, it.toDouble())
+                        }
                     }
-                    RotaryKnob(when (module.nativeEffect) { 0, 1 -> "FEEDBACK"; 2 -> "RELAX"; else -> "DECAY" }, module.nativeParam2,
-                        if (module.nativeEffect < 2) 0f..0.94f else if (module.nativeEffect == 2) 0f..1f else 1000f..10000f,
-                        if (module.nativeEffect == 3) "ms" else "", color) {
-                        actions.setFxNativeParameter(module.index, 1, it.toDouble())
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        RotaryKnob("DEPTH", module.nativeParam1, 0f..20f, "ms", color) {
+                            actions.setFxNativeParameter(module.index, 0, it.toDouble())
+                        }
+                        if (!module.fxTempoSync) RotaryKnob("SPEED", module.nativeParam2, 0.1f..8f, "Hz", color) {
+                            actions.setFxNativeParameter(module.index, 1, it.toDouble())
+                        }
+                        RotaryKnob("TONE", module.nativeParam3, 1000f..20000f, "Hz", color) {
+                            actions.setFxNativeParameter(module.index, 2, it.toDouble())
+                        }
                     }
-                    if (module.nativeEffect == 3) RotaryKnob("SHIFT", module.nativeParam3, -12f..12f, "st", color) {
-                        actions.setFxNativeParameter(module.index, 2, it.toDouble())
+                } else if (module.nativeEffect == 10) {
+                    var leftNoteMenu by remember(module.id) { mutableStateOf(false) }
+                    var rightNoteMenu by remember(module.id) { mutableStateOf(false) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        RotaryKnob("MIX", module.mix, 0f..1f, "%", color) { actions.setFxNativeMix(module.index, it.toDouble()) }
+                        RotaryKnob("FEEDBACK", module.nativeParam2, 0f..0.96f, "", color) {
+                            actions.setFxNativeParameter(module.index, 1, it.toDouble())
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                        Button(onClick = {
+                            actions.setFxNativeTiming(module.index, !module.fxTempoSync, module.fxSyncLeftNote, module.fxSyncRightNote)
+                        }, colors = ButtonDefaults.buttonColors(containerColor = PicoloSurfaceRaised)) {
+                            Text(if (module.fxTempoSync) "SYNC · ${state.globalTapTempoBpm.toInt()} BPM" else "FREE MS", color = color)
+                        }
+                    }
+                    if (module.fxTempoSync) {
+                        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.foundation.layout.Box {
+                                Button(onClick = { leftNoteMenu = true }, colors = ButtonDefaults.buttonColors(containerColor = PicoloSurfaceRaised)) {
+                                    Text("L · ${module.fxSyncLeftNote}", color = color)
+                                }
+                                DropdownMenu(expanded = leftNoteMenu, onDismissRequest = { leftNoteMenu = false }) {
+                                    listOf("1/16", "1/8", "1/8.", "1/4", "1/4T", "1/4.", "1/2").forEach { note ->
+                                        DropdownMenuItem(text = { Text(note) }, onClick = {
+                                            leftNoteMenu = false
+                                            actions.setFxNativeTiming(module.index, true, note, module.fxSyncRightNote)
+                                        })
+                                    }
+                                }
+                            }
+                            androidx.compose.foundation.layout.Box {
+                                Button(onClick = { rightNoteMenu = true }, colors = ButtonDefaults.buttonColors(containerColor = PicoloSurfaceRaised)) {
+                                    Text("R · ${module.fxSyncRightNote}", color = color)
+                                }
+                                DropdownMenu(expanded = rightNoteMenu, onDismissRequest = { rightNoteMenu = false }) {
+                                    listOf("1/16", "1/8", "1/8.", "1/4", "1/4T", "1/4.", "1/2").forEach { note ->
+                                        DropdownMenuItem(text = { Text(note) }, onClick = {
+                                            rightNoteMenu = false
+                                            actions.setFxNativeTiming(module.index, true, module.fxSyncLeftNote, note)
+                                        })
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                            RotaryKnob("LEFT TIME", module.nativeParam1, 20f..2000f, "ms", color) {
+                                actions.setFxNativeParameter(module.index, 0, it.toDouble())
+                            }
+                            RotaryKnob("RIGHT TIME", module.nativeParam3, 20f..2000f, "ms", color) {
+                                actions.setFxNativeParameter(module.index, 2, it.toDouble())
+                            }
+                        }
+                    }
+                } else {
+                    val tempoDelay = module.nativeEffect in setOf(0, 1, 5, 9)
+                    if (tempoDelay) TempoDivisionControl(
+                        tempoSync = module.fxTempoSync,
+                        division = module.fxSyncLeftNote,
+                        bpm = state.globalTapTempoBpm,
+                        color = color,
+                        onToggle = { actions.setFxNativeTiming(module.index, !module.fxTempoSync, module.fxSyncLeftNote, module.fxSyncRightNote) },
+                        onDivision = { actions.setFxNativeTiming(module.index, true, it, module.fxSyncRightNote) },
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        RotaryKnob("MIX", module.mix, 0f..1f, "%", color) { actions.setFxNativeMix(module.index, it.toDouble()) }
+                        if (!(tempoDelay && module.fxTempoSync)) RotaryKnob(when (module.nativeEffect) { 0, 1, 5, 9 -> "TIME"; 3 -> "SIZE"; else -> "DECAY" }, module.nativeParam1,
+                            when (module.nativeEffect) { 0, 1, 5 -> 20f..2000f; 9 -> 70f..1800f; 2, 4 -> 500f..5000f; 6, 7 -> 500f..8000f; 8 -> 500f..10000f; else -> 50f..250f },
+                            "ms", color) { actions.setFxNativeParameter(module.index, 0, it.toDouble()) }
+                        RotaryKnob(when (module.nativeEffect) { 0, 1, 5, 9 -> "FEEDBACK"; 2 -> "RELAX"; 4 -> "DWELL"; 3 -> "DECAY"; 7 -> "PREDELAY"; else -> "DAMPING" }, module.nativeParam2,
+                            when (module.nativeEffect) { 0, 1, 5, 9 -> 0f..0.96f; 2, 4 -> 0f..1f; 3 -> 1000f..10000f; 6 -> 1000f..12000f; 7 -> 0f..300f; else -> 100f..18500f },
+                            if (module.nativeEffect == 3 || module.nativeEffect == 7) "ms" else if (module.nativeEffect in 6..8) "Hz" else "", color) {
+                            actions.setFxNativeParameter(module.index, 1, it.toDouble())
+                        }
+                        if (module.nativeEffect in 3..9) RotaryKnob(
+                            when (module.nativeEffect) { 3 -> "SHIFT"; 4 -> "TONE"; 5 -> "WIDTH"; 6 -> "DIFFUSION"; 7 -> "CHARACTER"; 8 -> "DENSITY"; else -> "TONE" },
+                            module.nativeParam3,
+                            when (module.nativeEffect) { 3 -> -12f..12f; 4 -> 500f..12000f; 9 -> 500f..9500f; else -> if (module.nativeEffect == 7) 0.45f..1f else 0f..1f },
+                            when (module.nativeEffect) { 3 -> "st"; 4, 9 -> "Hz"; else -> "" }, color,
+                        ) { actions.setFxNativeParameter(module.index, 2, it.toDouble()) }
                     }
                 }
             } else if (module.moduleType == "PEDAL") {
@@ -765,13 +1404,31 @@ private fun ModelSelector(name: String, subtitle: String, accent: Color, onClick
 }
 
 private fun moduleAccent(module: UiModule, state: PicoloUiState): Color = when {
-    module.type == "NAM" && module.moduleType == "PEDAL" -> PicoloTeal
-    module.type == "FX_NATIVE" -> PicoloTeal
+    module.type == "NAM" && module.moduleType == "PEDAL" -> PicoloRed
+    module.type == "NAM" -> PicoloBlue
+    module.type == "FX_NATIVE" -> nativeFxAccent(module.nativeEffect)
     module.type == "FX" -> PicoloBlue
     module.type == "CABINET_IR" && state.cabinetType == "FX" -> PicoloBlue
     module.type == "CABINET_IR" -> PicoloYellow
-    module.type == "NAM" -> PicoloOrange
     else -> PicoloTeal
+}
+
+private fun nativeFxCategory(effect: Int): String = when (effect) {
+    11 -> "MOD"
+    0, 1, 5, 9, 10 -> "DELAY"
+    else -> "REV"
+}
+
+private fun nativeFxAccent(effect: Int): Color = when (nativeFxCategory(effect)) {
+    "MOD" -> PicoloPurple
+    "DELAY" -> PicoloPink
+    else -> PicoloTeal
+}
+
+private fun nativeFxSurface(effect: Int): Color = when (nativeFxCategory(effect)) {
+    "MOD" -> Color(0xFF241632)
+    "DELAY" -> Color(0xFF301725)
+    else -> Color(0xFF10201F)
 }
 
 @Composable
@@ -1022,6 +1679,7 @@ private fun FootswitchPage(state: PicoloUiState, modifier: Modifier) {
 
 @Composable
 private fun SettingsPage(state: PicoloUiState, actions: PicoloActions, modifier: Modifier) {
+    val scope = rememberCoroutineScope()
     LazyColumn(modifier.fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text("Settings", color = PicoloText, fontSize = 24.sp, fontWeight = FontWeight.SemiBold) }
         item {
@@ -1052,7 +1710,7 @@ private fun SettingsPage(state: PicoloUiState, actions: PicoloActions, modifier:
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { actions.scanUsbAudio() }, modifier = Modifier.weight(1f).height(48.dp)) { Text("SCAN USB") }
-                Button(onClick = { actions.cycleOutput() }, modifier = Modifier.weight(1f).height(48.dp)) { Text("CYCLE OUTPUT") }
+                Button(onClick = { scope.launch { actions.cycleOutput() } }, modifier = Modifier.weight(1f).height(48.dp)) { Text("CYCLE OUTPUT") }
             }
         }
     }

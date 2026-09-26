@@ -51,10 +51,22 @@ class DataRepositoryCompatibilityTest {
         directory.deleteRecursively()
     }
 
+    private fun preferenceCache(fileName: String = "${UUID.randomUUID()}.preferences_pb"): DataStorePreferenceCache {
+        val store = AppPreferencesDataStore.create(
+            context,
+            legacyPreferencesName = preferenceName,
+            file = File(directory, fileName),
+            scope = dataStoreScope,
+        )
+        return DataStorePreferenceCache(store, dataStoreScope).also { cache ->
+            runBlocking { cache.awaitLoaded() }
+        }
+    }
+
     @Test fun saveCurrentCopiesModelAndKeepsLegacyPreferencesInSync() {
-        val preferences = context.getSharedPreferences(preferenceName, 0)
+        val legacyPreferences = context.getSharedPreferences(preferenceName, 0)
         val source = File(directory, "current.nam").apply { writeText("nam model bytes") }
-        preferences.edit()
+        legacyPreferences.edit()
             .putString(PresetPreferenceKeys.LAST_MODEL_PATH, source.absolutePath)
             .putString(PresetPreferenceKeys.LAST_MODEL_NAME, "Current model")
             .putString(PresetPreferenceKeys.LAST_MODEL_SIZE, "2 MB")
@@ -63,7 +75,8 @@ class DataRepositoryCompatibilityTest {
             .putFloat(PresetPreferenceKeys.INPUT_GAIN, 3.5f)
             .putFloat(PresetPreferenceKeys.OUTPUT_GAIN, -1.5f)
             .commit()
-        val repository = PresetRepositoryImpl(preferences, directory, presetCount = 4, maxNamBlocks = 6)
+        val cache = preferenceCache("preset-save.preferences_pb")
+        val repository = PresetRepositoryImpl(cache, directory, presetCount = 4, maxNamBlocks = 6)
 
         repository.saveCurrent(slot = 2, namBypassFallback = false)
 
@@ -74,17 +87,17 @@ class DataRepositoryCompatibilityTest {
         assertEquals(3.5f, saved.inputGainDb)
         assertEquals(-1.5f, saved.outputGainDb)
         assertEquals("nam model bytes", File(saved.modelPath).readText())
-        assertEquals(2, preferences.getInt(PresetPreferenceKeys.ACTIVE_PRESET_SLOT, -1))
-        assertEquals(source.absolutePath, preferences.getString(PresetPreferenceKeys.LAST_MODEL_PATH, null))
-        assertEquals(3.5f, preferences.getFloat(PresetPreferenceKeys.INPUT_GAIN, 0f))
+        assertEquals(2, cache.getInt(PresetPreferenceKeys.ACTIVE_PRESET_SLOT, -1))
+        assertEquals(source.absolutePath, cache.getString(PresetPreferenceKeys.LAST_MODEL_PATH))
+        assertEquals(3.5f, cache.getFloat(PresetPreferenceKeys.INPUT_GAIN, 0f))
     }
 
     @Test fun namChainRepositoryRoundTripsLegacyJsonAndFiltersInvalidPaths() {
-        val preferences = context.getSharedPreferences(preferenceName, 0)
         val primary = File(directory, "primary.nam").apply { writeText("primary") }
         val extra = File(directory, "extra.nam").apply { writeText("extra") }
-        val repository = NamChainRepository(preferences, "extra_nam_chain_json", PresetPreferenceKeys.LAST_MODEL_PATH)
-        preferences.edit().putString(PresetPreferenceKeys.LAST_MODEL_PATH, primary.absolutePath).commit()
+        val cache = preferenceCache("nam-chain.preferences_pb")
+        val repository = NamChainRepository(cache, "extra_nam_chain_json", PresetPreferenceKeys.LAST_MODEL_PATH)
+        cache.edit().putString(PresetPreferenceKeys.LAST_MODEL_PATH, primary.absolutePath).apply()
         val entry = ExtraNamEntry(
             toneId = "tone", toneTitle = "Amp", modelId = 7L, modelName = "Extra", size = "small",
             path = extra.absolutePath, bypass = true, gainDb = -12f, moduleType = "PEDAL",
@@ -93,49 +106,60 @@ class DataRepositoryCompatibilityTest {
         repository.persistExtraNamChain(listOf(entry, entry.copy(path = primary.absolutePath)))
 
         assertEquals(listOf(entry), repository.readExtraNamChain())
-        val persisted = preferences.getString("extra_nam_chain_json", null)
+        val persisted = cache.getString("extra_nam_chain_json")
         assertNotNull(persisted)
         assertTrue(persisted!!.contains("\"modelId\":7"))
     }
 
     @Test fun fxChainRepositoryKeepsLegacyJsonAndIgnoresMissingImpulseFiles() {
-        val preferences = context.getSharedPreferences(preferenceName, 0)
         val validIr = File(directory, "valid.wav").apply { writeText("wav") }
         val missingIr = File(directory, "missing.wav")
         val fx = JSONObject().put("path", validIr.absolutePath).put("mix", 0.5)
         val missing = JSONObject().put("path", missingIr.absolutePath)
-        val repository = FxChainRepository(preferences, "fx_ir_chain_json", "fx_native_chain_json")
-        preferences.edit().putString("fx_ir_chain_json", org.json.JSONArray().put(fx).put(missing).toString()).commit()
+        val cache = preferenceCache("fx-chain.preferences_pb")
+        val repository = FxChainRepository(cache, "fx_ir_chain_json", "fx_native_chain_json")
+        cache.edit().putString("fx_ir_chain_json", org.json.JSONArray().put(fx).put(missing).toString()).apply()
 
         val read = repository.readImpulseChain()
         repository.persistImpulseChain(read)
 
         assertEquals(1, read.size)
         assertEquals(validIr.absolutePath, read.single().path)
-        assertTrue(preferences.getString("fx_ir_chain_json", "")!!.contains("\"mix\":0.5"))
+        assertTrue(cache.getString("fx_ir_chain_json", "")!!.contains("\"mix\":0.5"))
 
         val nativeEntry = FxNativeEntry(effect = 2, mix = 0.7f, param1 = 1800f, param2 = 0.6f)
         repository.persistNativeChain(listOf(nativeEntry))
         assertEquals(listOf(nativeEntry), repository.readNativeChain())
-        assertTrue(preferences.getString("fx_native_chain_json", "")!!.contains("\"effect\":2"))
+        assertTrue(cache.getString("fx_native_chain_json", "")!!.contains("\"effect\":2"))
     }
 
     @Test fun currentToneRepositoryReadsTheLegacyActiveModelPath() {
         val preferences = context.getSharedPreferences(preferenceName, 0)
         val model = File(directory, "active.nam").apply { writeText("active model") }
         preferences.edit().putString(PresetPreferenceKeys.LAST_MODEL_PATH, model.absolutePath).commit()
+        val store = AppPreferencesDataStore.create(
+            context,
+            legacyPreferencesName = preferenceName,
+            file = File(directory, "current-tone.preferences_pb"),
+            scope = dataStoreScope,
+        )
 
-        val currentTone = CurrentToneRepositoryImpl(preferences)
-            .currentModelFile()
+        val currentTone = runBlocking { CurrentToneRepositoryImpl(store).currentModelFile() }
 
         assertEquals(model.absolutePath, currentTone?.absolutePath)
     }
 
     @Test fun cabinetImpulseRepositoryWritesLegacyKeysAndDefaults() {
-        val preferences = context.getSharedPreferences(preferenceName, 0)
         val ir = File(directory, "cabinet.wav").apply { writeText("wav") }
+        val storeFile = File(directory, "app_preferences.preferences_pb")
+        val dataStore = AppPreferencesDataStore.create(
+            context = context,
+            legacyPreferencesName = preferenceName,
+            file = storeFile,
+            scope = dataStoreScope,
+        )
 
-        CabinetImpulseRepositoryImpl(preferences).save(
+        runBlocking { CabinetImpulseRepositoryImpl(dataStore).save(
             path = ir,
             imageUrl = "image",
             title = "Cabinet",
@@ -143,42 +167,51 @@ class DataRepositoryCompatibilityTest {
             moduleType = "FX",
             position = 3,
             mix = 0.5f,
-        )
+        ) }
+        val values = runBlocking { dataStore.data.first() }
 
-        assertEquals(ir.absolutePath, preferences.getString(PresetPreferenceKeys.CABINET_IR_PATH, null))
-        assertEquals("image", preferences.getString("cabinet_ir_image", null))
-        assertEquals("Cabinet", preferences.getString(PresetPreferenceKeys.CABINET_IR_TITLE, null))
-        assertEquals("tone-77", preferences.getString(PresetPreferenceKeys.CABINET_IR_TONE_ID, null))
-        assertEquals("FX", preferences.getString(PresetPreferenceKeys.CABINET_IR_TYPE, null))
-        assertEquals(3, preferences.getInt(PresetPreferenceKeys.CABINET_IR_POSITION, -1))
-        assertFalse(preferences.getBoolean(PresetPreferenceKeys.CABINET_IR_BYPASS, true))
-        assertEquals(0f, preferences.getFloat(PresetPreferenceKeys.CABINET_IR_IN_GAIN, -1f))
-        assertEquals(0f, preferences.getFloat(PresetPreferenceKeys.CABINET_IR_OUT_GAIN, -1f))
-        assertEquals(0.5f, preferences.getFloat(PresetPreferenceKeys.CABINET_IR_MIX, -1f))
-        assertFalse(preferences.getBoolean(PresetPreferenceKeys.CABINET_IR_EQ_PRE, true))
-        assertTrue(preferences.getBoolean("cabinet_ir_eq_enabled", false))
-        for (band in 0 until 6) assertEquals(0f, preferences.getFloat(PresetPreferenceKeys.CABINET_IR_EQ_PREFIX + band, -1f))
+        assertEquals(ir.absolutePath, values[stringPreferencesKey(PresetPreferenceKeys.CABINET_IR_PATH)])
+        assertEquals("image", values[stringPreferencesKey("cabinet_ir_image")])
+        assertEquals("Cabinet", values[stringPreferencesKey(PresetPreferenceKeys.CABINET_IR_TITLE)])
+        assertEquals("tone-77", values[stringPreferencesKey(PresetPreferenceKeys.CABINET_IR_TONE_ID)])
+        assertEquals("FX", values[stringPreferencesKey(PresetPreferenceKeys.CABINET_IR_TYPE)])
+        assertEquals(3, values[intPreferencesKey(PresetPreferenceKeys.CABINET_IR_POSITION)])
+        assertFalse(values[booleanPreferencesKey(PresetPreferenceKeys.CABINET_IR_BYPASS)]!!)
+        assertEquals(0f, values[floatPreferencesKey(PresetPreferenceKeys.CABINET_IR_IN_GAIN)])
+        assertEquals(0f, values[floatPreferencesKey(PresetPreferenceKeys.CABINET_IR_OUT_GAIN)])
+        assertEquals(0.5f, values[floatPreferencesKey(PresetPreferenceKeys.CABINET_IR_MIX)])
+        assertFalse(values[booleanPreferencesKey(PresetPreferenceKeys.CABINET_IR_EQ_PRE)]!!)
+        assertTrue(values[booleanPreferencesKey("cabinet_ir_eq_enabled")]!!)
+        for (band in 0 until 6) {
+            assertEquals(0f, values[floatPreferencesKey(PresetPreferenceKeys.CABINET_IR_EQ_PREFIX + band)])
+        }
     }
 
     @Test fun activeToneRepositorySavesLegacyModelFieldsAndPedalDefaults() {
-        val preferences = context.getSharedPreferences(preferenceName, 0)
+        val store = AppPreferencesDataStore.create(
+            context,
+            legacyPreferencesName = preferenceName,
+            file = File(directory, "active-tone.preferences_pb"),
+            scope = dataStoreScope,
+        )
         val model = File(directory, "pedal.nam").apply { writeText("pedal") }
 
-        CurrentToneRepositoryImpl(preferences).save(
+        runBlocking { CurrentToneRepositoryImpl(store).save(
             toneId = "tone-pedal",
             toneTitle = "Pedal tone",
             model = OnlineModel(21, "Pedal capture", "small", "url"),
             moduleType = "PEDAL",
             file = model,
-        )
+        ) }
+        val values = runBlocking { store.data.first() }
 
-        assertEquals(model.absolutePath, preferences.getString(PresetPreferenceKeys.LAST_MODEL_PATH, null))
-        assertEquals("Pedal capture", preferences.getString(PresetPreferenceKeys.LAST_MODEL_NAME, null))
-        assertEquals("tone-pedal", preferences.getString(PresetPreferenceKeys.LAST_TONE_ID, null))
-        assertEquals("PEDAL", preferences.getString(PresetPreferenceKeys.LAST_MODEL_TYPE, null))
-        assertEquals(-10f, preferences.getFloat(PresetPreferenceKeys.NAM_GAIN_DB, 0f))
-        assertFalse(preferences.getBoolean(PresetPreferenceKeys.NAM_NORMALIZE, true))
-        assertFalse(preferences.getBoolean(PresetPreferenceKeys.NAM_A2_FULL, true))
+        assertEquals(model.absolutePath, values[stringPreferencesKey(PresetPreferenceKeys.LAST_MODEL_PATH)])
+        assertEquals("Pedal capture", values[stringPreferencesKey(PresetPreferenceKeys.LAST_MODEL_NAME)])
+        assertEquals("tone-pedal", values[stringPreferencesKey(PresetPreferenceKeys.LAST_TONE_ID)])
+        assertEquals("PEDAL", values[stringPreferencesKey(PresetPreferenceKeys.LAST_MODEL_TYPE)])
+        assertEquals(-10f, values[floatPreferencesKey(PresetPreferenceKeys.NAM_GAIN_DB)])
+        assertFalse(values[booleanPreferencesKey(PresetPreferenceKeys.NAM_NORMALIZE)]!!)
+        assertFalse(values[booleanPreferencesKey(PresetPreferenceKeys.NAM_A2_FULL)]!!)
     }
 
     @Test fun activeToneRepositoryClearPreservesTheExistingRemovalContract() {
@@ -192,16 +225,23 @@ class DataRepositoryCompatibilityTest {
             .putString(PresetPreferenceKeys.LAST_MODEL_TYPE, "AMP")
             .putFloat(PresetPreferenceKeys.NAM_GAIN_DB, -15f)
             .commit()
+        val store = AppPreferencesDataStore.create(
+            context,
+            legacyPreferencesName = preferenceName,
+            file = File(directory, "active-tone-clear.preferences_pb"),
+            scope = dataStoreScope,
+        )
 
-        CurrentToneRepositoryImpl(preferences).clear()
+        runBlocking { CurrentToneRepositoryImpl(store).clear() }
+        val values = runBlocking { store.data.first() }
 
-        assertEquals(null, preferences.getString(PresetPreferenceKeys.LAST_MODEL_PATH, null))
-        assertEquals(null, preferences.getString(PresetPreferenceKeys.LAST_MODEL_NAME, null))
-        assertEquals(null, preferences.getString(PresetPreferenceKeys.LAST_MODEL_SIZE, null))
-        assertEquals(null, preferences.getString(PresetPreferenceKeys.LAST_TONE_ID, null))
-        assertEquals(null, preferences.getString(PresetPreferenceKeys.LAST_TONE_TITLE, null))
-        assertEquals("AMP", preferences.getString(PresetPreferenceKeys.LAST_MODEL_TYPE, null))
-        assertEquals(-15f, preferences.getFloat(PresetPreferenceKeys.NAM_GAIN_DB, 0f))
+        assertEquals(null, values[stringPreferencesKey(PresetPreferenceKeys.LAST_MODEL_PATH)])
+        assertEquals(null, values[stringPreferencesKey(PresetPreferenceKeys.LAST_MODEL_NAME)])
+        assertEquals(null, values[stringPreferencesKey(PresetPreferenceKeys.LAST_MODEL_SIZE)])
+        assertEquals(null, values[stringPreferencesKey(PresetPreferenceKeys.LAST_TONE_ID)])
+        assertEquals(null, values[stringPreferencesKey(PresetPreferenceKeys.LAST_TONE_TITLE)])
+        assertEquals("AMP", values[stringPreferencesKey(PresetPreferenceKeys.LAST_MODEL_TYPE)])
+        assertEquals(-15f, values[floatPreferencesKey(PresetPreferenceKeys.NAM_GAIN_DB)])
     }
 
     @Test fun packageCaptureCacheMigratesLegacyJsonAndDeduplicatesModels() = runBlocking {
@@ -290,7 +330,7 @@ class DataRepositoryCompatibilityTest {
         assertEquals("FX", store.data.first()[stringPreferencesKey(PresetPreferenceKeys.SELECTED_ADD_TYPE)])
     }
 
-    @Test fun dataStoreSharedPreferencesMigratesTypedValuesAndKeepsLegacyBackup() = runBlocking {
+    @Test fun dataStorePreferenceCacheMigratesValuesAndPersistsUpdates() = runBlocking {
         val legacy = context.getSharedPreferences(preferenceName, 0)
         legacy.edit()
             .putBoolean("audio_enabled", true)
@@ -304,21 +344,20 @@ class DataRepositoryCompatibilityTest {
             file = File(directory, "typed-preferences.preferences_pb"),
             scope = dataStoreScope,
         )
-        val preferences = DataStoreSharedPreferences(store, dataStoreScope)
+        val preferences = DataStorePreferenceCache(store, dataStoreScope)
+        preferences.awaitLoaded()
 
         assertTrue(preferences.getBoolean("audio_enabled", false))
         assertEquals(2, preferences.getInt("input_channel", 0))
         assertEquals(4.5f, preferences.getFloat("input_gain_db", 0f))
         assertEquals(setOf("AMP", "FX"), preferences.getStringSet("favorite_modules", null))
 
-        assertTrue(
-            preferences.edit()
-                .putBoolean("audio_enabled", false)
-                .putStringSet("favorite_modules", mutableSetOf("PEDAL"))
-                .commit(),
-        )
+        preferences.edit()
+            .putBoolean("audio_enabled", false)
+            .putStringSet("favorite_modules", setOf("PEDAL"))
+            .apply()
 
-        val data = store.data.first()
+        val data = store.data.first { it[booleanPreferencesKey("audio_enabled")] == false }
         assertEquals(false, data[booleanPreferencesKey("audio_enabled")])
         assertEquals(2, data[intPreferencesKey("input_channel")])
         assertEquals(4.5f, data[floatPreferencesKey("input_gain_db")])
@@ -337,7 +376,8 @@ class DataRepositoryCompatibilityTest {
             .putString("preset_1_model_size", "legacy size")
             .putFloat("preset_1_input_gain_db", 4f)
             .commit()
-        val repository = PresetRepositoryImpl(preferences, directory, presetCount = 4, maxNamBlocks = 6)
+        val cache = preferenceCache("preset-read.preferences_pb")
+        val repository = PresetRepositoryImpl(cache, directory, presetCount = 4, maxNamBlocks = 6)
 
         val preset = repository.read(1)
 

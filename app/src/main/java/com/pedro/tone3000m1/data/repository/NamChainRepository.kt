@@ -1,6 +1,5 @@
 package com.pedro.tone3000m1.data.repository
 
-import android.content.SharedPreferences
 import android.util.Log
 import com.pedro.tone3000m1.domain.model.ExtraNamEntry
 import com.pedro.tone3000m1.domain.repository.ExtraNamChainRepository
@@ -11,7 +10,7 @@ import java.util.Locale
 
 /** Persists the non-primary NAM blocks stored in the legacy chain format. */
 class NamChainRepository(
-    private val preferences: SharedPreferences,
+    private val preferences: DataStorePreferenceCache,
     private val chainKey: String,
     private val primaryModelPathKey: String,
 ) : ExtraNamChainRepository {

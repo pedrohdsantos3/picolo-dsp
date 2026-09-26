@@ -66,6 +66,7 @@ namespace {
 
     /* All NAM slots are peers in one serial signal chain. */
     constexpr unsigned int MAX_NAM_BLOCKS = 4;
+    constexpr int FX_NATIVE_POST_CHAIN_POSITION = static_cast<int>(MAX_NAM_BLOCKS) + 1;
     constexpr unsigned int MAX_FX_IR_BLOCKS = 8;
 
     /*
@@ -1441,10 +1442,11 @@ namespace {
             for (unsigned int slot = 0; slot < MAX_FX_IR_BLOCKS; ++slot) {
                 mFxNativeBypass[slot].store(true);
                 mFxNativeMix[slot].store(0.35f);
-                mFxNativePosition[slot].store(static_cast<int>(MAX_NAM_BLOCKS));
+                mFxNativePosition[slot].store(FX_NATIVE_POST_CHAIN_POSITION);
                 mFxNativeParam1[slot].store(350.0f);
                 mFxNativeParam2[slot].store(0.35f);
                 mFxNativeParam3[slot].store(12.0f);
+                mFxNativeOutputGainDb[slot].store(0.0f);
             }
         }
 
@@ -1741,11 +1743,12 @@ namespace {
             if (slot < 0 || slot >= static_cast<int>(MAX_FX_IR_BLOCKS)) return;
             stop();
             const auto index = static_cast<size_t>(slot);
-            const int selectedType = std::clamp(type, 0, 3);
+            const int selectedType = std::clamp(type, 0, 11);
             mFxNative[index] = std::make_unique<picolo::FxNativeProcessor>(selectedType);
             mFxNativeType[index].store(selectedType, std::memory_order_relaxed);
-            (void) namBlocksBefore;
-            mFxNativePosition[index].store(static_cast<int>(MAX_NAM_BLOCKS), std::memory_order_relaxed);
+            mFxNativePosition[index].store(
+                    std::clamp(namBlocksBefore, 0, FX_NATIVE_POST_CHAIN_POSITION),
+                    std::memory_order_relaxed);
             mFxNativeBypass[index].store(false, std::memory_order_relaxed);
         }
 
@@ -1757,17 +1760,56 @@ namespace {
             if (slot >= 0 && slot < static_cast<int>(MAX_FX_IR_BLOCKS)) mFxNativeMix[static_cast<size_t>(slot)].store(std::clamp(mix, 0.0f, 1.0f), std::memory_order_relaxed);
         }
 
+        void setFxNativeOutputGainDb(int slot, float gainDb) {
+            if (slot >= 0 && slot < static_cast<int>(MAX_FX_IR_BLOCKS)) {
+                mFxNativeOutputGainDb[static_cast<size_t>(slot)].store(std::clamp(gainDb, -12.0f, 12.0f), std::memory_order_relaxed);
+            }
+        }
+
         void setFxNativeParameter(int slot, int parameter, float value) {
             if (slot < 0 || slot >= static_cast<int>(MAX_FX_IR_BLOCKS)) return;
             const auto index = static_cast<size_t>(slot);
-            if (parameter == 0) mFxNativeParam1[index].store(std::clamp(value, 0.0f, 1200.0f), std::memory_order_relaxed);
-            else if (parameter == 1) mFxNativeParam2[index].store(std::clamp(value, 0.0f, 1.0e4f), std::memory_order_relaxed);
-            else if (parameter == 2) mFxNativeParam3[index].store(std::clamp(value, -12.0f, 12.0f), std::memory_order_relaxed);
+            if (parameter < 0 || parameter > 2) return;
+            const int type = mFxNativeType[index].load(std::memory_order_relaxed);
+            float minimum = 0.0f;
+            float maximum = 1.0f;
+            if (parameter == 0) {
+                if (type == 0 || type == 1 || type == 5 || type == 10) { minimum = 20.0f; maximum = 2000.0f; }
+                else if (type == 11) { minimum = 0.0f; maximum = 20.0f; }
+                else if (type == 2 || type == 4) { minimum = 500.0f; maximum = 5000.0f; }
+                else if (type == 3) { minimum = 50.0f; maximum = 250.0f; }
+                else if (type == 6 || type == 7) { minimum = 500.0f; maximum = 8000.0f; }
+                else if (type == 8) { minimum = 500.0f; maximum = 10000.0f; }
+                else { minimum = 70.0f; maximum = 1800.0f; }
+            } else if (parameter == 1) {
+                if (type == 0 || type == 1 || type == 5 || type == 9 || type == 10) { minimum = 0.0f; maximum = 0.96f; }
+                else if (type == 11) { minimum = 0.1f; maximum = 8.0f; }
+                else if (type == 2 || type == 4) { minimum = 0.0f; maximum = 1.0f; }
+                else if (type == 3) { minimum = 1000.0f; maximum = 10000.0f; }
+                else if (type == 6) { minimum = 1000.0f; maximum = 12000.0f; }
+                else if (type == 7) { minimum = 0.0f; maximum = 300.0f; }
+                else { minimum = 100.0f; maximum = 18500.0f; }
+            } else {
+                if (type == 3) { minimum = -12.0f; maximum = 12.0f; }
+                else if (type == 4) { minimum = 500.0f; maximum = 12000.0f; }
+                else if (type == 9) { minimum = 500.0f; maximum = 9500.0f; }
+                else if (type == 10) { minimum = 20.0f; maximum = 2000.0f; }
+                else if (type == 11) { minimum = 1000.0f; maximum = 20000.0f; }
+                else if (type == 7) { minimum = 0.45f; maximum = 1.0f; }
+                else if (type == 8 || type == 6 || type == 5) { minimum = 0.0f; maximum = 1.0f; }
+            }
+            const float safeValue = std::clamp(value, minimum, maximum);
+            if (parameter == 0) mFxNativeParam1[index].store(safeValue, std::memory_order_relaxed);
+            else if (parameter == 1) mFxNativeParam2[index].store(safeValue, std::memory_order_relaxed);
+            else mFxNativeParam3[index].store(safeValue, std::memory_order_relaxed);
         }
 
         void setFxNativePosition(int slot, int namBlocksBefore) {
-            (void) namBlocksBefore;
-            if (slot >= 0 && slot < static_cast<int>(MAX_FX_IR_BLOCKS)) mFxNativePosition[static_cast<size_t>(slot)].store(static_cast<int>(MAX_NAM_BLOCKS), std::memory_order_relaxed);
+            if (slot >= 0 && slot < static_cast<int>(MAX_FX_IR_BLOCKS)) {
+                mFxNativePosition[static_cast<size_t>(slot)].store(
+                        std::clamp(namBlocksBefore, 0, FX_NATIVE_POST_CHAIN_POSITION),
+                        std::memory_order_relaxed);
+            }
         }
 
         void clearFxNative(int slot) {
@@ -1776,6 +1818,7 @@ namespace {
             const auto index = static_cast<size_t>(slot);
             mFxNative[index].reset();
             mFxNativeBypass[index].store(true, std::memory_order_relaxed);
+            mFxNativeOutputGainDb[index].store(0.0f, std::memory_order_relaxed);
         }
 
         std::string switchPresetGapless(
@@ -5664,21 +5707,57 @@ namespace {
                 }
             };
 
-            auto processFxNatives = [&](float* left, float* right) {
+            auto isFxNativePostChain = [&](size_t index) {
+                const int position = mFxNativePosition[index].load(std::memory_order_relaxed);
+                if (position >= FX_NATIVE_POST_CHAIN_POSITION) return true;
+                for (int slot = position; slot < static_cast<int>(MAX_NAM_BLOCKS); ++slot) {
+                    if (mNamModels[static_cast<size_t>(slot)]) return false;
+                }
+                return !mOutputIr ||
+                        mOutputIrPosition.load(std::memory_order_relaxed) < position;
+            };
+
+            auto processFxNativesMono = [&](int position, NAM_SAMPLE* buffer) {
+                std::array<float, DEFAULT_BLOCK_SIZE> mono{};
                 for (unsigned int slot = 0; slot < MAX_FX_IR_BLOCKS; ++slot) {
                     const auto index = static_cast<size_t>(slot);
-                    if (mFxNativeBypass[index].load(std::memory_order_relaxed) || !mFxNative[index]) continue;
+                    if (mFxNativePosition[index].load(std::memory_order_relaxed) != position ||
+                        isFxNativePostChain(index) ||
+                        mFxNativeBypass[index].load(std::memory_order_relaxed) || !mFxNative[index]) continue;
+                    unsigned int offset = 0;
+                    while (offset < frames) {
+                        const unsigned int count = std::min(
+                                frames - offset, static_cast<unsigned int>(mono.size()));
+                        for (unsigned int frame = 0; frame < count; ++frame) {
+                            mono[frame] = static_cast<float>(buffer[offset + frame]);
+                        }
+                        mFxNative[index]->processMonoBlock(
+                                mono.data(), count,
+                                mFxNativeParam1[index].load(std::memory_order_relaxed),
+                                mFxNativeParam2[index].load(std::memory_order_relaxed),
+                                mFxNativeParam3[index].load(std::memory_order_relaxed),
+                                mFxNativeMix[index].load(std::memory_order_relaxed),
+                                mFxNativeOutputGainDb[index].load(std::memory_order_relaxed));
+                        for (unsigned int frame = 0; frame < count; ++frame) {
+                            buffer[offset + frame] = static_cast<NAM_SAMPLE>(mono[frame]);
+                        }
+                        offset += count;
+                    }
+                }
+            };
+
+            auto processFxNativesStereo = [&](float* left, float* right) {
+                for (unsigned int slot = 0; slot < MAX_FX_IR_BLOCKS; ++slot) {
+                    const auto index = static_cast<size_t>(slot);
+                    if (!isFxNativePostChain(index) ||
+                        mFxNativeBypass[index].load(std::memory_order_relaxed) || !mFxNative[index]) continue;
                     const float mix = mFxNativeMix[index].load(std::memory_order_relaxed);
                     const float p1 = mFxNativeParam1[index].load(std::memory_order_relaxed);
                     const float p2 = mFxNativeParam2[index].load(std::memory_order_relaxed);
                     const float p3 = mFxNativeParam3[index].load(std::memory_order_relaxed);
-                    for (unsigned int frame = 0; frame < frames; ++frame) {
-                        const float dryL = left[frame];
-                        const float dryR = right[frame];
-                        const auto wet = mFxNative[index]->processStereo(dryL, dryR, p1, p2, p3);
-                        left[frame] = dryL * (1.0f - mix) + wet[0] * mix;
-                        right[frame] = dryR * (1.0f - mix) + wet[1] * mix;
-                    }
+                    mFxNative[index]->processStereoBlock(
+                            left, right, frames, p1, p2, p3, mix,
+                            mFxNativeOutputGainDb[index].load(std::memory_order_relaxed));
                 }
             };
 
@@ -6125,6 +6204,7 @@ namespace {
                         ) &&
                         mCrossfadeOldModel;
 
+                processFxNativesMono(0, namInput.data());
                 if (mOutputIrPosition.load(std::memory_order_relaxed) == 0) {
                     processOutputIr(namInput.data());
                 }
@@ -6240,7 +6320,10 @@ namespace {
                 }
 
                 if (mOutputIrPosition.load(std::memory_order_relaxed) == 1) {
+                    processFxNativesMono(1, namChainA.data());
                     processOutputIr(namChainA.data());
+                } else {
+                    processFxNativesMono(1, namChainA.data());
                 }
                 processFxIrs(1, namChainA.data());
 
@@ -6260,41 +6343,23 @@ namespace {
                     auto* model =
                             mNamModels[slot].get();
 
-
-                    if (
-                            !model ||
-                            mNamBypass[slot].load(
-                                    std::memory_order_relaxed
-                            )
-                            ) {
-                        continue;
+                    if (model && !mNamBypass[slot].load(std::memory_order_relaxed)) {
+                        std::copy(chainCurrentPtr, chainCurrentPtr + frames, namDry.begin());
+                        const float inGain = std::pow(10.0f,
+                                mNamInGainDb[slot].load(std::memory_order_relaxed) / 20.0f);
+                        for (unsigned int frame = 0; frame < frames; ++frame) {
+                            chainCurrentPtr[frame] = static_cast<NAM_SAMPLE>(chainCurrentPtr[frame] * inGain);
+                        }
+                        processNamPreEq(slot, chainCurrentPtr);
+                        model->process(
+                                &chainCurrentPtr,
+                                &chainScratchPtr,
+                                static_cast<int>(frames));
+                        processNamControls(slot, chainScratchPtr, namDry.data());
+                        std::swap(chainCurrentPtr, chainScratchPtr);
                     }
 
-
-                    std::copy(chainCurrentPtr, chainCurrentPtr + frames, namDry.begin());
-                    const float inGain = std::pow(10.0f,
-                            mNamInGainDb[slot].load(std::memory_order_relaxed) / 20.0f);
-                    for (unsigned int frame = 0; frame < frames; ++frame) {
-                        chainCurrentPtr[frame] = static_cast<NAM_SAMPLE>(chainCurrentPtr[frame] * inGain);
-                    }
-                    processNamPreEq(slot, chainCurrentPtr);
-
-                    model->process(
-                            &chainCurrentPtr,
-                            &chainScratchPtr,
-                            static_cast<int>(
-                                    frames
-                            )
-                    );
-
-                    processNamControls(slot, chainScratchPtr, namDry.data());
-
-
-                    std::swap(
-                            chainCurrentPtr,
-                            chainScratchPtr
-                    );
-
+                    processFxNativesMono(static_cast<int>(slot + 1), chainCurrentPtr);
                     if (mOutputIrPosition.load(std::memory_order_relaxed) == static_cast<int>(slot + 1)) {
                         processOutputIr(chainCurrentPtr);
                     }
@@ -6404,7 +6469,7 @@ namespace {
                 }
                 processFxIrs(static_cast<int>(MAX_NAM_BLOCKS), reinterpret_cast<NAM_SAMPLE*>(postEqBuffer.data()));
                 std::copy(postEqBuffer.begin(), postEqBuffer.end(), postEqRightBuffer.begin());
-                processFxNatives(postEqBuffer.data(), postEqRightBuffer.data());
+                processFxNativesStereo(postEqBuffer.data(), postEqRightBuffer.data());
 
                 for (unsigned int frame = 0; frame < frames; ++frame) {
                     const float outputLeft = postEqBuffer[frame] * outputGain;
@@ -6594,6 +6659,7 @@ namespace {
         std::array<std::atomic<float>, MAX_FX_IR_BLOCKS> mFxNativeParam1{};
         std::array<std::atomic<float>, MAX_FX_IR_BLOCKS> mFxNativeParam2{};
         std::array<std::atomic<float>, MAX_FX_IR_BLOCKS> mFxNativeParam3{};
+        std::array<std::atomic<float>, MAX_FX_IR_BLOCKS> mFxNativeOutputGainDb{};
         std::atomic<bool> mOutputIrBypass{false};
         std::atomic<int> mOutputIrPosition{static_cast<int>(MAX_NAM_BLOCKS)};
         std::atomic<float> mOutputIrInGainDb{0.0f};
@@ -7065,6 +7131,14 @@ Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetFxNativeMix(
         JNIEnv*, jobject, jint slot, jfloat mix
 ) {
     gEngine.setFxNativeMix(static_cast<int>(slot), mix);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetFxNativeOutputGainDb(
+        JNIEnv*, jobject, jint slot, jfloat gainDb
+) {
+    gEngine.setFxNativeOutputGainDb(static_cast<int>(slot), gainDb);
 }
 
 extern "C"

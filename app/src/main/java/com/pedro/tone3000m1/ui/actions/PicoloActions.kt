@@ -1,9 +1,11 @@
 package com.pedro.tone3000m1.ui.actions
 
+import com.pedro.tone3000m1.ui.model.UiLocalNamCapture
+
 /** Commands the Compose UI can send to the audio application. */
 internal interface PicoloActions {
     fun addFxNative(effect: Int)
-    fun cycleOutput(): Int
+    suspend fun cycleOutput(): Int
     fun loadPreset(slot: Int)
     fun moveModule(blockId: String, direction: Int)
     fun removeCabinetIr()
@@ -13,6 +15,7 @@ internal interface PicoloActions {
     fun savePreset(slot: Int)
     fun scanUsbAudio(): String
     fun selectPackageCaptures(blockId: String): Boolean
+    fun selectLocalNam(capture: UiLocalNamCapture, importMode: String): Boolean
     fun setCabinetBypass(bypassed: Boolean)
     fun setCabinetEq(band: Int, db: Double)
     fun setCabinetEqEnabled(enabled: Boolean)
@@ -27,8 +30,11 @@ internal interface PicoloActions {
     fun setFxMix(fxIndex: Int, mix: Double)
     fun setFxNativeBypass(nativeIndex: Int, bypassed: Boolean)
     fun setFxNativeMix(nativeIndex: Int, mix: Double)
+    fun setFxNativeOutputGainDb(nativeIndex: Int, gainDb: Double)
     fun setFxNativeParameter(nativeIndex: Int, parameter: Int, value: Double)
     fun setFxNativeType(nativeIndex: Int, effect: Int)
+    fun setFxNativeTiming(nativeIndex: Int, tempoSync: Boolean, leftNote: String, rightNote: String)
+    fun setGlobalTapTempoBpm(bpm: Float)
     fun setGateEnabled(enabled: Boolean)
     fun setGateThreshold(db: Double)
     fun setInputGain(db: Double)

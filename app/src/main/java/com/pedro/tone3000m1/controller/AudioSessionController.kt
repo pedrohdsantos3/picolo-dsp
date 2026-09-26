@@ -5,8 +5,8 @@ internal class AudioSessionController(
     private val prepareBeforeStart: () -> Unit,
     private val startNative: () -> String,
     private val stopNative: () -> Unit,
-    private val cycleInputRoute: () -> Int,
-    private val cycleOutputRoute: () -> Int,
+    private val cycleInputRoute: suspend () -> Int,
+    private val cycleOutputRoute: suspend () -> Int,
     private val publishStatus: (String) -> Unit,
 ) {
     fun startAudio(): String {
@@ -19,9 +19,9 @@ internal class AudioSessionController(
         return STOPPED_STATUS.also(publishStatus)
     }
 
-    fun cycleInput(): Int = cycleInputRoute()
+    suspend fun cycleInput(): Int = cycleInputRoute()
 
-    fun cycleOutput(): Int = cycleOutputRoute()
+    suspend fun cycleOutput(): Int = cycleOutputRoute()
 
     private companion object {
         const val STOPPED_STATUS = "STOPPED"

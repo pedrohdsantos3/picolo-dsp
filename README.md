@@ -12,10 +12,11 @@ together a capture browser, NAM blocks, cabinet/IR, pedals, and native effects.
 The audio engine uses TinyALSA and C++; the main UI is native Android, built
 with Jetpack Compose.
 
-NAM remains mono; FXNative blocks are stereo and run after NAM/CAB. This project
-was built primarily to validate knowledge of Android, C++, and DSP, and is not
-yet a product intended for general use. Real-time performance depends on the
-model, signal chain, audio interface, buffer, drivers, and device firmware.
+NAM remains mono. FXNative blocks placed before the amp process mono; blocks
+placed after the amp process stereo. This project was built primarily to
+validate knowledge of Android, C++, and DSP, and is not yet a product intended
+for general use. Real-time performance depends on the model, signal chain,
+audio interface, buffer, drivers, and device firmware.
 
 ## Running consistently on Android
 
@@ -95,13 +96,33 @@ convolution when the Cabinet is placed elsewhere in the chain.
 
 ### Guitar blocks and FXNative
 
-`AMP` loads NAM models; `CAB/IR` processes cabinet impulse responses; `PEDAL`
-and `FX` provide their respective processors/captures. FXNative offers four
-stereo effects: ChowMatrix Delay, BYOD BBD Delay, BYOD Smooth Reverb, and BYOD
-Shimmer Reverb. The implementation uses ChowDSP DSP modules and adapts the
-processing structures needed by the Android host without bringing in the
-desktop plugin interfaces. Sources and licenses are documented in
-[`app/src/main/cpp/third_party/CHOWDSP_NOTICES.md`](app/src/main/cpp/third_party/CHOWDSP_NOTICES.md).
+`AMP` loads NAM models, `DRIVE` loads pedal captures, and `CAB/IR` processes
+cabinet impulse responses. FXNative contains modulation, delay, and reverb
+effects, shown in the chain as `MOD`, `DELAY`, and `REV`. The modulation group
+currently includes Chorus; the delay group includes ChowMatrix, BBD, Ping Pong,
+tape, and Dual Delay; the reverb group includes Smooth, Shimmer, Spring, MVerb,
+and Plate variants. The UI uses distinct category colors and block icons to
+make the signal chain easier to scan.
+
+FXNative can be placed before or after NAM/DRIVE and CAB. In a pre-amp position
+it processes mono; after the amp it processes stereo. Delay time can be set in
+milliseconds or synchronized to the global tap-tempo BPM using rhythmic
+divisions. Chorus speed can also follow the global tempo. Output level controls
+start at unity so adding an effect does not automatically reduce the chain's
+level.
+
+The implementation uses open source DSP modules and native algorithms adapted
+for the Android host. Sources and license notices are documented in
+[`app/src/main/cpp/third_party/`](app/src/main/cpp/third_party/).
+
+### Offline audio checks
+
+The `tools/audio_qa` utilities render effects and signal chains on the
+development computer without connecting the app or audio interface. They save
+48 kHz WAV samples under the ignored `audio_qa/renders/` directory, including
+pre-amp mono and post-amp stereo comparisons. See
+[`tools/audio_qa/README.md`](tools/audio_qa/README.md) for render and playback
+commands.
 
 Before relying on live use, test with the USB interface connected. Xruns,
 artifacts, and processing time should be measured with the actual hardware and

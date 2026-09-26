@@ -5,11 +5,20 @@ import com.pedro.tone3000m1.controller.FxParameterController
 import com.pedro.tone3000m1.domain.model.FxImpulseEntry
 import com.pedro.tone3000m1.domain.model.FxNativeEntry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class FxNativeBypassInstrumentedTest {
+    @Test
+    fun nativeAudioDiagnosticsAreAvailableOnDevice() {
+        val audioEngine = NativeAudioEngine()
+
+        assertFalse(audioEngine.nativeGetAudioDeviceInfo().isBlank())
+        assertFalse(audioEngine.nativeScanUsbAudio().isBlank())
+    }
+
     @Test
     fun bypassUpdatePersistsStateAndCallsNativeEngineWithoutRecursion() {
         val audioEngine = NativeAudioEngine()

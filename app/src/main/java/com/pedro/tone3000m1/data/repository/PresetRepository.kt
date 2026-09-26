@@ -1,13 +1,12 @@
 package com.pedro.tone3000m1.data.repository
 
-import android.content.SharedPreferences
 import com.pedro.tone3000m1.domain.model.PresetData
 import com.pedro.tone3000m1.domain.repository.PresetRepository as PresetRepositoryContract
 import java.io.File
 
 /** Persists presets in the existing preferences and file formats. */
 internal class PresetRepositoryImpl(
-    private val preferences: SharedPreferences,
+    private val preferences: DataStorePreferenceCache,
     private val filesDirectory: File,
     private val presetCount: Int,
     private val maxNamBlocks: Int,
@@ -32,6 +31,7 @@ internal class PresetRepositoryImpl(
             modelSize = preferences.getString(key(slot, "model_size"), "unknown") ?: "unknown",
             toneId = preferences.getString(key(slot, "tone_id"), null),
             toneTitle = preferences.getString(key(slot, "tone_title"), null),
+            moduleType = preferences.getString(key(slot, "model_type"), "AMP") ?: "AMP",
             inputGainDb = preferences.getFloat(key(slot, "input_gain_db"), 0.0f),
             outputGainDb = preferences.getFloat(key(slot, "output_gain_db"), 0.0f),
             inputChannel = preferences.getInt(key(slot, "input_channel"), 0),
@@ -96,6 +96,7 @@ internal class PresetRepositoryImpl(
             .putString(key(slot, "model_size"), modelSize)
             .putString(key(slot, "tone_id"), toneId)
             .putString(key(slot, "tone_title"), toneTitle)
+            .putString(key(slot, "model_type"), preferences.getString(PresetPreferenceKeys.LAST_MODEL_TYPE, "AMP") ?: "AMP")
             .putFloat(key(slot, "input_gain_db"), preferences.getFloat(PresetPreferenceKeys.INPUT_GAIN, 0.0f))
             .putFloat(key(slot, "output_gain_db"), preferences.getFloat(PresetPreferenceKeys.OUTPUT_GAIN, 0.0f))
             .putInt(key(slot, "input_channel"), preferences.getInt(PresetPreferenceKeys.INPUT_CHANNEL, 0))
@@ -144,6 +145,7 @@ internal class PresetRepositoryImpl(
             .putString(PresetPreferenceKeys.LAST_MODEL_SIZE, preset.modelSize)
             .putString(PresetPreferenceKeys.LAST_TONE_ID, preset.toneId)
             .putString(PresetPreferenceKeys.LAST_TONE_TITLE, preset.toneTitle)
+            .putString(PresetPreferenceKeys.LAST_MODEL_TYPE, preset.moduleType)
             .putFloat(PresetPreferenceKeys.INPUT_GAIN, preset.inputGainDb)
             .putFloat(PresetPreferenceKeys.OUTPUT_GAIN, preset.outputGainDb)
             .putInt(PresetPreferenceKeys.INPUT_CHANNEL, preset.inputChannel)
@@ -205,7 +207,7 @@ internal class PresetRepositoryImpl(
 
         val prefix = "preset_${slot}_"
         preferences.edit().apply {
-            preferences.all.keys.filter { it.startsWith(prefix) }.forEach { remove(it) }
+            preferences.getAll().keys.filter { it.startsWith(prefix) }.forEach { remove(it) }
         }.apply()
         listOf(file(slot), File(filesDirectory, "preset-$slot-cabinet.wav"))
             .forEach { if (it.exists()) it.delete() }
@@ -231,7 +233,7 @@ internal class PresetRepositoryImpl(
 
     private fun valuesFor(slot: Int): Map<String, Any?> {
         val prefix = "preset_${slot}_"
-        return preferences.all.filterKeys { it.startsWith(prefix) }
+        return preferences.getAll().filterKeys { it.startsWith(prefix) }
             .mapKeys { it.key.removePrefix(prefix) }
     }
 
@@ -248,7 +250,7 @@ internal class PresetRepositoryImpl(
         return destination.takeIf { it.exists() && it.length() > 0L }?.absolutePath
     }
 
-    private fun SharedPreferences.Editor.putValue(key: String, value: Any?) {
+    private fun DataStorePreferenceCache.Editor.putValue(key: String, value: Any?) {
         when (value) {
             is String -> putString(key, value)
             is Boolean -> putBoolean(key, value)

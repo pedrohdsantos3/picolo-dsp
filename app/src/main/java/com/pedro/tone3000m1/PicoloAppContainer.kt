@@ -1,11 +1,10 @@
 package com.pedro.tone3000m1
 
 import android.content.Context
-import android.content.SharedPreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.core.DataStore
 import com.pedro.tone3000m1.data.repository.AppPreferencesDataStore
-import com.pedro.tone3000m1.data.repository.DataStoreSharedPreferences
+import com.pedro.tone3000m1.data.repository.DataStorePreferenceCache
 import com.pedro.tone3000m1.data.repository.SelectedModuleTypeRepository
 import com.pedro.tone3000m1.data.repository.AudioRoutingRepositoryImpl
 import com.pedro.tone3000m1.data.repository.CabinetImpulseRepositoryImpl
@@ -13,8 +12,10 @@ import com.pedro.tone3000m1.data.repository.CurrentToneRepositoryImpl
 import com.pedro.tone3000m1.data.repository.FxChainRepository
 import com.pedro.tone3000m1.data.repository.NamChainRepository
 import com.pedro.tone3000m1.data.repository.PresetRepositoryImpl
+import com.pedro.tone3000m1.data.repository.PendingImportModeRepository
 import com.pedro.tone3000m1.data.repository.Tone3000ApiRepository
 import com.pedro.tone3000m1.data.repository.ToneImportRepositoryImpl
+import com.pedro.tone3000m1.data.repository.LocalNamLibraryRepository
 import com.pedro.tone3000m1.data.repository.TonePackageCaptureRepositoryImpl
 import com.pedro.tone3000m1.data.repository.ToneSessionRepositoryImpl
 import com.pedro.tone3000m1.domain.repository.PresetRepository
@@ -63,8 +64,8 @@ internal class PicoloAppContainer(
 
     private val appContext = context.applicationContext
     val audioEngine by lazy { NativeAudioEngine() }
-    private val appPreferences: DataStore<Preferences> by lazy { AppPreferencesDataStore.get(appContext) }
-    val preferences: SharedPreferences by lazy { DataStoreSharedPreferences(appPreferences) }
+    val preferenceDataStore: DataStore<Preferences> by lazy { AppPreferencesDataStore.get(appContext) }
+    val preferences: DataStorePreferenceCache by lazy { DataStorePreferenceCache(preferenceDataStore) }
 
     val namChainRepository by lazy {
         NamChainRepository(preferences, config.extraNamChainKey, config.lastModelPathKey)
@@ -78,7 +79,7 @@ internal class PicoloAppContainer(
     val audioRoutingUseCase by lazy {
         AudioRoutingUseCase(
             AudioRoutingRepositoryImpl(
-                preferences = preferences,
+                preferences = preferenceDataStore,
                 engine = audioEngine,
                 inputChannelKey = config.inputChannelKey,
                 outputPairKey = config.outputPairKey,
@@ -90,19 +91,21 @@ internal class PicoloAppContainer(
     val tone3000ApiRepository by lazy {
         Tone3000ApiRepository(config.apiBase, config.publishableKey, config.redirectUri)
     }
-    val toneSessionRepository by lazy { ToneSessionRepositoryImpl(appPreferences) }
-    val selectedModuleTypeRepository by lazy { SelectedModuleTypeRepository(appPreferences) }
-    val currentToneRepository by lazy { CurrentToneRepositoryImpl(preferences) }
+    val toneSessionRepository by lazy { ToneSessionRepositoryImpl(preferenceDataStore) }
+    val selectedModuleTypeRepository by lazy { SelectedModuleTypeRepository(preferenceDataStore) }
+    val pendingImportModeRepository by lazy { PendingImportModeRepository(preferenceDataStore) }
+    val currentToneRepository by lazy { CurrentToneRepositoryImpl(preferenceDataStore) }
     val activeToneRepository by lazy { currentToneRepository }
     val restorePreviousToneModelUseCase by lazy {
         RestorePreviousToneModelUseCase(currentToneRepository, audioEngine)
     }
-    val tonePackageCaptureRepository by lazy { TonePackageCaptureRepositoryImpl(appPreferences) }
+    val tonePackageCaptureRepository by lazy { TonePackageCaptureRepositoryImpl(preferenceDataStore) }
     val mergePackageCapturesUseCase by lazy { MergePackageCapturesUseCase(tonePackageCaptureRepository) }
     val loadPackageCapturesUseCase by lazy {
         LoadPackageCapturesUseCase(listToneModelsUseCase, mergePackageCapturesUseCase, tonePackageCaptureRepository)
     }
     val toneImportRepository by lazy { ToneImportRepositoryImpl(filesDirectory) }
+    val localNamLibraryRepository by lazy { LocalNamLibraryRepository(filesDirectory) }
     val prepareToneAuthorizationUseCase by lazy { PrepareToneAuthorizationUseCase(toneSessionRepository) }
     val completeToneSelectionUseCase by lazy { CompleteToneSelectionUseCase(tone3000ApiRepository, toneSessionRepository) }
     val listToneModelsUseCase by lazy { ListToneModelsUseCase(tone3000ApiRepository) }
@@ -116,7 +119,7 @@ internal class PicoloAppContainer(
         ImportCabinetImpulseUseCase(
             downloadToneModelUseCase,
             prepareImpulseResponseUseCase,
-            CabinetImpulseRepositoryImpl(preferences),
+            CabinetImpulseRepositoryImpl(preferenceDataStore),
             audioEngine,
         )
     }

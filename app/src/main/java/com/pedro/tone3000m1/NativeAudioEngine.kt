@@ -87,6 +87,7 @@ internal class NativeAudioEngine : AudioRoutingEngine, PresetAudioEngine, ToneMo
     external fun nativeClearFxNative(slot: Int)
     external fun nativeSetFxNativeBypass(slot: Int, bypass: Boolean)
     external fun nativeSetFxNativeMix(slot: Int, mix: Float)
+    external fun nativeSetFxNativeOutputGainDb(slot: Int, gainDb: Float)
     external fun nativeSetFxNativeParameter(slot: Int, parameter: Int, value: Float)
     external fun nativeSetFxNativePosition(slot: Int, namBlocksBefore: Int)
     external fun nativeAddChainModel(path: String): String

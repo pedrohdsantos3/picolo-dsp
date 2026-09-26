@@ -3,5 +3,5 @@ package com.pedro.tone3000m1.domain.repository
 import java.io.File
 
 internal interface CurrentToneRepository {
-    fun currentModelFile(): File?
+    suspend fun currentModelFile(): File?
 }

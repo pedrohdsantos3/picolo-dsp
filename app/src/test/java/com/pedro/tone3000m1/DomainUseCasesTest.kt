@@ -16,8 +16,8 @@ import com.pedro.tone3000m1.domain.usecase.*
 import java.io.File
 import java.security.MessageDigest
 import java.nio.file.Files
-import java.util.Base64
 import kotlinx.coroutines.runBlocking
+import java.util.Base64
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
@@ -263,9 +263,9 @@ class DomainUseCasesTest {
             val repository = RecordingCabinetImpulseRepository()
             val engine = RecordingCabinetImpulseEngine()
 
-            val result = ImportCabinetImpulseUseCase(
+            val result = runBlocking { ImportCabinetImpulseUseCase(
                 DownloadToneModelUseCase(tones, files), PrepareImpulseResponseUseCase(files), repository, engine,
-            ).execute("tone", "Cab", "image", OnlineModel(70, "IR", "small", "url"), "token", "FX")
+            ).execute("tone", "Cab", "image", OnlineModel(70, "IR", "small", "url"), "token", "FX") }
 
             assertEquals("AUDIO ACTIVE", result)
             assertEquals(pending.absolutePath, repository.path)
@@ -438,7 +438,7 @@ class DomainUseCasesTest {
             )
             val model = OnlineModel(5, "Pedal", "small", "url")
 
-            val result = useCase.execute("tone", "Pedal tone", model, "PEDAL", downloaded)
+            val result = runBlocking { useCase.execute("tone", "Pedal tone", model, "PEDAL", downloaded) }
 
             assertEquals("MODEL LOADED", result.loadResult)
             assertEquals("AUDIO ACTIVE", result.audioResult)
@@ -458,10 +458,11 @@ class DomainUseCasesTest {
             val activeTone = FakeActiveToneRepository()
             val engine = RecordingPrimaryToneCaptureEngine("ERROR: invalid model")
 
-            val error = failure {
-                LoadPrimaryToneCaptureUseCase(
+            val useCase = LoadPrimaryToneCaptureUseCase(
                     CommitCurrentToneModelUseCase(files), activeTone, engine,
-                ).execute("tone", "title", OnlineModel(5, "Model", "small", "url"), "AMP", downloaded)
+                )
+            val error = failure {
+                runBlocking { useCase.execute("tone", "title", OnlineModel(5, "Model", "small", "url"), "AMP", downloaded) }
             }
 
             assertEquals("NAM rejected the selected capture:\nERROR: invalid model", error.message)
@@ -476,13 +477,13 @@ class DomainUseCasesTest {
         try {
             var loadedPath: String? = null
             val repository = object : CurrentToneRepository {
-                override fun currentModelFile() = model
+                override suspend fun currentModelFile() = model
             }
             val engine = object : ToneModelEngine {
                 override fun loadModel(path: String): String { loadedPath = path; return "MODEL LOADED" }
             }
 
-            val result = RestorePreviousToneModelUseCase(repository, engine).execute()
+            val result = runBlocking { RestorePreviousToneModelUseCase(repository, engine).execute() }
 
             assertTrue(result.restored)
             assertEquals("MODEL LOADED", result.details)
@@ -496,14 +497,14 @@ class DomainUseCasesTest {
             override fun loadModel(path: String): String { loadCalled = true; return "MODEL LOADED" }
         }
         val noPath = object : CurrentToneRepository {
-            override fun currentModelFile() = null
+            override suspend fun currentModelFile() = null
         }
         val missingFile = object : CurrentToneRepository {
-            override fun currentModelFile() = File("/does-not-exist/model.nam")
+            override suspend fun currentModelFile() = File("/does-not-exist/model.nam")
         }
 
-        val noPathResult = RestorePreviousToneModelUseCase(noPath, engine).execute()
-        val missingFileResult = RestorePreviousToneModelUseCase(missingFile, engine).execute()
+        val noPathResult = runBlocking { RestorePreviousToneModelUseCase(noPath, engine).execute() }
+        val missingFileResult = runBlocking { RestorePreviousToneModelUseCase(missingFile, engine).execute() }
 
         assertFalse(noPathResult.restored)
         assertEquals("No persisted model path.", noPathResult.details)
@@ -516,7 +517,7 @@ class DomainUseCasesTest {
         val model = Files.createTempFile("rejected-model", ".nam").toFile()
         try {
             val repository = object : CurrentToneRepository {
-                override fun currentModelFile() = model
+                override suspend fun currentModelFile() = model
             }
             val rejectedEngine = object : ToneModelEngine {
                 override fun loadModel(path: String) = "ERROR: invalid model"
@@ -525,8 +526,8 @@ class DomainUseCasesTest {
                 override fun loadModel(path: String): String = error("engine offline")
             }
 
-            val rejected = RestorePreviousToneModelUseCase(repository, rejectedEngine).execute()
-            val thrown = RestorePreviousToneModelUseCase(repository, throwingEngine).execute()
+            val rejected = runBlocking { RestorePreviousToneModelUseCase(repository, rejectedEngine).execute() }
+            val thrown = runBlocking { RestorePreviousToneModelUseCase(repository, throwingEngine).execute() }
 
             assertFalse(rejected.restored)
             assertEquals("ERROR: invalid model", rejected.details)
@@ -611,7 +612,7 @@ private fun testFxEntry(path: String) = FxImpulseEntry(
 private class RecordingCabinetImpulseRepository : CabinetImpulseRepository {
     var path: String? = null
     var mix: Float? = null
-    override fun save(path: File, imageUrl: String, title: String, toneId: String, moduleType: String, position: Int, mix: Float) {
+    override suspend fun save(path: File, imageUrl: String, title: String, toneId: String, moduleType: String, position: Int, mix: Float) {
         this.path = path.absolutePath
         this.mix = mix
     }
@@ -683,12 +684,12 @@ private class FakeActiveToneRepository : ActiveToneRepository {
     var toneId: String? = null
     var model: OnlineModel? = null
     var moduleType: String? = null
-    override fun save(toneId: String, toneTitle: String, model: OnlineModel, moduleType: String, file: File) {
+    override suspend fun save(toneId: String, toneTitle: String, model: OnlineModel, moduleType: String, file: File) {
         this.toneId = toneId
         this.model = model
         this.moduleType = moduleType
     }
-    override fun clear() = Unit
+    override suspend fun clear() = Unit
 }
 
 private class RecordingPrimaryToneCaptureEngine(private val loadResult: String) : PrimaryToneCaptureEngine {
@@ -741,7 +742,7 @@ private fun testExtraNamEntry() = ExtraNamEntry(
     path = "/old.nam", bypass = false,
 )
 
-private fun testPreset() = PresetData(1, "/model.nam", "Model", "small", null, null, 0f, 0f, 0, 0,
+private fun testPreset() = PresetData(1, "/model.nam", "Model", "small", null, null, "AMP", 0f, 0f, 0, 0,
     false, -65f, 0f, 0f, 0f, false, -15f, 0f, 1f, List(6) { 0f }, false, true, false, "[]",
     null, "", "", "IR", false, 0, 0f, 0f, 1f, false, List(6) { 0f })
 

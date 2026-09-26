@@ -6,11 +6,11 @@ import com.pedro.tone3000m1.domain.repository.AudioRoutingRepository
 internal class AudioRoutingUseCase(
     private val repository: AudioRoutingRepository,
 ) {
-    fun cycleInput(): Int = repository.cycleInput()
+    suspend fun cycleInput(): Int = repository.cycleInput()
 
-    fun cycleOutput(): Int = repository.cycleOutput()
+    suspend fun cycleOutput(): Int = repository.cycleOutput()
 
-    fun restoreSavedRoutes() = repository.restoreSavedRoutes()
+    suspend fun restoreSavedRoutes() = repository.restoreSavedRoutes()
 
     fun routingInfo(): String = repository.routingInfo()
 }

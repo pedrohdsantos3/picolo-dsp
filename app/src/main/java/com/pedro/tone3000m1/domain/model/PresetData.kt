@@ -7,6 +7,7 @@ internal data class PresetData(
     val modelSize: String,
     val toneId: String?,
     val toneTitle: String?,
+    val moduleType: String = "AMP",
     val inputGainDb: Float,
     val outputGainDb: Float,
     val inputChannel: Int,

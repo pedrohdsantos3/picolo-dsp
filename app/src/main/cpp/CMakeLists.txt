@@ -183,7 +183,11 @@ add_library(
         SHARED
 
         native-lib.cpp
+        third_party/airwindows/AirwindowsKPlate140.cpp
+        third_party/airwindows/AirwindowsTapeDelay2.cpp
 )
+
+target_include_directories(tone3000m1 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/airwindows")
 
 
 target_compile_features(

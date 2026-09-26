@@ -17,7 +17,7 @@ internal class LoadPrimaryToneCaptureUseCase(
     private val activeTone: ActiveToneRepository,
     private val engine: PrimaryToneCaptureEngine,
 ) {
-    fun execute(
+    suspend fun execute(
         toneId: String,
         toneTitle: String,
         model: OnlineModel,

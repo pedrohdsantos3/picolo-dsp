@@ -10,7 +10,15 @@ internal class ImportCabinetImpulseUseCase(
     private val repository: CabinetImpulseRepository,
     private val engine: CabinetImpulseEngine,
 ) {
-    fun execute(toneId: String, title: String, imageUrl: String, model: OnlineModel, token: String, moduleType: String): String {
+    suspend fun execute(
+        toneId: String,
+        title: String,
+        imageUrl: String,
+        model: OnlineModel,
+        token: String,
+        moduleType: String,
+        positionOverride: Int? = null,
+    ): String {
         val downloaded = downloads.execute(model, token, "cabinet-${model.id}.wav")
         var normalized = downloaded
         var loaded = false
@@ -20,7 +28,8 @@ internal class ImportCabinetImpulseUseCase(
             check(result.startsWith("IR LOADED")) { result }
             loaded = true
 
-            val position = engine.namBlockCount()
+            val namCount = engine.namBlockCount()
+            val position = positionOverride?.coerceIn(0, namCount) ?: namCount
             val mix = if (moduleType == "FX") 0.5f else 1.0f
             engine.setPosition(position)
             engine.setBypass(false)

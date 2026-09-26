@@ -1,7 +1,6 @@
 package com.pedro.tone3000m1.controller
 
 import com.pedro.tone3000m1.domain.model.ExtraNamEntry
-import java.io.File
 
 internal data class NamBlockRemovalResult(
     val rebuildResult: String,
@@ -34,13 +33,6 @@ internal class NamChainEditController(
         val result = rebuildNativeChain(entries)
         if (entries.isEmpty() || result.startsWith(NAM_CHAIN_READY_PREFIX)) {
             persistEntries(entries)
-            if (entries.none { it.path == removed.path }) {
-                try {
-                    File(removed.path).delete()
-                } catch (_: Exception) {
-                    // File cleanup failure does not undo the native chain update.
-                }
-            }
         }
         return NamBlockRemovalResult(result, entries.size)
     }

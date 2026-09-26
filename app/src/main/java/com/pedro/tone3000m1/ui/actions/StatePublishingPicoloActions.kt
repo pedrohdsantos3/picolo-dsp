@@ -11,7 +11,11 @@ internal class StatePublishingPicoloActions(
         publish()
     }
     override fun addFxNative(effect: Int) = afterAction { delegate.addFxNative(effect) }
-    override fun cycleOutput(): Int = afterAction { delegate.cycleOutput() }
+    override suspend fun cycleOutput(): Int = try {
+        delegate.cycleOutput()
+    } finally {
+        publish()
+    }
     override fun loadPreset(slot: Int) = afterAction { delegate.loadPreset(slot) }
     override fun moveModule(blockId: String, direction: Int) = afterAction { delegate.moveModule(blockId, direction) }
     override fun removeCabinetIr() = afterAction { delegate.removeCabinetIr() }
@@ -21,6 +25,8 @@ internal class StatePublishingPicoloActions(
     override fun savePreset(slot: Int) = afterAction { delegate.savePreset(slot) }
     override fun scanUsbAudio(): String = afterAction { delegate.scanUsbAudio() }
     override fun selectPackageCaptures(blockId: String): Boolean = afterAction { delegate.selectPackageCaptures(blockId) }
+    override fun selectLocalNam(capture: com.pedro.tone3000m1.ui.model.UiLocalNamCapture, importMode: String): Boolean =
+        afterAction { delegate.selectLocalNam(capture, importMode) }
     override fun setCabinetBypass(bypassed: Boolean) = afterAction { delegate.setCabinetBypass(bypassed) }
     override fun setCabinetEq(band: Int, db: Double) = afterAction { delegate.setCabinetEq(band, db) }
     override fun setCabinetEqEnabled(enabled: Boolean) = afterAction { delegate.setCabinetEqEnabled(enabled) }
@@ -35,8 +41,12 @@ internal class StatePublishingPicoloActions(
     override fun setFxMix(fxIndex: Int, mix: Double) = afterAction { delegate.setFxMix(fxIndex, mix) }
     override fun setFxNativeBypass(nativeIndex: Int, bypassed: Boolean) = afterAction { delegate.setFxNativeBypass(nativeIndex, bypassed) }
     override fun setFxNativeMix(nativeIndex: Int, mix: Double) = afterAction { delegate.setFxNativeMix(nativeIndex, mix) }
+    override fun setFxNativeOutputGainDb(nativeIndex: Int, gainDb: Double) = afterAction { delegate.setFxNativeOutputGainDb(nativeIndex, gainDb) }
     override fun setFxNativeParameter(nativeIndex: Int, parameter: Int, value: Double) = afterAction { delegate.setFxNativeParameter(nativeIndex, parameter, value) }
     override fun setFxNativeType(nativeIndex: Int, effect: Int) = afterAction { delegate.setFxNativeType(nativeIndex, effect) }
+    override fun setFxNativeTiming(nativeIndex: Int, tempoSync: Boolean, leftNote: String, rightNote: String) =
+        afterAction { delegate.setFxNativeTiming(nativeIndex, tempoSync, leftNote, rightNote) }
+    override fun setGlobalTapTempoBpm(bpm: Float) = afterAction { delegate.setGlobalTapTempoBpm(bpm) }
     override fun setGateEnabled(enabled: Boolean) = afterAction { delegate.setGateEnabled(enabled) }
     override fun setGateThreshold(db: Double) = afterAction { delegate.setGateThreshold(db) }
     override fun setInputGain(db: Double) = afterAction { delegate.setInputGain(db) }

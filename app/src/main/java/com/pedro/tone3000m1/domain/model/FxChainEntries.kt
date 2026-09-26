@@ -21,4 +21,32 @@ data class FxNativeEntry(
     val param1: Float,
     val param2: Float,
     val param3: Float = 12f,
+    val outputGainDb: Float = 0f,
+    val tempoSync: Boolean = false,
+    val tapTempoBpm: Float = 120f,
+    val leftNote: String = "1/4",
+    val rightNote: String = "1/8.",
+    /** NAM blocks before this effect; 5 means post-chain stereo for the current 4-slot graph. */
+    val position: Int = 5,
 )
+
+internal object DualDelayTiming {
+    val noteValues = listOf("1/16", "1/8", "1/8.", "1/4", "1/4T", "1/4.", "1/2")
+
+    fun beats(note: String): Float = when (note) {
+        "1/16" -> 0.25f
+        "1/8" -> 0.5f
+        "1/8." -> 0.75f
+        "1/4T" -> 2f / 3f
+        "1/4." -> 1.5f
+        "1/2" -> 2f
+        else -> 1f
+    }
+
+    fun toMilliseconds(note: String, bpm: Float): Float {
+        return (60000f / bpm.coerceIn(40f, 240f) * beats(note)).coerceIn(20f, 2000f)
+    }
+
+    fun toHertz(note: String, bpm: Float): Float =
+        (bpm.coerceIn(40f, 240f) / (60f * beats(note))).coerceIn(0.1f, 8f)
+}

@@ -1,8 +1,5 @@
 package com.pedro.tone3000m1.ui.model
 
-import org.json.JSONObject
-import java.util.Locale
-
 internal data class UiModule(
     val id: String,
     val type: String,
@@ -19,12 +16,28 @@ internal data class UiModule(
     val a2Full: Boolean = false,
     val eqBands: List<Float> = List(6) { 0f },
     val nativeEffect: Int = 0,
+    val nativePosition: Int = 5,
     val nativeParam1: Float = 350f,
     val nativeParam2: Float = 0.35f,
     val nativeParam3: Float = 12f,
+    val nativeOutputGainDb: Float = 0f,
+    val fxTempoSync: Boolean = false,
+    val fxSyncLeftNote: String = "1/4",
+    val fxSyncRightNote: String = "1/8.",
 )
 
 internal data class UiPreset(val slot: Int, val label: String, val saved: Boolean)
+
+internal data class UiLocalNamCapture(
+    val path: String,
+    val modelName: String,
+    val modelSize: String,
+    val toneTitle: String,
+    val toneId: String,
+    val imageUrl: String,
+    val moduleType: String,
+    val modelId: Long = 0L,
+)
 
 internal data class PicoloUiState(
     val running: Boolean = false,
@@ -34,6 +47,7 @@ internal data class PicoloUiState(
     val modelName: String = "No capture loaded",
     val toneTitle: String = "",
     val activePresetSlot: Int = 0,
+    val globalTapTempoBpm: Float = 120f,
     val device: String = "Audio interface: auto detect",
     val inputGain: Float = 0f,
     val outputGain: Float = 0f,
@@ -54,7 +68,10 @@ internal data class PicoloUiState(
     val cabinetEq: List<Float> = List(6) { 0f },
     val modules: List<UiModule> = emptyList(),
     val presets: List<UiPreset> = emptyList(),
+    val localNamCaptures: List<UiLocalNamCapture> = emptyList(),
+    val selectedModuleType: String = "AMP",
     val status: String = "Ready",
+    val loadingMessage: String? = null,
     val routing: String = "",
     val processingPercent: Float? = null,
     val processingAvgUs: Float? = null,
@@ -63,80 +80,3 @@ internal data class PicoloUiState(
     val overBudgetCount: Long = 0,
     val audioIoErrors: Long = 0,
 )
-
-internal fun readPicoloState(json: String, status: String): PicoloUiState = try {
-    val root = JSONObject(json)
-    val modulesJson = root.optJSONArray("signalChain")
-    val modules = buildList {
-        if (modulesJson != null) for (i in 0 until modulesJson.length()) {
-            val item = modulesJson.optJSONObject(i) ?: continue
-            val type = item.optString("type", "NAM")
-            add(UiModule(
-                id = when (type) {
-                    "CABINET_IR" -> "cabinet-ir"
-                    "FX_NATIVE" -> "fxnative-${item.optInt("nativeIndex", i)}"
-                    "FX" -> "fx-${item.optInt("fxIndex", i)}"
-                    else -> "nam-${item.optInt("chainIndex", i)}"
-                },
-                type = type,
-                name = if (type == "CABINET_IR") {
-                    root.optString("cabinetIrName", item.optString("name", "Cabinet IR"))
-                } else {
-                    item.optString("name", item.optString("modelName", if (type == "FX") "Space FX" else "NAM module"))
-                },
-                moduleType = item.optString("moduleType", "AMP").uppercase(Locale.US),
-                index = when (type) {
-                    "FX" -> item.optInt("fxIndex", i)
-                    "FX_NATIVE" -> item.optInt("nativeIndex", i)
-                    else -> item.optInt("chainIndex", i)
-                },
-                bypass = if (type == "CABINET_IR") root.optBoolean("cabinetIrBypass", false) else item.optBoolean("bypass", false),
-                gainDb = item.optDouble("gainDb", -15.0).toFloat(),
-                inGainDb = item.optDouble("inGainDb", 0.0).toFloat(),
-                mix = item.optDouble("mix", 1.0).toFloat(),
-                eqEnabled = item.optBoolean("eqEnabled", true),
-                eqPre = item.optBoolean("eqPre", false),
-                normalize = item.optBoolean("normalize", true),
-                a2Full = item.optBoolean("a2Full", false),
-                eqBands = listOf("eqLowDb", "eqMidDb", "eqHighDb", "eqBand3Db", "eqBand4Db", "eqBand5Db")
-                    .map { key -> item.optDouble(key, 0.0).toFloat() },
-                nativeEffect = item.optInt("effect", 0),
-                nativeParam1 = item.optDouble("param1", 350.0).toFloat(),
-                nativeParam2 = item.optDouble("param2", 0.35).toFloat(),
-                nativeParam3 = item.optDouble("param3", 12.0).toFloat(),
-            ))
-        }
-    }
-    val presetsJson = root.optJSONArray("presets")
-    val presets = buildList {
-        if (presetsJson != null) for (i in 0 until presetsJson.length()) {
-            val item = presetsJson.optJSONObject(i) ?: continue
-            add(UiPreset(item.optInt("slot", i + 1), item.optString("label", "Preset ${i + 1}"), item.optBoolean("saved", false)))
-        }
-    }
-    val cabinetEqJson = root.optJSONArray("cabinetIrEq")
-    val cabinetEq = List(6) { index -> cabinetEqJson?.optDouble(index, 0.0)?.toFloat() ?: 0f }
-    PicoloUiState(
-        running = root.optBoolean("running"),
-        bypass = root.optBoolean("bypass"),
-        modelName = root.optString("modelName", "No capture loaded"),
-        toneTitle = root.optString("toneTitle", ""), activePresetSlot = root.optInt("activePresetSlot", 0),
-        device = root.optString("audioDevice", "Audio interface: auto detect"),
-        inputGain = root.optDouble("inputGain", 0.0).toFloat(),
-        outputGain = root.optDouble("outputGain", 0.0).toFloat(),
-        gateEnabled = root.optBoolean("gateEnabled"), gateThreshold = root.optDouble("gateThreshold", -65.0).toFloat(),
-        eqEnabled = root.optBoolean("eqEnabled", true), eqLow = root.optDouble("eqLow", 0.0).toFloat(),
-        eqMid = root.optDouble("eqMid", 0.0).toFloat(), eqHigh = root.optDouble("eqHigh", 0.0).toFloat(),
-        cabinetLoaded = root.optBoolean("cabinetIrLoaded"), cabinetName = root.optString("cabinetIrName"),
-        cabinetType = root.optString("cabinetIrModuleType", "IR"),
-        cabinetInGain = root.optDouble("cabinetIrInGain", 0.0).toFloat(),
-        cabinetOutGain = root.optDouble("cabinetIrOutGain", 0.0).toFloat(),
-        cabinetMix = root.optDouble("cabinetIrMix", 1.0).toFloat(),
-        cabinetEqEnabled = root.optBoolean("cabinetIrEqEnabled", true),
-        cabinetEqPre = root.optBoolean("cabinetIrEqPre", false),
-        cabinetEq = cabinetEq,
-        modules = modules, presets = presets, status = status.ifBlank { "Ready" }, routing = root.optString("routing"),
-    )
-} catch (_: Exception) {
-    PicoloUiState(status = status.ifBlank { "Ready" })
-}
