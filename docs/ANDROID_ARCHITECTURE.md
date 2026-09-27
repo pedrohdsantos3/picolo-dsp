@@ -1,8 +1,11 @@
 # Arquitetura Android
 
 O app usa Jetpack Compose para a interface e Kotlin para os fluxos de aplicação.
-O processamento em tempo real continua em C++/TinyALSA; chamadas de rede,
-I/O de arquivos e trabalho de UI ficam fora do callback de áudio.
+O processamento continua em C++. TinyALSA é o backend principal; quando o
+Android expõe áudio USB mas TinyALSA não consegue abrir a placa sem root, a
+engine pode usar AAudio com os IDs de entrada e saída USB selecionados pela
+Activity. Chamadas de rede, I/O de arquivos e trabalho de UI ficam fora do
+processamento de áudio.
 
 ## Limites atuais
 
@@ -18,7 +21,7 @@ PicoloActions (contrato tipado)
               ↓
         repositórios: DataStore / API / arquivos
                     ↓
-             C++: TinyALSA + NAM + IR + efeitos
+             C++: TinyALSA/AAudio + NAM + IR + efeitos
 ```
 
 - A seleção TONE3000 usa Custom Tabs, PKCE e callback nativo. A Activity mantém
@@ -44,6 +47,12 @@ PicoloActions (contrato tipado)
   módulo. `PrepareNamBlockReplacementUseCase` mantém controles do bloco ao
   trocar capture e redefine os valores ao mudar entre AMP e PEDAL. A Activity
   ainda persiste os metadados finais do replace.
+- O EQ por bloco NAM mantém seis bandas paramétricas em modelo Kotlin: tipo de
+  filtro, frequência, ganho e Q. `NamChainRepository` continua lendo cadeias
+  antigas e fornece os defaults do TONE3000 quando os novos campos não existem;
+  presets salvam/restauram os mesmos controles pelas chaves de preferências.
+  `NativeAudioEngine` aplica esses parâmetros por JNI e o callback processa os
+  filtros com estado fixo por bloco.
 - `FxChainRepository` mapeia os JSONs legados de FX para modelos Kotlin
   imutáveis (`FxImpulseEntry` e `FxNativeEntry`) e vice-versa. A Activity
   converte esses modelos para JSON somente ao montar o snapshot de apresentação.
@@ -61,6 +70,11 @@ PicoloActions (contrato tipado)
 - `NativeAudioEngine` concentra a carga da biblioteca e as declarações JNI;
   os nomes dos exports C++ acompanham essa classe. A Activity usa a fachada,
   mas ainda coordena parte dos comandos através do controller interno.
+- `TunerEngine` expõe à camada de ações apenas a leitura de frequência/nível e
+  os controles do afinador. A tela Compose consulta as leituras em intervalo
+  curto; o motor estima a frequência a partir da entrada no loop nativo usando
+  buffers fixos, e o mute é aplicado no estágio final de saída sem interromper
+  a análise da entrada.
 - `CurrentToneRepositoryImpl` usa APIs suspensas do Preferences DataStore para ler o caminho ativo, salvar o modelo e aplicar defaults NAM pelas chaves legadas. `RestorePreviousToneModelUseCase` valida o arquivo e pede à interface `ToneModelEngine` para restaurá-lo após uma troca malsucedida. `NativeAudioEngine` implementa essa interface sem expor JNI ao caso de uso.
 - `TonePackageCaptureRepositoryImpl` mantém o cache de captures de pacote no
   Preferences DataStore. `ToneSessionRepositoryImpl` e
@@ -138,7 +152,9 @@ PicoloActions (contrato tipado)
   navegação OAuth; Compose é a única interface. OAuth, API, armazenamento dos
   presets, cache de captures, restauração do modelo ativo e importação NAM/FX/IR
   passam por limites próprios. Parte da coordenação de ações ainda pertence ao
-  controller hospedado na Activity.
+  controller hospedado na Activity. A prova de conceito USB direta usa a
+  Activity apenas para pedir a permissão do `UsbManager` e abrir a conexão; o
+  descritor autorizado segue pela fachada JNI para um probe libusb separado.
 
 ## Sequência de refatoração
 
@@ -182,5 +198,18 @@ presets salvos, imports locais e a seleção TONE3000.
 
 A cadeia de áudio permanece isolada do Android UI. Nenhuma chamada de rede,
 leitura de arquivo, alocação ou chamada JNI deve entrar no callback de áudio.
-TinyALSA continua como backend requerido pelo projeto; trocar o transporte por
-Oboe/AAudio é uma decisão futura e independente da refatoração de camadas.
+TinyALSA permanece como backend principal. O alvo atual de validação é o
+Samsung Galaxy S20 FE. A branch `feat/s20fe-oboe-usb-audio-poc` tenta primeiro
+abrir captura e playback pelo Oboe. No teste atual, o `AudioManager` não
+publicou IDs Android para a EVO4 (`input=-1`, `output=-1`); por isso Oboe não
+pôde solicitar a rota e a engine seguiu para TinyALSA. TinyALSA abriu a EVO4
+em 48 kHz, 4 canais S32_LE, blocos de 256 frames, e o app ficou em `LIVE` sem
+erros de I/O. A rota `speaker` do AudioPolicy descreve a saída de mídia do
+Android, não a stream TinyALSA direta. A PoC anterior sem root no Xiaomi Pad 7
+está pausada: embora AAudio tenha aberto streams USB e os medidores do app
+tenham respondido, não houve saída audível pela EVO4.
+
+O botão **SCAN USB** continua sendo um probe separado: usa a permissão do
+`UsbManager` e libusb para inspecionar descritores. Ele não transmite áudio. Na
+EVO4 o primeiro endpoint isócrono IN encontrado é de feedback, portanto a
+transferência curta não comprova captura de amostras.

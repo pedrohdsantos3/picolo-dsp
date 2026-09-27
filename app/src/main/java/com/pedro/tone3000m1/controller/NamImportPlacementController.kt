@@ -2,6 +2,7 @@ package com.pedro.tone3000m1.controller
 
 import com.pedro.tone3000m1.domain.model.ExtraNamEntry
 import com.pedro.tone3000m1.domain.model.FxImpulseEntry
+import com.pedro.tone3000m1.domain.model.FxNativeEntry
 
 /** Places only a newly imported NAM by type while retaining the user's existing block order. */
 internal class NamImportPlacementController(
@@ -15,6 +16,10 @@ internal class NamImportPlacementController(
     private val readFxEntries: () -> MutableList<FxImpulseEntry>,
     private val persistFxEntries: (List<FxImpulseEntry>) -> Unit,
     private val setFxPosition: (Int, Int) -> Unit,
+    private val readNativeEntries: () -> MutableList<FxNativeEntry> = { mutableListOf() },
+    private val persistNativeEntries: (List<FxNativeEntry>) -> Unit = {},
+    private val syncNativeChain: (List<FxNativeEntry>) -> Unit = {},
+    private val maxNamBlocks: Int = 4,
 ) {
     /** The Add NAM use case appends first; this moves that one entry into its default type position. */
     fun placeImportedNam(path: String): String? {
@@ -70,17 +75,33 @@ internal class NamImportPlacementController(
 
         val fxEntries = readFxEntries()
         var changed = false
+        val newNamCount = oldNamCount + 1
         val shifted = fxEntries.map { entry ->
-            if (insertionIndex <= entry.position) {
-                changed = true
-                entry.copy(position = entry.position + 1)
-            } else {
-                entry
-            }
+            val next = (if (insertionIndex <= entry.position) entry.position + 1 else entry.position)
+                .coerceIn(0, newNamCount)
+            if (next != entry.position) changed = true
+            entry.copy(position = next)
         }
         if (changed) {
             persistFxEntries(shifted)
             shifted.forEachIndexed { slot, entry -> setFxPosition(slot, entry.position) }
+        }
+
+        val nativeEntries = readNativeEntries()
+        var nativeChanged = false
+        val shiftedNative = nativeEntries.map { entry ->
+            // Preserve the post-chain sentinel while moving boundary positions with NAM blocks.
+            val next = if (entry.position in insertionIndex..maxNamBlocks) {
+                entry.position + 1
+            } else {
+                entry.position
+            }
+            if (next != entry.position) nativeChanged = true
+            entry.copy(position = next)
+        }
+        if (nativeChanged) {
+            persistNativeEntries(shiftedNative)
+            syncNativeChain(shiftedNative)
         }
     }
 

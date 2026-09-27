@@ -1,6 +1,7 @@
 package com.pedro.tone3000m1.data.repository
 
 import com.pedro.tone3000m1.domain.model.PresetData
+import com.pedro.tone3000m1.domain.model.NamEqDefaults
 import com.pedro.tone3000m1.domain.repository.PresetRepository as PresetRepositoryContract
 import java.io.File
 
@@ -42,10 +43,13 @@ internal class PresetRepositoryImpl(
             eqMidDb = preferences.getFloat(key(slot, "eq_mid_db"), 0.0f),
             eqHighDb = preferences.getFloat(key(slot, "eq_high_db"), 0.0f),
             namBypass = preferences.getBoolean(key(slot, "nam_bypass"), false),
-            namGainDb = preferences.getFloat(key(slot, "nam_gain_db"), -15.0f),
+            namGainDb = preferences.getFloat(key(slot, "nam_gain_db"), 0.0f),
             namInGainDb = preferences.getFloat(key(slot, "nam_in_gain_db"), 0.0f),
             namMix = preferences.getFloat(key(slot, "nam_mix"), 1.0f),
             namEqDb = NAM_EQ_FIELDS.map { field -> preferences.getFloat(key(slot, field), 0.0f) },
+            namEqFrequenciesHz = List(6) { band -> preferences.getFloat(key(slot, "nam_eq_freq_hz_$band"), NamEqDefaults.frequenciesHz[band]) },
+            namEqQValues = List(6) { band -> preferences.getFloat(key(slot, "nam_eq_q_$band"), NamEqDefaults.qValues[band]) },
+            namEqTypes = List(6) { band -> preferences.getString(key(slot, "nam_eq_type_$band"), NamEqDefaults.types[band]) ?: NamEqDefaults.types[band] },
             namEqPre = preferences.getBoolean(key(slot, "nam_eq_pre"), false),
             namNormalize = preferences.getBoolean(key(slot, "nam_normalize"), true),
             namA2Full = preferences.getBoolean(key(slot, "nam_a2_full"), false),
@@ -117,7 +121,7 @@ internal class PresetRepositoryImpl(
             .putFloat(key(slot, "cabinet_ir_out_gain"), preferences.getFloat(PresetPreferenceKeys.CABINET_IR_OUT_GAIN, 0.0f))
             .putFloat(key(slot, "cabinet_ir_mix"), preferences.getFloat(PresetPreferenceKeys.CABINET_IR_MIX, 1.0f))
             .putBoolean(key(slot, "nam_bypass"), preferences.getBoolean(PresetPreferenceKeys.NAM_BYPASS, namBypassFallback))
-            .putFloat(key(slot, "nam_gain_db"), preferences.getFloat(PresetPreferenceKeys.NAM_GAIN_DB, -15.0f))
+            .putFloat(key(slot, "nam_gain_db"), preferences.getFloat(PresetPreferenceKeys.NAM_GAIN_DB, 0.0f))
             .putFloat(key(slot, "nam_in_gain_db"), preferences.getFloat(PresetPreferenceKeys.NAM_IN_GAIN_DB, 0.0f))
             .putFloat(key(slot, "nam_mix"), preferences.getFloat(PresetPreferenceKeys.NAM_MIX, 1.0f))
             .putBoolean(key(slot, "nam_eq_pre"), preferences.getBoolean(PresetPreferenceKeys.NAM_EQ_PRE, false))
@@ -127,6 +131,11 @@ internal class PresetRepositoryImpl(
 
         NAM_EQ_FIELDS.forEachIndexed { band, field ->
             editor.putFloat(key(slot, field), preferences.getFloat(NAM_EQ_PREFERENCE_KEYS[band], 0.0f))
+        }
+        repeat(6) { band ->
+            editor.putFloat(key(slot, "nam_eq_freq_hz_$band"), preferences.getFloat(PresetPreferenceKeys.NAM_EQ_FREQUENCY_PREFIX + band, NamEqDefaults.frequenciesHz[band]))
+            editor.putFloat(key(slot, "nam_eq_q_$band"), preferences.getFloat(PresetPreferenceKeys.NAM_EQ_Q_PREFIX + band, NamEqDefaults.qValues[band]))
+            editor.putString(key(slot, "nam_eq_type_$band"), preferences.getString(PresetPreferenceKeys.NAM_EQ_TYPE_PREFIX + band, NamEqDefaults.types[band]) ?: NamEqDefaults.types[band])
         }
         CABINET_IR_EQ_FIELDS.forEachIndexed { band, field ->
             editor.putFloat(key(slot, field), preferences.getFloat(PresetPreferenceKeys.CABINET_IR_EQ_PREFIX + band, 0.0f))
@@ -176,6 +185,11 @@ internal class PresetRepositoryImpl(
 
         NAM_EQ_PREFERENCE_KEYS.forEachIndexed { band, preferenceKey ->
             editor.putFloat(preferenceKey, preset.namEqDb[band])
+        }
+        repeat(6) { band ->
+            editor.putFloat(PresetPreferenceKeys.NAM_EQ_FREQUENCY_PREFIX + band, preset.namEqFrequenciesHz.getOrElse(band) { NamEqDefaults.frequenciesHz[band] })
+            editor.putFloat(PresetPreferenceKeys.NAM_EQ_Q_PREFIX + band, preset.namEqQValues.getOrElse(band) { NamEqDefaults.qValues[band] })
+            editor.putString(PresetPreferenceKeys.NAM_EQ_TYPE_PREFIX + band, preset.namEqTypes.getOrElse(band) { NamEqDefaults.types[band] })
         }
         CABINET_IR_EQ_FIELDS.forEachIndexed { band, _ ->
             editor.putFloat(PresetPreferenceKeys.CABINET_IR_EQ_PREFIX + band, preset.cabinetIrEqDb[band])

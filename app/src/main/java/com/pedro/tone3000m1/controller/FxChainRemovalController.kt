@@ -18,18 +18,28 @@ internal class FxChainRemovalController(
     private val restartAudio: () -> String,
     private val publishStatus: (String) -> Unit,
     private val maxSlots: Int = MAX_SLOTS,
+    private val nativeFxCount: () -> Int = { 0 },
 ) {
     fun remove(fxIndex: Int): Boolean {
         val entries = readEntries()
         if (fxIndex !in entries.indices) return false
 
         val wasRunning = isAudioRunning()
+        val originalEntries = entries.toList()
         val removed = entries.removeAt(fxIndex)
         repeat(maxSlots, clearFxSlot)
         entries.forEachIndexed { slot, item ->
             val loaded = loadFxSlot(slot, item.path)
             if (!loaded.startsWith(FX_LOADED_PREFIX)) {
-                publishStatus("FX CHAIN RELOAD FAILED\n$loaded")
+                val restoreFailures = restoreChain(originalEntries)
+                val audio = if (wasRunning && restoreFailures.isEmpty()) restartAudio() else ""
+                publishStatus(
+                    buildString {
+                        append("FX REMOVAL CANCELLED\n$loaded")
+                        if (restoreFailures.isNotEmpty()) append("\nRestore failed: ${restoreFailures.joinToString("; ")}")
+                        if (audio.isNotBlank()) append("\n$audio")
+                    },
+                )
                 return false
             }
             setFxBypass(slot, item.bypass)
@@ -42,7 +52,7 @@ internal class FxChainRemovalController(
         } catch (_: Exception) {
             // Keep the remaining chain even if obsolete file cleanup fails.
         }
-        val hasModules = namBlockCount() > 0 || entries.isNotEmpty() || cabinetPathExists()
+        val hasModules = namBlockCount() > 0 || entries.isNotEmpty() || cabinetPathExists() || nativeFxCount() > 0
         val audio = if (wasRunning && hasModules) restartAudio() else ""
         publishStatus("FX REMOVED\n$audio")
         return true
@@ -51,5 +61,22 @@ internal class FxChainRemovalController(
     private companion object {
         const val MAX_SLOTS = 8
         const val FX_LOADED_PREFIX = "FX LOADED"
+    }
+
+    private fun restoreChain(entries: List<FxImpulseEntry>): List<String> {
+        val failures = mutableListOf<String>()
+        repeat(maxSlots, clearFxSlot)
+        entries.forEachIndexed { slot, item ->
+            val loaded = loadFxSlot(slot, item.path)
+            if (!loaded.startsWith(FX_LOADED_PREFIX)) {
+                failures += loaded
+            } else {
+                setFxBypass(slot, item.bypass)
+                setFxMix(slot, item.mix)
+                setFxPosition(slot, item.position.coerceIn(0, namBlockCount()))
+            }
+        }
+        persistEntries(entries)
+        return failures
     }
 }

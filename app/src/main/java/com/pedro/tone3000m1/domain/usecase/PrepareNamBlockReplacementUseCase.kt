@@ -2,8 +2,9 @@ package com.pedro.tone3000m1.domain.usecase
 
 import com.pedro.tone3000m1.domain.model.ExtraNamEntry
 import com.pedro.tone3000m1.domain.model.OnlineModel
+import com.pedro.tone3000m1.domain.model.NamEqDefaults
 
-/** Updates capture metadata while preserving block controls unless its AMP/PEDAL role changes. */
+/** Replaces capture metadata and resets controls so the new NAM starts with its defaults. */
 internal class PrepareNamBlockReplacementUseCase {
     fun execute(
         previous: ExtraNamEntry,
@@ -14,7 +15,7 @@ internal class PrepareNamBlockReplacementUseCase {
         imageUrl: String,
         moduleType: String,
     ): ExtraNamEntry {
-        val changedModuleType = moduleType != previous.moduleType
+        val normalizedType = moduleType.uppercase()
         return previous.copy(
             toneId = toneId,
             toneTitle = toneTitle,
@@ -23,22 +24,26 @@ internal class PrepareNamBlockReplacementUseCase {
             size = model.size,
             path = path,
             imageUrl = imageUrl,
-            moduleType = moduleType,
-            a2Full = moduleType == "AMP",
-            gainDb = if (changedModuleType) defaultGain(moduleType) else previous.gainDb,
-            inGainDb = if (changedModuleType) 0f else previous.inGainDb,
-            mix = if (changedModuleType) 1f else previous.mix,
-            eqLowDb = if (changedModuleType) 0f else previous.eqLowDb,
-            eqMidDb = if (changedModuleType) 0f else previous.eqMidDb,
-            eqHighDb = if (changedModuleType) 0f else previous.eqHighDb,
-            eqBand3Db = if (changedModuleType) 0f else previous.eqBand3Db,
-            eqBand4Db = if (changedModuleType) 0f else previous.eqBand4Db,
-            eqBand5Db = if (changedModuleType) 0f else previous.eqBand5Db,
-            eqPre = if (changedModuleType) false else previous.eqPre,
-            eqEnabled = if (changedModuleType) true else previous.eqEnabled,
-            normalize = if (changedModuleType) moduleType != "PEDAL" else previous.normalize,
+            bypass = false,
+            moduleType = normalizedType,
+            a2Full = normalizedType == "AMP",
+            gainDb = defaultGain(normalizedType),
+            inGainDb = 0f,
+            mix = 1f,
+            eqLowDb = 0f,
+            eqMidDb = 0f,
+            eqHighDb = 0f,
+            eqBand3Db = 0f,
+            eqBand4Db = 0f,
+            eqBand5Db = 0f,
+            eqFrequenciesHz = NamEqDefaults.frequenciesHz,
+            eqQValues = NamEqDefaults.qValues,
+            eqTypes = NamEqDefaults.types,
+            eqPre = false,
+            eqEnabled = true,
+            normalize = normalizedType != "PEDAL",
         )
     }
 
-    private fun defaultGain(moduleType: String) = if (moduleType == "PEDAL") -10f else -15f
+    private fun defaultGain(moduleType: String) = 0f
 }

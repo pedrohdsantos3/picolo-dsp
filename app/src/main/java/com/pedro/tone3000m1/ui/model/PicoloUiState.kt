@@ -1,5 +1,7 @@
 package com.pedro.tone3000m1.ui.model
 
+import com.pedro.tone3000m1.domain.model.NamEqDefaults
+
 internal data class UiModule(
     val id: String,
     val type: String,
@@ -7,7 +9,7 @@ internal data class UiModule(
     val moduleType: String = "AMP",
     val index: Int = -1,
     val bypass: Boolean = false,
-    val gainDb: Float = -15f,
+    val gainDb: Float = 0f,
     val inGainDb: Float = 0f,
     val mix: Float = 1f,
     val eqEnabled: Boolean = true,
@@ -15,6 +17,9 @@ internal data class UiModule(
     val normalize: Boolean = true,
     val a2Full: Boolean = false,
     val eqBands: List<Float> = List(6) { 0f },
+    val eqFrequenciesHz: List<Float> = NamEqDefaults.frequenciesHz,
+    val eqQValues: List<Float> = NamEqDefaults.qValues,
+    val eqTypes: List<String> = NamEqDefaults.types,
     val nativeEffect: Int = 0,
     val nativePosition: Int = 5,
     val nativeParam1: Float = 350f,

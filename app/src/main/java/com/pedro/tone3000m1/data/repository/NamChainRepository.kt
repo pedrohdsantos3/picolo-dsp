@@ -2,6 +2,7 @@ package com.pedro.tone3000m1.data.repository
 
 import android.util.Log
 import com.pedro.tone3000m1.domain.model.ExtraNamEntry
+import com.pedro.tone3000m1.domain.model.NamEqDefaults
 import com.pedro.tone3000m1.domain.repository.ExtraNamChainRepository
 import org.json.JSONArray
 import org.json.JSONObject
@@ -54,7 +55,7 @@ class NamChainRepository(
         size = optString("size", "unknown"),
         path = path,
         bypass = optBoolean("bypass", false),
-        gainDb = optDouble("gainDb", -15.0).toFloat(),
+        gainDb = optDouble("gainDb", 0.0).toFloat(),
         inGainDb = optDouble("inGainDb", 0.0).toFloat(),
         mix = optDouble("mix", 1.0).toFloat(),
         eqLowDb = optDouble("eqLowDb", 0.0).toFloat(),
@@ -63,6 +64,9 @@ class NamChainRepository(
         eqBand3Db = optDouble("eqBand3Db", 0.0).toFloat(),
         eqBand4Db = optDouble("eqBand4Db", 0.0).toFloat(),
         eqBand5Db = optDouble("eqBand5Db", 0.0).toFloat(),
+        eqFrequenciesHz = optFloatArray("eqFrequenciesHz", NamEqDefaults.frequenciesHz),
+        eqQValues = optFloatArray("eqQValues", NamEqDefaults.qValues),
+        eqTypes = optStringArray("eqTypes", NamEqDefaults.types),
         eqPre = optBoolean("eqPre", false),
         eqEnabled = optBoolean("eqEnabled", true),
         normalize = optBoolean("normalize", true),
@@ -88,12 +92,25 @@ class NamChainRepository(
         .put("eqBand3Db", eqBand3Db)
         .put("eqBand4Db", eqBand4Db)
         .put("eqBand5Db", eqBand5Db)
+        .put("eqFrequenciesHz", JSONArray().apply { eqFrequenciesHz.forEach(::put) })
+        .put("eqQValues", JSONArray().apply { eqQValues.forEach(::put) })
+        .put("eqTypes", JSONArray().apply { eqTypes.forEach(::put) })
         .put("eqPre", eqPre)
         .put("eqEnabled", eqEnabled)
         .put("normalize", normalize)
         .put("a2Full", a2Full)
         .put("imageUrl", imageUrl)
         .put("moduleType", moduleType)
+
+    private fun JSONObject.optFloatArray(name: String, defaults: List<Float>): List<Float> {
+        val array = optJSONArray(name) ?: return defaults
+        return defaults.indices.map { index -> array.optDouble(index, defaults[index].toDouble()).toFloat() }
+    }
+
+    private fun JSONObject.optStringArray(name: String, defaults: List<String>): List<String> {
+        val array = optJSONArray(name) ?: return defaults
+        return defaults.indices.map { index -> array.optString(index, defaults[index]) }
+    }
 
     private companion object {
         const val TAG = "NamChainRepository"

@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project("tone3000m1")
 
+find_package(oboe REQUIRED CONFIG)
+
 
 # ============================================================
 # TinyALSA
@@ -39,6 +41,27 @@ add_subdirectory(
         third_party/tinyalsa
         tinyalsa-build
 )
+
+# libusb is used only by the Android USB host proof of concept. Android's
+# UsbRequest API cannot submit isochronous transfers, so the test wraps the
+# UsbManager-authorized file descriptor in libusb instead.
+add_library(libusb_host STATIC
+        third_party/libusb/libusb/core.c
+        third_party/libusb/libusb/descriptor.c
+        third_party/libusb/libusb/hotplug.c
+        third_party/libusb/libusb/io.c
+        third_party/libusb/libusb/sync.c
+        third_party/libusb/libusb/strerror.c
+        third_party/libusb/libusb/os/linux_usbfs.c
+        third_party/libusb/libusb/os/events_posix.c
+        third_party/libusb/libusb/os/threads_posix.c
+        third_party/libusb/libusb/os/linux_netlink.c)
+target_include_directories(libusb_host PRIVATE
+        third_party/libusb/android
+        third_party/libusb/libusb/os)
+target_include_directories(libusb_host PUBLIC third_party/libusb/libusb)
+target_compile_options(libusb_host PRIVATE -fvisibility=hidden -pthread)
+target_link_libraries(libusb_host PRIVATE log)
 
 # ChowDSP's official DSP modules, compiled as a standalone CMake library (no
 # JUCE plugin/UI target). BYOD processor adapters are implemented in the app's
@@ -183,6 +206,7 @@ add_library(
         SHARED
 
         native-lib.cpp
+        UsbAudioDirectProbe.cpp
         third_party/airwindows/AirwindowsKPlate140.cpp
         third_party/airwindows/AirwindowsTapeDelay2.cpp
 )
@@ -214,9 +238,12 @@ target_link_libraries(
         PRIVATE
 
         tinyalsa
+        libusb_host
+        oboe::oboe
         namcore_objects
         chowdsp_dsp_modules
 
         android
+        aaudio
         log
 )

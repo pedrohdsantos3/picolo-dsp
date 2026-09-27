@@ -32,6 +32,7 @@ internal class ReplaceNamCaptureUseCase(
         require(replacementIndex in currentEntries.indices) {
             "NAM block ${replacementIndex + 1} no longer exists."
         }
+        val wasRunning = engine.isRunning()
         val committed = commitModel.execute(pendingFile, model.id)
         val updated = currentEntries.toMutableList()
         val previous = updated[replacementIndex]
@@ -45,9 +46,47 @@ internal class ReplaceNamCaptureUseCase(
             moduleType = moduleType,
         )
         updated[replacementIndex] = replacement
-        val rebuildResult = rebuild.execute(updated)
-        check(rebuildResult.startsWith("NAM CHAIN READY")) { rebuildResult }
-        val audioResult = engine.startChain()
+        val rebuildResult = try {
+            rebuild.execute(updated)
+        } catch (error: Exception) {
+            rollback(currentEntries, wasRunning)
+            committed.delete()
+            throw error
+        }
+        if (!rebuildResult.startsWith(NAM_CHAIN_READY_PREFIX)) {
+            val rollbackResult = rollback(currentEntries, wasRunning)
+            committed.delete()
+            error(
+                if (rollbackResult.startsWith(NAM_CHAIN_READY_PREFIX)) rebuildResult
+                else "$rebuildResult\nPrevious NAM chain restore failed: $rollbackResult",
+            )
+        }
+        // RebuildNamChainUseCase already restarts audio when it was running.
+        // Starting again here closes and reopens the audio stream a second time.
+        val audioResult = if (engine.isRunning()) "AUDIO ACTIVE" else engine.startChain()
+        if (!audioResult.startsWith(AUDIO_ACTIVE_PREFIX)) {
+            val rollbackResult = rollback(currentEntries, wasRunning)
+            committed.delete()
+            error(
+                if (rollbackResult.startsWith(NAM_CHAIN_READY_PREFIX)) audioResult
+                else "$audioResult\nPrevious NAM chain restore failed: $rollbackResult",
+            )
+        }
         return ReplacedNamCapture(updated, previous.path, replacement, rebuildResult, audioResult)
+    }
+
+    private fun rollback(previousEntries: List<ExtraNamEntry>, wasRunning: Boolean): String {
+        val restored = rebuild.execute(previousEntries)
+        if (!restored.startsWith(NAM_CHAIN_READY_PREFIX)) return restored
+        if (wasRunning && !engine.isRunning()) {
+            val audio = engine.startChain()
+            if (!audio.startsWith(AUDIO_ACTIVE_PREFIX)) return "$restored\n$audio"
+        }
+        return restored
+    }
+
+    private companion object {
+        const val NAM_CHAIN_READY_PREFIX = "NAM CHAIN READY"
+        const val AUDIO_ACTIVE_PREFIX = "AUDIO ACTIVE"
     }
 }

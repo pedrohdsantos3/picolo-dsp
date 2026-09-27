@@ -135,10 +135,16 @@ internal class FxParameterController(
         val selected = effect.coerceIn(FxNativeChainController.MIN_EFFECT, FxNativeChainController.MAX_EFFECT)
         entries[nativeIndex] = entry.copy(
             effect = selected,
+            bypass = false,
+            mix = 0.35f,
             param1 = FxNativeChainController.defaultParam1(selected),
             param2 = FxNativeChainController.defaultParam2(selected),
             param3 = FxNativeChainController.defaultParam3(selected),
             outputGainDb = 0f,
+            tempoSync = false,
+            tapTempoBpm = readGlobalTapTempoBpm().coerceIn(40f, 240f),
+            leftNote = "1/4",
+            rightNote = "1/8.",
         )
         persistNativeEntries(entries)
         syncNativeChain(entries)

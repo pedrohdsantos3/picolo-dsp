@@ -11,6 +11,7 @@ internal class LocalNamImportController(
     private val persistEntries: (List<ExtraNamEntry>) -> Unit,
     private val rebuildChain: (List<ExtraNamEntry>) -> String,
     private val maxEntries: Int,
+    private val onInserted: (insertionIndex: Int, oldNamCount: Int) -> Unit = { _, _ -> },
 ) {
     fun import(title: String, name: String, encodedData: String, targetBlockId: String): Result {
         var importedFile: File? = null
@@ -21,6 +22,7 @@ internal class LocalNamImportController(
             val entries = originalEntries.toMutableList()
             val requested = targetBlockId.removePrefix("nam-").toIntOrNull()
             val target = requested?.takeIf { it in entries.indices } ?: entries.size
+            val inserted = target == entries.size
             if (target >= maxEntries) return Result.Failure("NAM chain full").also { imported.file.delete() }
 
             val entry = ExtraNamEntry(
@@ -53,6 +55,7 @@ internal class LocalNamImportController(
                     }
                 Result.Failure(message)
             } else {
+                if (inserted) onInserted(target, originalEntries.size)
                 Result.Success("nam-$target")
             }
         } catch (error: Exception) {

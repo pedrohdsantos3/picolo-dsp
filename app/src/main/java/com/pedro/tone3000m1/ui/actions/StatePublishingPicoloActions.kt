@@ -23,7 +23,11 @@ internal class StatePublishingPicoloActions(
     override fun removeFxNative(nativeIndex: Int) = afterAction { delegate.removeFxNative(nativeIndex) }
     override fun removeNam(chainIndex: Int) = afterAction { delegate.removeNam(chainIndex) }
     override fun savePreset(slot: Int) = afterAction { delegate.savePreset(slot) }
-    override fun scanUsbAudio(): String = afterAction { delegate.scanUsbAudio() }
+    override suspend fun scanUsbAudio(): String = try {
+        delegate.scanUsbAudio()
+    } finally {
+        publish()
+    }
     override fun selectPackageCaptures(blockId: String): Boolean = afterAction { delegate.selectPackageCaptures(blockId) }
     override fun selectLocalNam(capture: com.pedro.tone3000m1.ui.model.UiLocalNamCapture, importMode: String): Boolean =
         afterAction { delegate.selectLocalNam(capture, importMode) }
@@ -52,6 +56,9 @@ internal class StatePublishingPicoloActions(
     override fun setInputGain(db: Double) = afterAction { delegate.setInputGain(db) }
     override fun setNamBypass(chainIndex: Int, enabled: Boolean) = afterAction { delegate.setNamBypass(chainIndex, enabled) }
     override fun setNamEq(chainIndex: Int, band: Int, db: Double) = afterAction { delegate.setNamEq(chainIndex, band, db) }
+    override fun setNamEqFrequency(chainIndex: Int, band: Int, frequencyHz: Float) = afterAction { delegate.setNamEqFrequency(chainIndex, band, frequencyHz) }
+    override fun setNamEqQ(chainIndex: Int, band: Int, q: Float) = afterAction { delegate.setNamEqQ(chainIndex, band, q) }
+    override fun setNamEqType(chainIndex: Int, band: Int, type: String) = afterAction { delegate.setNamEqType(chainIndex, band, type) }
     override fun setNamEqEnabled(chainIndex: Int, enabled: Boolean) = afterAction { delegate.setNamEqEnabled(chainIndex, enabled) }
     override fun setNamEqPosition(chainIndex: Int, pre: Boolean) = afterAction { delegate.setNamEqPosition(chainIndex, pre) }
     override fun setNamGain(chainIndex: Int, db: Double) = afterAction { delegate.setNamGain(chainIndex, db) }
@@ -59,7 +66,12 @@ internal class StatePublishingPicoloActions(
     override fun setNamMix(chainIndex: Int, mix: Double) = afterAction { delegate.setNamMix(chainIndex, mix) }
     override fun setNamNormalize(chainIndex: Int, enabled: Boolean) = afterAction { delegate.setNamNormalize(chainIndex, enabled) }
     override fun setNamQuality(chainIndex: Int, full: Boolean) = afterAction { delegate.setNamQuality(chainIndex, full) }
+    override fun resetNamParameters(chainIndex: Int) = afterAction { delegate.resetNamParameters(chainIndex) }
     override fun setOutputGain(db: Double) = afterAction { delegate.setOutputGain(db) }
     override fun startAudio(): String = afterAction { delegate.startAudio() }
     override fun stopAudio(): String = afterAction { delegate.stopAudio() }
+    override fun setTunerEnabled(enabled: Boolean) = afterAction { delegate.setTunerEnabled(enabled) }
+    override fun setTunerMuted(muted: Boolean) = afterAction { delegate.setTunerMuted(muted) }
+    override fun tunerFrequencyHz(): Float = delegate.tunerFrequencyHz()
+    override fun tunerInputLevel(): Float = delegate.tunerInputLevel()
 }

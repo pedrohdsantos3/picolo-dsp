@@ -34,6 +34,7 @@ internal class SignalChainReorderController(
         val wasRunning = isAudioRunning()
         val fxEntries = readFxEntries()
         val nativeEntries = readNativeEntries()
+        val previousCabinetPosition = readCabinetPosition(entries.size).coerceIn(0, entries.size)
         val orderedNamIndices = requested
             .filter { it.startsWith(NAM_BLOCK_PREFIX) }
             .mapNotNull { it.removePrefix(NAM_BLOCK_PREFIX).toIntOrNull() }
@@ -91,20 +92,27 @@ internal class SignalChainReorderController(
                 }
             }
         }
-        val cabinetPosition = requested.indexOf(CABINET_BLOCK_ID)
+        val cabinetIndex = requested.indexOf(CABINET_BLOCK_ID)
+        val cabinetPosition = cabinetIndex
             .takeIf { it >= 0 }
+            ?.let { index -> requested.take(index).count { it.startsWith(NAM_BLOCK_PREFIX) } }
             ?.coerceIn(0, reorderedNam.size)
             ?: readCabinetPosition(reorderedNam.size).coerceIn(0, reorderedNam.size)
 
         val rebuildResult = rebuildNamChain(reorderedNam)
         if (rebuildResult.startsWith(NAM_CHAIN_READY_PREFIX)) {
-            persistNamEntries(reorderedNam)
-            persistCabinetPosition(cabinetPosition)
             setCabinetPosition(cabinetPosition)
             repeat(maxFxSlots) { clearFxSlot(it) }
             reorderedFx.forEachIndexed { slot, item ->
                 val loaded = loadFxSlot(slot, item.path)
-                if (!loaded.startsWith(FX_LOADED_PREFIX)) return false
+                if (!loaded.startsWith(FX_LOADED_PREFIX)) {
+                    val rollback = rollbackGraph(entries, fxEntries, nativeEntries, previousCabinetPosition, wasRunning)
+                    publishStatus(
+                        if (rollback.isEmpty()) "Reordenação cancelada: $loaded"
+                        else "Falha ao reordenar e restaurar cadeia: $rollback",
+                    )
+                    return false
+                }
                 val requestedIndex = orderedFxIndices.getOrNull(slot)
                 val position = requestedIndex?.let(fxPositions::get) ?: reorderedNam.size
                 reorderedFx[slot] = item.copy(
@@ -114,6 +122,8 @@ internal class SignalChainReorderController(
                 setFxMix(slot, item.mix)
                 setFxPosition(slot, position.coerceIn(0, reorderedNam.size))
             }
+            persistNamEntries(reorderedNam)
+            persistCabinetPosition(cabinetPosition)
             persistFxEntries(reorderedFx)
             persistNativeEntries(reorderedNative)
             syncNativeChain(reorderedNative)
@@ -134,6 +144,41 @@ internal class SignalChainReorderController(
     } catch (error: Exception) {
         reportError(error)
         false
+    }
+
+    private fun rollbackGraph(
+        namEntries: List<ExtraNamEntry>,
+        fxEntries: List<FxImpulseEntry>,
+        nativeEntries: List<FxNativeEntry>,
+        cabinetPosition: Int,
+        wasRunning: Boolean,
+    ): String {
+        val failures = mutableListOf<String>()
+        val namResult = rebuildNamChain(namEntries)
+        if (!namResult.startsWith(NAM_CHAIN_READY_PREFIX)) failures += namResult
+        persistCabinetPosition(cabinetPosition)
+        setCabinetPosition(cabinetPosition)
+
+        repeat(maxFxSlots, clearFxSlot)
+        fxEntries.forEachIndexed { slot, item ->
+            val result = loadFxSlot(slot, item.path)
+            if (!result.startsWith(FX_LOADED_PREFIX)) {
+                failures += result
+            } else {
+                setFxBypass(slot, item.bypass)
+                setFxMix(slot, item.mix)
+                setFxPosition(slot, item.position.coerceIn(0, namEntries.size))
+            }
+        }
+        persistNamEntries(namEntries)
+        persistFxEntries(fxEntries)
+        persistNativeEntries(nativeEntries)
+        syncNativeChain(nativeEntries)
+        if (wasRunning && hasModules()) {
+            val audio = restartAudio()
+            if (audio.isNotBlank() && !audio.startsWith("AUDIO ACTIVE")) failures += audio
+        }
+        return failures.joinToString("\n")
     }
 
     private companion object {
