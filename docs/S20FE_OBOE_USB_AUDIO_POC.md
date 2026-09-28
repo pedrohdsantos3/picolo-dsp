@@ -23,9 +23,10 @@ adb -s <serial-do-s20fe> logcat -s Tone3000Native:I
 
 Procure por `Oboe EVO4 test path unavailable` ou `Opened EVO4 through Oboe`.
 O estado `AUDIO ACTIVE · EVO4` sozinho não identifica Oboe, porque o fallback
-TinyALSA também pode manter a engine ativa.
+TinyALSA também pode manter a engine ativa. O monitor do editor e a linha
+`Opened EVO4 through Oboe` no log nativo identificam melhor o backend.
 
-## Resultado no S20 FE
+## Resultado anterior no S20 FE
 
 Com a EVO4 conectada, a PoC registrou:
 
@@ -40,8 +41,21 @@ TinyALSA abre a interface diretamente e mantém o app utilizável. Este resultad
 separa a visibilidade USB do caminho de áudio Android. Não demonstra falha de
 processamento Oboe nem confirma áudio audível pelo fallback.
 
-O caminho Oboe atual usa leituras e escritas bloqueantes na thread dedicada da
-engine para minimizar diferenças em relação ao backend AAudio existente. A
-documentação Android recomenda callbacks de dados para o caminho de menor
-latência; uma avaliação de latência final exigirá essa migração se Oboe conseguir
-abrir a rota.
+Naquele teste, o Android não publicou IDs de entrada/saída para a EVO4, então o
+novo processamento Oboe não chegou a ser exercitado nesse aparelho. A rota
+TinyALSA continuou disponível.
+
+## Processamento Oboe atualizado
+
+Quando o Android publica os dois IDs USB, o backend tenta abrir Oboe em modo
+exclusivo e depois compartilhado. A saída abre primeiro e recebe o callback de
+alta prioridade; a entrada solicita capacidade de buffer duas vezes maior que
+a saída. O callback lê a entrada sem bloquear e usa filas pré-alocadas para
+alimentar o worker NAM de 64 frames. O processamento NAM e os efeitos ficam
+fora do callback. O monitor do editor exibe XRuns de entrada/saída, orçamento
+DSP, erros de I/O e clipping digital.
+
+O funcionamento desse caminho foi verificado depois em um Samsung SM-S916B
+(Galaxy S23+) com a EVO4: duas leituras em uma janela curta mostraram zero
+XRuns de captura e reprodução. Esse resultado não altera o diagnóstico do
+S20 FE acima, onde o Android não forneceu IDs Oboe para a interface.
