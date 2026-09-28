@@ -150,20 +150,24 @@ internal class PicoloComposeViewModel : ViewModel() {
         mutableState.update {
             screenState.copy(
                 inputDbFs = stats.metricDbFs("inputMeter"),
-                outputDbFs = stats.metricDbFs("postEqPeak"),
+                outputDbFs = stats.metricDbFs("finalOutputPeak"),
                 processingPercent = livePercent ?: if (!it.running) null else it.processingPercent,
                 processingAvgUs = liveAverageUs ?: if (!it.running) null else it.processingAvgUs,
                 processingMaxUs = (stats.metricFloat("maxProcess") ?: 0f),
                 processingBudgetUs = budgetUs ?: 0f,
                 overBudgetCount = stats.metricLong("overBudget") ?: 0L,
                 audioIoErrors = (stats.metricLong("captureErrors") ?: 0L) + (stats.metricLong("playbackErrors") ?: 0L),
+                captureXRuns = stats.metricLong("captureXRuns") ?: -1L,
+                playbackXRuns = stats.metricLong("playbackXRuns") ?: -1L,
+                finalOutputPeakDbFs = stats.metricDbFs("finalOutputPeak"),
+                digitalClipSamples = stats.metricLong("digitalClipSamples") ?: 0L,
             )
         }
     }
 }
 
 private fun String.metricLong(name: String): Long? =
-    Regex("(?m)^${Regex.escape(name)}=([0-9]+)$").find(this)?.groupValues?.getOrNull(1)?.toLongOrNull()
+    Regex("(?m)^${Regex.escape(name)}=(-?[0-9]+)$").find(this)?.groupValues?.getOrNull(1)?.toLongOrNull()
 
 private fun String.metricFloat(name: String): Float? =
     Regex("(?m)^${Regex.escape(name)}=([0-9]+(?:\\.[0-9]+)?)").find(this)?.groupValues?.getOrNull(1)?.toFloatOrNull()
@@ -794,6 +798,13 @@ private fun ProcessingMonitor(state: PicoloUiState) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Over budget: ${state.overBudgetCount}", color = if (state.overBudgetCount > 0) PicoloYellow else PicoloSecondary, fontSize = 10.sp)
                 Text("Audio I/O errors: ${state.audioIoErrors}", color = if (state.audioIoErrors > 0) Color(0xFFFF4D4D) else PicoloSecondary, fontSize = 10.sp)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                val captureXRuns = state.captureXRuns.takeIf { it >= 0 }?.toString() ?: "—"
+                val playbackXRuns = state.playbackXRuns.takeIf { it >= 0 }?.toString() ?: "—"
+                Text("XRuns in/out: $captureXRuns / $playbackXRuns", color = if (state.captureXRuns > 0 || state.playbackXRuns > 0) Color(0xFFFF4D4D) else PicoloSecondary, fontSize = 10.sp)
+                val outputPeak = state.finalOutputPeakDbFs?.let { String.format(Locale.US, "%.1f", it) } ?: "—"
+                Text("Out $outputPeak dBFS · clips ${state.digitalClipSamples}", color = if (state.digitalClipSamples > 0) Color(0xFFFF4D4D) else PicoloSecondary, fontSize = 10.sp)
             }
         }
     }
@@ -1748,6 +1759,8 @@ private fun GlobalControls(state: PicoloUiState, actions: PicoloActions) {
 
 @Composable
 private fun InputOutputCard(isInput: Boolean, state: PicoloUiState, actions: PicoloActions) {
+    val scope = rememberCoroutineScope()
+    var selectedInputChannel by remember { mutableStateOf<Int?>(null) }
     val accent = if (isInput) PicoloTeal else PicoloBlue
     val label = if (isInput) "INPUT" else "OUTPUT"
     val gain = if (isInput) state.inputGain else state.outputGain
@@ -1760,7 +1773,18 @@ private fun InputOutputCard(isInput: Boolean, state: PicoloUiState, actions: Pic
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("$label · LEVEL", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             MeterChannel("${label} METER", if (state.running) meter else null)
-            if (isInput) InputGainAdvice(meter.takeIf { state.running })
+            if (isInput) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("INPUT CHANNEL", color = PicoloSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Button(
+                        onClick = { scope.launch { selectedInputChannel = actions.cycleInput() } },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    ) {
+                        Text(selectedInputChannel?.let { "CHANNEL ${it + 1}" } ?: "CHECK CHANNEL", fontSize = 10.sp)
+                    }
+                }
+                InputGainAdvice(meter.takeIf { state.running })
+            }
             ValueSlider(
                 "$label GAIN",
                 gain,

@@ -11,6 +11,11 @@ internal class StatePublishingPicoloActions(
         publish()
     }
     override fun addFxNative(effect: Int) = afterAction { delegate.addFxNative(effect) }
+    override suspend fun cycleInput(): Int = try {
+        delegate.cycleInput()
+    } finally {
+        publish()
+    }
     override suspend fun cycleOutput(): Int = try {
         delegate.cycleOutput()
     } finally {

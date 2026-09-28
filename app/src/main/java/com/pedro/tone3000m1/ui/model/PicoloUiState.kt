@@ -84,4 +84,8 @@ internal data class PicoloUiState(
     val processingBudgetUs: Float = 0f,
     val overBudgetCount: Long = 0,
     val audioIoErrors: Long = 0,
+    val captureXRuns: Long = -1,
+    val playbackXRuns: Long = -1,
+    val finalOutputPeakDbFs: Float? = null,
+    val digitalClipSamples: Long = 0,
 )

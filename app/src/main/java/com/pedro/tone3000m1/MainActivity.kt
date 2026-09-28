@@ -97,6 +97,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
@@ -104,6 +105,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
@@ -815,11 +817,15 @@ class MainActivity : AppCompatActivity() {
         }
 
     private var pendingLocalNamImportMode: String = "add"
+    @Volatile
     private var offlineBlockSelectionPending = false
+    @Volatile
+    private var offlineBlockSelectionGeneration = 0L
 
     private fun beginOfflineBlockSelection(@Suppress("UNUSED_PARAMETER") wasRunning: Boolean) {
         if (offlineBlockSelectionPending) return
         offlineBlockSelectionPending = true
+        offlineBlockSelectionGeneration += 1
         // Keep the audio stream and DSP thread alive while the selector is open.
         // The native setter is an atomic output gate and is safe to call here.
         audioEngine.setOutputMuted(true)
@@ -828,10 +834,23 @@ class MainActivity : AppCompatActivity() {
     private fun finishOfflineBlockSelection(@Suppress("UNUSED_PARAMETER") resumeIfNeeded: Boolean) {
         if (!offlineBlockSelectionPending) return
         offlineBlockSelectionPending = false
+        val generation = offlineBlockSelectionGeneration
         // Restart the native readiness window after the selected graph edit.
         // The output gate will stay closed until processing settles again.
         audioEngine.setOutputMuted(true)
-        audioGraphCommands.execute { audioEngine.setOutputMuted(false) }
+        audioGraphCommands.execute {
+            if (generation == offlineBlockSelectionGeneration && !offlineBlockSelectionPending) {
+                audioEngine.setOutputMuted(false)
+            }
+        }
+    }
+
+    private fun <T> runAudioGraphCommandAndWait(command: () -> T): T {
+        try {
+            return audioGraphCommands.submit<T> { command() }.get()
+        } catch (error: ExecutionException) {
+            throw error.cause ?: error
+        }
     }
 
     private val openNamFile =
@@ -1334,8 +1353,6 @@ class MainActivity : AppCompatActivity() {
                 val staging = File(cacheDir, "local-nam-selection-${System.currentTimeMillis()}.nam")
                 source.copyTo(staging, overwrite = true)
                 pendingFile = staging
-                audioEngine.nativeStop()
-                saveSelectedModuleType(capture.moduleType)
                 val model = OnlineModel(
                     id = capture.modelId,
                     name = capture.modelName,
@@ -1344,22 +1361,28 @@ class MainActivity : AppCompatActivity() {
                 )
                 val replacementIndex = importMode.removePrefix("replace:").toIntOrNull()
 
+                saveSelectedModuleType(capture.moduleType)
                 when {
                     importMode == "add" -> {
-                        check(audioEngine.nativeGetNamBlockCount() < MAX_NAM_BLOCKS) { "NAM chain full" }
-                        val added = addExtraNamCaptureUseCase.execute(
-                            pendingFile = staging,
-                            toneId = capture.toneId,
-                            toneTitle = capture.toneTitle,
-                            imageUrl = capture.imageUrl,
-                            model = model,
-                            moduleType = capture.moduleType,
-                        )
+                        val added = runAudioGraphCommandAndWait {
+                            audioEngine.nativeStop()
+                            check(audioEngine.nativeGetNamBlockCount() < MAX_NAM_BLOCKS) { "NAM chain full" }
+                            addExtraNamCaptureUseCase.execute(
+                                pendingFile = staging,
+                                toneId = capture.toneId,
+                                toneTitle = capture.toneTitle,
+                                imageUrl = capture.imageUrl,
+                                model = model,
+                                moduleType = capture.moduleType,
+                            )
+                        }
                         appContainer.localNamLibraryRepository.save(
                             File(added.entry.path), capture.modelName, capture.moduleType,
                             capture.toneTitle, capture.toneId, capture.imageUrl, capture.modelId,
                         )
-                        val placementWarning = namImportPlacementController.placeImportedNam(added.entry.path)
+                        val placementWarning = runAudioGraphCommandAndWait {
+                            namImportPlacementController.placeImportedNam(added.entry.path)
+                        }
                         pendingFile = null
                         runOnUiThread {
                             status.value = "NAM ADDED FROM LIBRARY\n\n${capture.modelName}\n${added.audioResult}" +
@@ -1368,16 +1391,20 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     replacementIndex != null -> {
-                        val replaced = replaceNamCaptureUseCase.execute(
-                            currentEntries = readNamChainEntries(),
-                            replacementIndex = replacementIndex,
-                            pendingFile = staging,
-                            toneId = capture.toneId,
-                            toneTitle = capture.toneTitle,
-                            imageUrl = capture.imageUrl,
-                            model = model,
-                            moduleType = capture.moduleType,
-                        )
+                        val currentEntries = readNamChainEntries()
+                        val replaced = runAudioGraphCommandAndWait {
+                            audioEngine.nativeStop()
+                            replaceNamCaptureUseCase.execute(
+                                currentEntries = currentEntries,
+                                replacementIndex = replacementIndex,
+                                pendingFile = staging,
+                                toneId = capture.toneId,
+                                toneTitle = capture.toneTitle,
+                                imageUrl = capture.imageUrl,
+                                model = model,
+                                moduleType = capture.moduleType,
+                            )
+                        }
                         appContainer.localNamLibraryRepository.save(
                             File(replaced.replacement.path), capture.modelName, capture.moduleType,
                             capture.toneTitle, capture.toneId, capture.imageUrl, capture.modelId,
@@ -1393,6 +1420,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     else -> {
+                        runAudioGraphCommandAndWait { audioEngine.nativeStop() }
                         val loaded = loadPrimaryToneCaptureUseCase.execute(
                             toneId = capture.toneId,
                             toneTitle = capture.toneTitle,
@@ -2453,7 +2481,7 @@ class MainActivity : AppCompatActivity() {
          * but the currently persisted/current DSP remains available until
          * a new capture has been downloaded and loaded successfully.
          */
-        audioEngine.nativeStop()
+        audioGraphCommands.execute { audioEngine.nativeStop() }
 
 
 
@@ -3159,9 +3187,6 @@ class MainActivity : AppCompatActivity() {
                     .toIntOrNull()
 
 
-                audioEngine.nativeStop()
-
-
                 val downloaded =
                     downloadToneModelUseCase.execute(
                         model =
@@ -3186,18 +3211,21 @@ class MainActivity : AppCompatActivity() {
                     )
 
 
-                    val added = addExtraNamCaptureUseCase.execute(
-                        pendingFile = downloaded,
-                        toneId = toneId,
-                        toneTitle = toneTitle,
-                        imageUrl = imageUrl,
-                        model = model,
-                        moduleType = moduleType,
-                    )
+                    val (added, placementWarning) = runAudioGraphCommandAndWait {
+                        audioEngine.nativeStop()
+                        val added = addExtraNamCaptureUseCase.execute(
+                            pendingFile = downloaded,
+                            toneId = toneId,
+                            toneTitle = toneTitle,
+                            imageUrl = imageUrl,
+                            model = model,
+                            moduleType = moduleType,
+                        )
+                        added to namImportPlacementController.placeImportedNam(added.entry.path)
+                    }
                     appContainer.localNamLibraryRepository.save(
                         File(added.entry.path), model.name, moduleType, toneTitle, toneId, imageUrl, model.id,
                     )
-                    val placementWarning = namImportPlacementController.placeImportedNam(added.entry.path)
                     pendingFile = null
 
 
@@ -3234,16 +3262,20 @@ class MainActivity : AppCompatActivity() {
                 if (replacementIndex != null && replacementIndex >= 0) {
                     stage("REPLACING NAM BLOCK ${replacementIndex + 1}...\n${model.name}")
 
-                    val replaced = replaceNamCaptureUseCase.execute(
-                        currentEntries = readNamChainEntries(),
-                        replacementIndex = replacementIndex,
-                        pendingFile = downloaded,
-                        toneId = toneId,
-                        toneTitle = toneTitle,
-                        imageUrl = imageUrl,
-                        model = model,
-                        moduleType = moduleType,
-                    )
+                    val currentEntries = readNamChainEntries()
+                    val replaced = runAudioGraphCommandAndWait {
+                        audioEngine.nativeStop()
+                        replaceNamCaptureUseCase.execute(
+                            currentEntries = currentEntries,
+                            replacementIndex = replacementIndex,
+                            pendingFile = downloaded,
+                            toneId = toneId,
+                            toneTitle = toneTitle,
+                            imageUrl = imageUrl,
+                            model = model,
+                            moduleType = moduleType,
+                        )
+                    }
                     appContainer.localNamLibraryRepository.save(
                         File(replaced.replacement.path), model.name, moduleType, toneTitle, toneId, imageUrl, model.id,
                     )
@@ -3270,13 +3302,18 @@ class MainActivity : AppCompatActivity() {
 
 
                 stage("LOADING CAPTURE...\n${model.name}")
-                val loadedCapture = loadPrimaryToneCaptureUseCase.execute(
-                    toneId = toneId,
-                    toneTitle = toneTitle,
-                    model = model,
-                    moduleType = moduleType,
-                    downloadedFile = downloaded,
-                )
+                val loadedCapture = runAudioGraphCommandAndWait {
+                    audioEngine.nativeStop()
+                    runBlocking {
+                        loadPrimaryToneCaptureUseCase.execute(
+                            toneId = toneId,
+                            toneTitle = toneTitle,
+                            model = model,
+                            moduleType = moduleType,
+                            downloadedFile = downloaded,
+                        )
+                    }
+                }
                 appContainer.localNamLibraryRepository.save(
                     loadedCapture.file, model.name, moduleType, toneTitle, toneId, imageUrl, model.id,
                 )

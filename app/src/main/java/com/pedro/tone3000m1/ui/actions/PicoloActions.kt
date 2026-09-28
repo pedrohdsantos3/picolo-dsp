@@ -5,6 +5,7 @@ import com.pedro.tone3000m1.ui.model.UiLocalNamCapture
 /** Commands the Compose UI can send to the audio application. */
 internal interface PicoloActions {
     fun addFxNative(effect: Int)
+    suspend fun cycleInput(): Int
     suspend fun cycleOutput(): Int
     fun loadPreset(slot: Int)
     fun moveModule(blockId: String, direction: Int)

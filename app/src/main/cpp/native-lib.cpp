@@ -1438,9 +1438,117 @@ namespace {
     };
 
 
-    class AudioEngine {
+    template <size_t CapacityFrames>
+    class StereoFloatFrameRing {
+        static_assert((CapacityFrames & (CapacityFrames - 1)) == 0,
+                      "Ring capacity must be a power of two");
 
     public:
+        size_t push(const float* source, size_t frames) noexcept {
+            const uint32_t write = mWrite.load(std::memory_order_relaxed);
+            const uint32_t read = mRead.load(std::memory_order_acquire);
+            const size_t available = CapacityFrames - static_cast<size_t>(write - read);
+            const size_t count = std::min(frames, available);
+            for (size_t frame = 0; frame < count; ++frame) {
+                const size_t slot = static_cast<size_t>(write + frame) & (CapacityFrames - 1);
+                mData[slot * 2] = source[frame * 2];
+                mData[slot * 2 + 1] = source[frame * 2 + 1];
+            }
+            mWrite.store(write + static_cast<uint32_t>(count), std::memory_order_release);
+            return count;
+        }
+
+        size_t pop(float* destination, size_t frames) noexcept {
+            const uint32_t read = mRead.load(std::memory_order_relaxed);
+            const uint32_t write = mWrite.load(std::memory_order_acquire);
+            const size_t count = std::min(frames, static_cast<size_t>(write - read));
+            for (size_t frame = 0; frame < count; ++frame) {
+                const size_t slot = static_cast<size_t>(read + frame) & (CapacityFrames - 1);
+                destination[frame * 2] = mData[slot * 2];
+                destination[frame * 2 + 1] = mData[slot * 2 + 1];
+            }
+            mRead.store(read + static_cast<uint32_t>(count), std::memory_order_release);
+            return count;
+        }
+
+        size_t availableFrames() const noexcept {
+            const uint32_t write = mWrite.load(std::memory_order_acquire);
+            const uint32_t read = mRead.load(std::memory_order_acquire);
+            return static_cast<size_t>(write - read);
+        }
+
+        size_t writableFrames() const noexcept {
+            return CapacityFrames - availableFrames();
+        }
+
+        void clear() noexcept {
+            mRead.store(0, std::memory_order_relaxed);
+            mWrite.store(0, std::memory_order_relaxed);
+        }
+
+        void primeSilence(size_t frames) noexcept {
+            const uint32_t write = mWrite.load(std::memory_order_relaxed);
+            const size_t count = std::min(frames, CapacityFrames);
+            for (size_t frame = 0; frame < count; ++frame) {
+                const size_t slot = static_cast<size_t>(write + frame) & (CapacityFrames - 1);
+                mData[slot * 2] = 0.0f;
+                mData[slot * 2 + 1] = 0.0f;
+            }
+            mWrite.store(write + static_cast<uint32_t>(count), std::memory_order_release);
+        }
+
+    private:
+        std::array<float, CapacityFrames * 2> mData{};
+        alignas(64) std::atomic<uint32_t> mRead{0};
+        alignas(64) std::atomic<uint32_t> mWrite{0};
+    };
+
+    class AudioEngine : public oboe::AudioStreamDataCallback {
+
+    public:
+
+        static constexpr size_t kOboeRingCapacityFrames = 4096;
+        static constexpr size_t kMaxOboeCallbackFrames = 4096;
+
+        oboe::DataCallbackResult onAudioReady(
+                oboe::AudioStream*,
+                void* audioData,
+                int32_t numFrames
+        ) override {
+            auto* output = static_cast<float*>(audioData);
+            if (numFrames <= 0 || static_cast<size_t>(numFrames) > kMaxOboeCallbackFrames ||
+                !mOboeCapture) {
+                if (numFrames > 0) {
+                    std::memset(audioData, 0,
+                                static_cast<size_t>(numFrames) * mPlaybackChannels * sizeof(float));
+                }
+                return oboe::DataCallbackResult::Continue;
+            }
+
+            const auto inputResult = mOboeCapture->read(
+                    mOboeCallbackCaptureBuffer.data(), numFrames, 0);
+            if (inputResult && inputResult.value() > 0) {
+                const size_t framesRead = std::min(
+                        static_cast<size_t>(inputResult.value()), static_cast<size_t>(numFrames));
+                const size_t framesQueued = mOboeCaptureRing.push(
+                        mOboeCallbackCaptureBuffer.data(), framesRead);
+                if (framesQueued < framesRead) {
+                    mCaptureRingOverrunFrames.fetch_add(
+                            framesRead - framesQueued, std::memory_order_relaxed);
+                }
+            }
+
+            const size_t framesRendered = mOboePlaybackRing.pop(
+                    output, static_cast<size_t>(numFrames));
+            if (framesRendered < static_cast<size_t>(numFrames)) {
+                const size_t missing = static_cast<size_t>(numFrames) - framesRendered;
+                std::memset(output + framesRendered * 2, 0, missing * 2 * sizeof(float));
+                if (mAudioReady.load(std::memory_order_relaxed)) {
+                    mCallbackOutputUnderrunFrames.fetch_add(missing, std::memory_order_relaxed);
+                }
+            }
+            return oboe::DataCallbackResult::Continue;
+        }
 
         AudioEngine() {
             for (unsigned int slot = 0; slot < MAX_NAM_BLOCKS; ++slot) {
@@ -2744,6 +2852,15 @@ namespace {
 
             resetStats();
 
+            if (mUsingOboeUsbAudio) {
+                mOboeCaptureRing.clear();
+                mOboePlaybackRing.clear();
+                const size_t primeFrames = mOboePlayback
+                        ? static_cast<size_t>(mOboePlayback->getFramesPerBurst()) * 2
+                        : 0;
+                mOboePlaybackRing.primeSilence(primeFrames);
+            }
+
             mRunning.store(
                     true
             );
@@ -2753,6 +2870,20 @@ namespace {
                             &AudioEngine::audioLoop,
                             this
                     );
+
+            if (mUsingOboeUsbAudio) {
+                oboe::Result startResult = mOboeCapture->requestStart();
+                if (startResult == oboe::Result::OK) {
+                    startResult = mOboePlayback->requestStart();
+                }
+                if (startResult != oboe::Result::OK) {
+                    mRunning.store(false, std::memory_order_release);
+                    if (mThread.joinable()) mThread.join();
+                    closePcm();
+                    return std::string("AUDIO START FAILED\nOboe could not start EVO4 streams: ") +
+                            oboe::convertToText(startResult);
+                }
+            }
 
             std::ostringstream out;
 
@@ -3529,6 +3660,28 @@ namespace {
             const uint64_t playbackErrors =
                     mPlaybackErrors.load();
 
+            int32_t captureXRuns = -1;
+            int32_t playbackXRuns = -1;
+            {
+                // Stats are requested from a background coroutine. Serialize
+                // these queries against stream open/close, outside the audio loop.
+                std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+                if (mOboeCapture) {
+                    const auto result = mOboeCapture->getXRunCount();
+                    if (result) captureXRuns = result.value();
+                } else if (mAAudioCapture) {
+                    const int32_t count = AAudioStream_getXRunCount(mAAudioCapture);
+                    if (count >= 0) captureXRuns = count;
+                }
+                if (mOboePlayback) {
+                    const auto result = mOboePlayback->getXRunCount();
+                    if (result) playbackXRuns = result.value();
+                } else if (mAAudioPlayback) {
+                    const int32_t count = AAudioStream_getXRunCount(mAAudioPlayback);
+                    if (count >= 0) playbackXRuns = count;
+                }
+            }
+
             const double averageUs =
                     blocks > 0
                     ? (
@@ -3599,6 +3752,18 @@ namespace {
                     << "playbackErrors="
                     << playbackErrors
                     << "\n\n"
+                    << "captureXRuns="
+                    << captureXRuns
+                    << "\n"
+                    << "playbackXRuns="
+                    << playbackXRuns
+                    << "\n"
+                    << "callbackOutputUnderrunFrames="
+                    << mCallbackOutputUnderrunFrames.load(std::memory_order_relaxed)
+                    << "\n"
+                    << "captureRingOverrunFrames="
+                    << mCaptureRingOverrunFrames.load(std::memory_order_relaxed)
+                    << "\n\n"
                     << "inputGain="
                     << mInputGainDb.load()
                     << " dB\n"
@@ -3659,6 +3824,14 @@ namespace {
                             mPostEqPeak.load()
                     )
                     << " dBFS)\n"
+                    << "finalOutputPeak="
+                    << mFinalOutputPeak.load()
+                    << " ("
+                    << linearToDbFS(mFinalOutputPeak.load())
+                    << " dBFS)\n"
+                    << "digitalClipSamples="
+                    << mDigitalClipSamples.load()
+                    << "\n"
                     << "gateGain="
                     << mGateGainMonitor.load()
                     << "\n\n"
@@ -4705,13 +4878,7 @@ namespace {
             inputBuilder.setSharingMode(sharingMode);
             inputBuilder.setInputPreset(oboe::InputPreset::VoicePerformance);
 
-            oboe::Result result = inputBuilder.openStream(mOboeCapture);
-            if (result != oboe::Result::OK || !mOboeCapture) {
-                error = std::string("Oboe could not open EVO4 input: ") + oboe::convertToText(result);
-                closeOboeUsbAudio();
-                return false;
-            }
-
+            oboe::Result result;
             oboe::AudioStreamBuilder outputBuilder;
             outputBuilder.setDirection(oboe::Direction::Output);
             outputBuilder.setDeviceId(outputDeviceId);
@@ -4722,10 +4889,30 @@ namespace {
             outputBuilder.setPerformanceMode(oboe::PerformanceMode::LowLatency);
             outputBuilder.setSharingMode(sharingMode);
             outputBuilder.setUsage(oboe::Usage::Media);
+            outputBuilder.setDataCallback(this);
 
-            result = outputBuilder.openStream(mOboePlayback);
+            {
+                std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+                result = outputBuilder.openStream(mOboePlayback);
+            }
             if (result != oboe::Result::OK || !mOboePlayback) {
                 error = std::string("Oboe could not open EVO4 output: ") + oboe::convertToText(result);
+                closeOboeUsbAudio();
+                return false;
+            }
+
+            // Oboe's full-duplex guidance opens output first and gives input
+            // twice the output capacity so the capture side can absorb burst
+            // timing differences without overrunning.
+            inputBuilder.setSampleRate(mOboePlayback->getSampleRate());
+            inputBuilder.setBufferCapacityInFrames(
+                    mOboePlayback->getBufferCapacityInFrames() * 2);
+            {
+                std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+                result = inputBuilder.openStream(mOboeCapture);
+            }
+            if (result != oboe::Result::OK || !mOboeCapture) {
+                error = std::string("Oboe could not open EVO4 input: ") + oboe::convertToText(result);
                 closeOboeUsbAudio();
                 return false;
             }
@@ -4757,14 +4944,6 @@ namespace {
             mUsingOboeUsbAudio = true;
             mDeviceName = "EVO4 via Oboe";
 
-            result = mOboeCapture->requestStart();
-            if (result == oboe::Result::OK) result = mOboePlayback->requestStart();
-            if (result != oboe::Result::OK) {
-                error = std::string("Oboe could not start EVO4 streams: ") + oboe::convertToText(result);
-                closeOboeUsbAudio();
-                return false;
-            }
-
             LOGI("Opened EVO4 through Oboe (%s): capture id=%d/%d %uch %dHz burst=%d, playback id=%d/%d %uch %dHz burst=%d, block=%u",
                  sharingMode == oboe::SharingMode::Exclusive ? "exclusive" : "shared",
                  inputDeviceId, actualInputDeviceId, mCaptureChannels, captureRate,
@@ -4775,16 +4954,19 @@ namespace {
 
         void closeOboeUsbAudio() {
             mUsingOboeUsbAudio = false;
-            if (mOboeCapture) {
-                mOboeCapture->requestStop();
-                mOboeCapture->close();
-                mOboeCapture.reset();
-            }
+            std::lock_guard<std::mutex> lock(mAudioStreamMutex);
             if (mOboePlayback) {
                 mOboePlayback->requestStop();
                 mOboePlayback->close();
                 mOboePlayback.reset();
             }
+            if (mOboeCapture) {
+                mOboeCapture->requestStop();
+                mOboeCapture->close();
+                mOboeCapture.reset();
+            }
+            mOboeCaptureRing.clear();
+            mOboePlaybackRing.clear();
         }
 
         bool openAndroidUsbAudio(std::string& error) {
@@ -4847,7 +5029,10 @@ namespace {
             AAudioStreamBuilder_setChannelCount(builder, 2);
             AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
             AAudioStreamBuilder_setSharingMode(builder, sharingMode);
-            result = AAudioStreamBuilder_openStream(builder, &mAAudioCapture);
+            {
+                std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+                result = AAudioStreamBuilder_openStream(builder, &mAAudioCapture);
+            }
             AAudioStreamBuilder_delete(builder);
             builder = nullptr;
             if (result != AAUDIO_OK || !mAAudioCapture) {
@@ -4870,7 +5055,10 @@ namespace {
             AAudioStreamBuilder_setChannelCount(builder, 2);
             AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
             AAudioStreamBuilder_setSharingMode(builder, sharingMode);
-            result = AAudioStreamBuilder_openStream(builder, &mAAudioPlayback);
+            {
+                std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+                result = AAudioStreamBuilder_openStream(builder, &mAAudioPlayback);
+            }
             AAudioStreamBuilder_delete(builder);
             builder = nullptr;
             if (result != AAUDIO_OK || !mAAudioPlayback) {
@@ -4929,6 +5117,7 @@ namespace {
 
         void closeAndroidUsbAudio() {
             mUsingAndroidUsbAudio = false;
+            std::lock_guard<std::mutex> lock(mAudioStreamMutex);
             if (mAAudioCapture) {
                 AAudioStream_requestStop(mAAudioCapture);
                 AAudioStream_close(mAAudioCapture);
@@ -4983,6 +5172,11 @@ namespace {
             mPostEqPeak.store(
                     0.0f
             );
+
+            mFinalOutputPeak.store(0.0f, std::memory_order_relaxed);
+            mDigitalClipSamples.store(0, std::memory_order_relaxed);
+            mCallbackOutputUnderrunFrames.store(0, std::memory_order_relaxed);
+            mCaptureRingOverrunFrames.store(0, std::memory_order_relaxed);
 
             mGateGainMonitor.store(
                     1.0f
@@ -6121,16 +6315,17 @@ namespace {
 
                 int readResult = -1;
                 if (mUsingOboeUsbAudio && mOboeCapture) {
-                    const auto result = mOboeCapture->read(
-                            captureBuffer.data(), static_cast<int32_t>(frames), 100'000'000);
-                    if (result) {
-                        readResult = result.value();
-                        const size_t bytesRead = static_cast<size_t>(readResult) *
-                                mCaptureChannels * bytesPerSample(mCaptureFormat);
-                        if (bytesRead < captureBuffer.size()) {
-                            std::memset(captureBuffer.data() + bytesRead, 0,
-                                        captureBuffer.size() - bytesRead);
-                        }
+                    while (mRunning.load(std::memory_order_acquire) &&
+                           mOboeCaptureRing.availableFrames() < frames) {
+                        std::this_thread::sleep_for(std::chrono::microseconds(100));
+                    }
+                    if (!mRunning.load(std::memory_order_acquire)) break;
+                    const size_t framesRead = mOboeCaptureRing.pop(
+                            mOboeWorkerCaptureBuffer.data(), frames);
+                    if (framesRead == frames) {
+                        std::memcpy(captureBuffer.data(), mOboeWorkerCaptureBuffer.data(),
+                                    frames * 2 * sizeof(float));
+                        readResult = static_cast<int>(framesRead);
                     }
                 } else if (mUsingAndroidUsbAudio && mAAudioCapture) {
                     const aaudio_result_t result = AAudioStream_read(
@@ -6915,9 +7110,15 @@ namespace {
 
                 const float muteGain = mOutputMuted.load(std::memory_order_relaxed) ||
                         !mAudioReady.load(std::memory_order_acquire) ? 0.0f : 1.0f;
+                float finalOutputBlockPeak = 0.0f;
+                uint64_t clippedSamples = 0;
                 for (unsigned int frame = 0; frame < frames; ++frame) {
                     const float outputLeft = postEqBuffer[frame] * outputGain * muteGain;
                     const float outputRight = postEqRightBuffer[frame] * outputGain * muteGain;
+                    finalOutputBlockPeak = std::max(finalOutputBlockPeak, std::abs(outputLeft));
+                    finalOutputBlockPeak = std::max(finalOutputBlockPeak, std::abs(outputRight));
+                    if (std::abs(outputLeft) > 1.0f) ++clippedSamples;
+                    if (std::abs(outputRight) > 1.0f) ++clippedSamples;
                     if (outputLeftChannel < mPlaybackChannels) {
                         writeSample(playbackBuffer.data(), frame, outputLeftChannel,
                                     mPlaybackChannels, mPlaybackFormat, outputLeft);
@@ -6926,6 +7127,10 @@ namespace {
                         writeSample(playbackBuffer.data(), frame, outputRightChannel,
                                     mPlaybackChannels, mPlaybackFormat, outputRight);
                     }
+                }
+                updatePeak(mFinalOutputPeak, finalOutputBlockPeak);
+                if (clippedSamples > 0) {
+                    mDigitalClipSamples.fetch_add(clippedSamples, std::memory_order_relaxed);
                 }
 
                 if (crossfadeThisBlock) {
@@ -6985,9 +7190,14 @@ namespace {
 
                 int writeResult = -1;
                 if (mUsingOboeUsbAudio && mOboePlayback) {
-                    const auto result = mOboePlayback->write(
-                            playbackBuffer.data(), static_cast<int32_t>(frames), 100'000'000);
-                    if (result) writeResult = result.value();
+                    while (mRunning.load(std::memory_order_acquire) &&
+                           mOboePlaybackRing.writableFrames() < frames) {
+                        std::this_thread::sleep_for(std::chrono::microseconds(100));
+                    }
+                    if (!mRunning.load(std::memory_order_acquire)) break;
+                    const size_t framesQueued = mOboePlaybackRing.push(
+                            reinterpret_cast<const float*>(playbackBuffer.data()), frames);
+                    writeResult = framesQueued == frames ? static_cast<int>(framesQueued) : -1;
                 } else if (mUsingAndroidUsbAudio && mAAudioPlayback) {
                     const aaudio_result_t result = AAudioStream_write(
                             mAAudioPlayback,
@@ -7234,7 +7444,14 @@ namespace {
         bool mUsingAndroidUsbAudio = false;
         std::shared_ptr<oboe::AudioStream> mOboeCapture;
         std::shared_ptr<oboe::AudioStream> mOboePlayback;
+        StereoFloatFrameRing<kOboeRingCapacityFrames> mOboeCaptureRing;
+        StereoFloatFrameRing<kOboeRingCapacityFrames> mOboePlaybackRing;
+        std::array<float, kMaxOboeCallbackFrames * 2> mOboeCallbackCaptureBuffer{};
+        std::array<float, DEFAULT_BLOCK_SIZE * 2> mOboeWorkerCaptureBuffer{};
+        std::atomic<uint64_t> mCallbackOutputUnderrunFrames{0};
+        std::atomic<uint64_t> mCaptureRingOverrunFrames{0};
         bool mUsingOboeUsbAudio = false;
+        std::mutex mAudioStreamMutex;
         std::atomic<int32_t> mPreferredAndroidInputDeviceId{-1};
         std::atomic<int32_t> mPreferredAndroidOutputDeviceId{-1};
 
@@ -7464,6 +7681,9 @@ namespace {
         std::atomic<float> mPostEqPeak{
                 0.0f
         };
+
+        std::atomic<float> mFinalOutputPeak{0.0f};
+        std::atomic<uint64_t> mDigitalClipSamples{0};
 
 
         std::atomic<uint64_t> mBlocks{

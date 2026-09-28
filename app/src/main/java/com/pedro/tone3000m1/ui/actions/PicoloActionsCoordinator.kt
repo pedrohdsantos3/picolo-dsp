@@ -44,6 +44,7 @@ internal class PicoloActionsCoordinator(
     override fun setEqHigh(db: Double) = audioParameters.setEqHigh(db)
     override fun setEqEnabled(enabled: Boolean) = audioParameters.setEqEnabled(enabled)
 
+    override suspend fun cycleInput(): Int = audioSession.cycleInput()
     override suspend fun cycleOutput(): Int = audioSession.cycleOutput()
     override fun startAudio(): String = startAudioAction.invoke()
     override fun stopAudio(): String = stopAudioAction.invoke()
