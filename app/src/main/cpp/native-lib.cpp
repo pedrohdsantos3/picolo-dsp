@@ -1,5 +1,8 @@
 #include <jni.h>
+#include <android/api-level.h>
 #include <android/log.h>
+#include <aaudio/AAudio.h>
+#include <oboe/Oboe.h>
 
 #include <tinyalsa/pcm.h>
 
@@ -18,6 +21,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <dlfcn.h>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -1120,11 +1124,34 @@ namespace {
                     rawA0;
         }
 
+        void setLowPass(double sampleRate, double frequency, double q) {
+            const double w0 = 2.0 * 3.14159265358979323846 * frequency / sampleRate;
+            const double alpha = std::sin(w0) / (2.0 * q);
+            const double a0 = 1.0 + alpha;
+            b0 = ((1.0 - std::cos(w0)) * 0.5) / a0;
+            b1 = (1.0 - std::cos(w0)) / a0;
+            b2 = b0;
+            a1 = (-2.0 * std::cos(w0)) / a0;
+            a2 = (1.0 - alpha) / a0;
+        }
+
+        void setHighPass(double sampleRate, double frequency, double q) {
+            const double w0 = 2.0 * 3.14159265358979323846 * frequency / sampleRate;
+            const double alpha = std::sin(w0) / (2.0 * q);
+            const double a0 = 1.0 + alpha;
+            b0 = ((1.0 + std::cos(w0)) * 0.5) / a0;
+            b1 = (-(1.0 + std::cos(w0))) / a0;
+            b2 = b0;
+            a1 = (-2.0 * std::cos(w0)) / a0;
+            a2 = (1.0 - alpha) / a0;
+        }
+
 
         void setLowShelf(
                 double sampleRate,
                 double frequency,
-                double gainDb
+                double gainDb,
+                double q = 0.7071067811865476
         ) {
             const double a =
                     std::pow(
@@ -1149,12 +1176,7 @@ namespace {
                             w0
                     );
 
-            const double alpha =
-                    sinW0 /
-                    2.0 *
-                    std::sqrt(
-                            2.0
-                    );
+            const double alpha = sinW0 / (2.0 * q);
 
             const double twoSqrtAAlpha =
                     2.0 *
@@ -1273,7 +1295,8 @@ namespace {
         void setHighShelf(
                 double sampleRate,
                 double frequency,
-                double gainDb
+                double gainDb,
+                double q = 0.7071067811865476
         ) {
             const double a =
                     std::pow(
@@ -1298,12 +1321,7 @@ namespace {
                             w0
                     );
 
-            const double alpha =
-                    sinW0 /
-                    2.0 *
-                    std::sqrt(
-                            2.0
-                    );
+            const double alpha = sinW0 / (2.0 * q);
 
             const double twoSqrtAAlpha =
                     2.0 *
@@ -1420,17 +1438,123 @@ namespace {
     };
 
 
-    class AudioEngine {
+    template <size_t CapacityFrames>
+    class StereoFloatFrameRing {
+        static_assert((CapacityFrames & (CapacityFrames - 1)) == 0,
+                      "Ring capacity must be a power of two");
+
+    public:
+        size_t push(const float* source, size_t frames) noexcept {
+            const uint32_t write = mWrite.load(std::memory_order_relaxed);
+            const uint32_t read = mRead.load(std::memory_order_acquire);
+            const size_t available = CapacityFrames - static_cast<size_t>(write - read);
+            const size_t count = std::min(frames, available);
+            for (size_t frame = 0; frame < count; ++frame) {
+                const size_t slot = static_cast<size_t>(write + frame) & (CapacityFrames - 1);
+                mData[slot * 2] = source[frame * 2];
+                mData[slot * 2 + 1] = source[frame * 2 + 1];
+            }
+            mWrite.store(write + static_cast<uint32_t>(count), std::memory_order_release);
+            return count;
+        }
+
+        size_t pop(float* destination, size_t frames) noexcept {
+            const uint32_t read = mRead.load(std::memory_order_relaxed);
+            const uint32_t write = mWrite.load(std::memory_order_acquire);
+            const size_t count = std::min(frames, static_cast<size_t>(write - read));
+            for (size_t frame = 0; frame < count; ++frame) {
+                const size_t slot = static_cast<size_t>(read + frame) & (CapacityFrames - 1);
+                destination[frame * 2] = mData[slot * 2];
+                destination[frame * 2 + 1] = mData[slot * 2 + 1];
+            }
+            mRead.store(read + static_cast<uint32_t>(count), std::memory_order_release);
+            return count;
+        }
+
+        size_t availableFrames() const noexcept {
+            const uint32_t write = mWrite.load(std::memory_order_acquire);
+            const uint32_t read = mRead.load(std::memory_order_acquire);
+            return static_cast<size_t>(write - read);
+        }
+
+        size_t writableFrames() const noexcept {
+            return CapacityFrames - availableFrames();
+        }
+
+        void clear() noexcept {
+            mRead.store(0, std::memory_order_relaxed);
+            mWrite.store(0, std::memory_order_relaxed);
+        }
+
+        void primeSilence(size_t frames) noexcept {
+            const uint32_t write = mWrite.load(std::memory_order_relaxed);
+            const size_t count = std::min(frames, CapacityFrames);
+            for (size_t frame = 0; frame < count; ++frame) {
+                const size_t slot = static_cast<size_t>(write + frame) & (CapacityFrames - 1);
+                mData[slot * 2] = 0.0f;
+                mData[slot * 2 + 1] = 0.0f;
+            }
+            mWrite.store(write + static_cast<uint32_t>(count), std::memory_order_release);
+        }
+
+    private:
+        std::array<float, CapacityFrames * 2> mData{};
+        alignas(64) std::atomic<uint32_t> mRead{0};
+        alignas(64) std::atomic<uint32_t> mWrite{0};
+    };
+
+    class AudioEngine : public oboe::AudioStreamDataCallback {
 
     public:
 
+        static constexpr size_t kOboeRingCapacityFrames = 4096;
+        static constexpr size_t kMaxOboeCallbackFrames = 4096;
+
+        oboe::DataCallbackResult onAudioReady(
+                oboe::AudioStream*,
+                void* audioData,
+                int32_t numFrames
+        ) override {
+            auto* output = static_cast<float*>(audioData);
+            if (numFrames <= 0 || static_cast<size_t>(numFrames) > kMaxOboeCallbackFrames ||
+                !mOboeCapture) {
+                if (numFrames > 0) {
+                    std::memset(audioData, 0,
+                                static_cast<size_t>(numFrames) * mPlaybackChannels * sizeof(float));
+                }
+                return oboe::DataCallbackResult::Continue;
+            }
+
+            const auto inputResult = mOboeCapture->read(
+                    mOboeCallbackCaptureBuffer.data(), numFrames, 0);
+            if (inputResult && inputResult.value() > 0) {
+                const size_t framesRead = std::min(
+                        static_cast<size_t>(inputResult.value()), static_cast<size_t>(numFrames));
+                const size_t framesQueued = mOboeCaptureRing.push(
+                        mOboeCallbackCaptureBuffer.data(), framesRead);
+                if (framesQueued < framesRead) {
+                    mCaptureRingOverrunFrames.fetch_add(
+                            framesRead - framesQueued, std::memory_order_relaxed);
+                }
+            }
+
+            const size_t framesRendered = mOboePlaybackRing.pop(
+                    output, static_cast<size_t>(numFrames));
+            if (framesRendered < static_cast<size_t>(numFrames)) {
+                const size_t missing = static_cast<size_t>(numFrames) - framesRendered;
+                std::memset(output + framesRendered * 2, 0, missing * 2 * sizeof(float));
+                if (mAudioReady.load(std::memory_order_relaxed)) {
+                    mCallbackOutputUnderrunFrames.fetch_add(missing, std::memory_order_relaxed);
+                }
+            }
+            return oboe::DataCallbackResult::Continue;
+        }
+
         AudioEngine() {
             for (unsigned int slot = 0; slot < MAX_NAM_BLOCKS; ++slot) {
-                mNamGainDb[slot].store(-15.0f);
+                mNamGainDb[slot].store(0.0f);
                 mNamInGainDb[slot].store(0.0f);
                 mNamMix[slot].store(1.0f);
-                mNamNormalize[slot].store(true);
-                mNamNormalizeGain[slot].store(1.0f);
                 mNamEqLowDb[slot].store(0.0f);
                 mNamEqMidDb[slot].store(0.0f);
                 mNamEqHighDb[slot].store(0.0f);
@@ -1438,6 +1562,14 @@ namespace {
                 mNamEqBand4Db[slot].store(0.0f);
                 mNamEqBand5Db[slot].store(0.0f);
                 mNamEqEnabled[slot].store(true);
+                for (unsigned int band = 0; band < 6; ++band) {
+                    static constexpr float frequencies[] = {100.0f, 250.0f, 650.0f, 1600.0f, 3500.0f, 8000.0f};
+                    static constexpr float qs[] = {0.71f, 1.0f, 1.0f, 1.0f, 1.4f, 0.71f};
+                    mNamEqGainDb[slot][band].store(0.0f);
+                    mNamEqFrequencyHz[slot][band].store(frequencies[band]);
+                    mNamEqQ[slot][band].store(qs[band]);
+                    mNamEqType[slot][band].store(band == 0 ? 1 : band == 5 ? 3 : 2);
+                }
             }
             for (unsigned int slot = 0; slot < MAX_FX_IR_BLOCKS; ++slot) {
                 mFxNativeBypass[slot].store(true);
@@ -2574,7 +2706,7 @@ namespace {
         void setChainNamGainDb(int chainIndex, float db) {
             if (chainIndex >= 0 && chainIndex < static_cast<int>(MAX_NAM_BLOCKS)) {
                 mNamGainDb[static_cast<unsigned int>(chainIndex)].store(
-                        std::clamp(db, -24.0f, 12.0f), std::memory_order_relaxed);
+                        std::clamp(db, -24.0f, 24.0f), std::memory_order_relaxed);
             }
         }
 
@@ -2593,23 +2725,38 @@ namespace {
         }
 
         void setChainNamNormalize(int chainIndex, bool enabled) {
-            if (chainIndex >= 0 && chainIndex < static_cast<int>(MAX_NAM_BLOCKS)) {
-                mNamNormalize[static_cast<unsigned int>(chainIndex)].store(enabled, std::memory_order_relaxed);
-            }
+            // Legacy JNI and saved-preset compatibility. Normalize is now a
+            // read-only input meter and must not alter the audio signal.
+            (void) chainIndex;
+            (void) enabled;
         }
 
         void setChainNamEqDb(int chainIndex, int band, float db) {
             if (chainIndex < 0 || chainIndex >= static_cast<int>(MAX_NAM_BLOCKS)) {
                 return;
             }
-            auto value = std::clamp(db, -12.0f, 12.0f);
+            auto value = std::clamp(db, -15.0f, 15.0f);
             const auto slot = static_cast<unsigned int>(chainIndex);
+            if (band < 0 || band >= 6) return;
+            mNamEqGainDb[slot][static_cast<unsigned int>(band)].store(value, std::memory_order_relaxed);
             if (band == 0) mNamEqLowDb[slot].store(value, std::memory_order_relaxed);
             if (band == 1) mNamEqMidDb[slot].store(value, std::memory_order_relaxed);
             if (band == 2) mNamEqHighDb[slot].store(value, std::memory_order_relaxed);
             if (band == 3) mNamEqBand3Db[slot].store(value, std::memory_order_relaxed);
             if (band == 4) mNamEqBand4Db[slot].store(value, std::memory_order_relaxed);
             if (band == 5) mNamEqBand5Db[slot].store(value, std::memory_order_relaxed);
+        }
+
+        void setChainNamEqBand(int chainIndex, int band, int type, float frequency, float gainDb, float q) {
+            if (chainIndex < 0 || chainIndex >= static_cast<int>(MAX_NAM_BLOCKS) || band < 0 || band >= 6) return;
+            const auto slot = static_cast<unsigned int>(chainIndex);
+            const auto eqBand = static_cast<unsigned int>(band);
+            const int allowedType = band == 0 ? (type == 0 ? 0 : 1) :
+                    band == 5 ? (type == 4 ? 4 : 3) : 2;
+            mNamEqType[slot][eqBand].store(allowedType, std::memory_order_relaxed);
+            mNamEqFrequencyHz[slot][eqBand].store(std::clamp(frequency, 20.0f, 20000.0f), std::memory_order_relaxed);
+            mNamEqQ[slot][eqBand].store(std::clamp(q, 0.1f, 10.0f), std::memory_order_relaxed);
+            setChainNamEqDb(chainIndex, band, gainDb);
         }
 
         void setChainNamEqPre(int chainIndex, bool pre) {
@@ -2645,8 +2792,12 @@ namespace {
         std::string start() {
             stop();
 
+            mAudioReady.store(false, std::memory_order_release);
+            mAudioReadinessEpoch.fetch_add(1, std::memory_order_acq_rel);
+
             const bool hasFx = std::any_of(mFxIrs.begin(), mFxIrs.end(), [](const auto& ir) { return ir != nullptr; });
-            if (namBlockCount() == 0 && !mOutputIr && !hasFx) {
+            if (namBlockCount() == 0 && !mOutputIr && !hasFx &&
+                !mTunerEnabled.load(std::memory_order_acquire)) {
                 return
                         "AUDIO START FAILED\n"
                         "No processing module loaded";
@@ -2701,6 +2852,15 @@ namespace {
 
             resetStats();
 
+            if (mUsingOboeUsbAudio) {
+                mOboeCaptureRing.clear();
+                mOboePlaybackRing.clear();
+                const size_t primeFrames = mOboePlayback
+                        ? static_cast<size_t>(mOboePlayback->getFramesPerBurst()) * 2
+                        : 0;
+                mOboePlaybackRing.primeSilence(primeFrames);
+            }
+
             mRunning.store(
                     true
             );
@@ -2710,6 +2870,20 @@ namespace {
                             &AudioEngine::audioLoop,
                             this
                     );
+
+            if (mUsingOboeUsbAudio) {
+                oboe::Result startResult = mOboeCapture->requestStart();
+                if (startResult == oboe::Result::OK) {
+                    startResult = mOboePlayback->requestStart();
+                }
+                if (startResult != oboe::Result::OK) {
+                    mRunning.store(false, std::memory_order_release);
+                    if (mThread.joinable()) mThread.join();
+                    closePcm();
+                    return std::string("AUDIO START FAILED\nOboe could not start EVO4 streams: ") +
+                            oboe::convertToText(startResult);
+                }
+            }
 
             std::ostringstream out;
 
@@ -2759,10 +2933,17 @@ namespace {
             return out.str();
         }
 
+        void setPreferredAndroidUsbDevices(int32_t inputDeviceId, int32_t outputDeviceId) {
+            mPreferredAndroidInputDeviceId.store(inputDeviceId, std::memory_order_relaxed);
+            mPreferredAndroidOutputDeviceId.store(outputDeviceId, std::memory_order_relaxed);
+        }
+
         void stop() {
             mRunning.store(
                     false
             );
+            mAudioReady.store(false, std::memory_order_release);
+            mAudioReadinessEpoch.fetch_add(1, std::memory_order_acq_rel);
 
             if (
                     mThread.joinable()
@@ -2815,6 +2996,30 @@ namespace {
             return mRunning.load(
                     std::memory_order_acquire
             );
+        }
+
+        void setTunerEnabled(bool enabled) {
+            mTunerEnabled.store(enabled, std::memory_order_release);
+            if (!enabled) {
+                mTunerFrequencyHz.store(0.0f, std::memory_order_relaxed);
+                mTunerInputLevel.store(0.0f, std::memory_order_relaxed);
+            }
+        }
+
+        void setOutputMuted(bool muted) {
+            mOutputMuted.store(muted, std::memory_order_release);
+            if (muted) {
+                mAudioReady.store(false, std::memory_order_release);
+                mAudioReadinessEpoch.fetch_add(1, std::memory_order_acq_rel);
+            }
+        }
+
+        float tunerFrequencyHz() const {
+            return mTunerFrequencyHz.load(std::memory_order_relaxed);
+        }
+
+        float tunerInputLevel() const {
+            return mTunerInputLevel.load(std::memory_order_relaxed);
         }
 
 
@@ -3455,6 +3660,28 @@ namespace {
             const uint64_t playbackErrors =
                     mPlaybackErrors.load();
 
+            int32_t captureXRuns = -1;
+            int32_t playbackXRuns = -1;
+            {
+                // Stats are requested from a background coroutine. Serialize
+                // these queries against stream open/close, outside the audio loop.
+                std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+                if (mOboeCapture) {
+                    const auto result = mOboeCapture->getXRunCount();
+                    if (result) captureXRuns = result.value();
+                } else if (mAAudioCapture) {
+                    const int32_t count = AAudioStream_getXRunCount(mAAudioCapture);
+                    if (count >= 0) captureXRuns = count;
+                }
+                if (mOboePlayback) {
+                    const auto result = mOboePlayback->getXRunCount();
+                    if (result) playbackXRuns = result.value();
+                } else if (mAAudioPlayback) {
+                    const int32_t count = AAudioStream_getXRunCount(mAAudioPlayback);
+                    if (count >= 0) playbackXRuns = count;
+                }
+            }
+
             const double averageUs =
                     blocks > 0
                     ? (
@@ -3525,6 +3752,18 @@ namespace {
                     << "playbackErrors="
                     << playbackErrors
                     << "\n\n"
+                    << "captureXRuns="
+                    << captureXRuns
+                    << "\n"
+                    << "playbackXRuns="
+                    << playbackXRuns
+                    << "\n"
+                    << "callbackOutputUnderrunFrames="
+                    << mCallbackOutputUnderrunFrames.load(std::memory_order_relaxed)
+                    << "\n"
+                    << "captureRingOverrunFrames="
+                    << mCaptureRingOverrunFrames.load(std::memory_order_relaxed)
+                    << "\n\n"
                     << "inputGain="
                     << mInputGainDb.load()
                     << " dB\n"
@@ -3567,8 +3806,11 @@ namespace {
                     << linearToDbFS(
                             mNamInputPeak.load()
                     )
-                    << " dBFS)\n"
-                    << "namOutputPeak="
+                    << " dBFS)\n";
+            const float inputMeterPeak = mInputMeterPeak.load(std::memory_order_relaxed);
+            out << "inputMeter=" << inputMeterPeak << " ("
+                << linearToDbFS(inputMeterPeak) << " dBFS)\n";
+            out << "namOutputPeak="
                     << mNamOutputPeak.load()
                     << " ("
                     << linearToDbFS(
@@ -3582,6 +3824,14 @@ namespace {
                             mPostEqPeak.load()
                     )
                     << " dBFS)\n"
+                    << "finalOutputPeak="
+                    << mFinalOutputPeak.load()
+                    << " ("
+                    << linearToDbFS(mFinalOutputPeak.load())
+                    << " dBFS)\n"
+                    << "digitalClipSamples="
+                    << mDigitalClipSamples.load()
+                    << "\n"
                     << "gateGain="
                     << mGateGainMonitor.load()
                     << "\n\n"
@@ -4103,15 +4353,17 @@ namespace {
         bool openCompatibleUsbInterface(
                 std::string& error
         ) {
+            std::string oboeError;
+            if (openOboeUsbAudio(oboeError)) {
+                return true;
+            }
+            LOGI("Oboe EVO4 test path unavailable; trying existing USB backend: %s", oboeError.c_str());
+
             const auto endpoints =
                     findUsbPcmEndpoints();
 
             if (endpoints.empty()) {
-                error =
-                        "No USB Audio card found.\n"
-                        "Connect a class-compliant USB audio interface.";
-
-                return false;
+                return openAndroidUsbAudio(error);
             }
 
             std::ostringstream attempts;
@@ -4575,6 +4827,307 @@ namespace {
                 mPlayback =
                         nullptr;
             }
+
+            closeAndroidUsbAudio();
+            closeOboeUsbAudio();
+        }
+
+        bool openOboeUsbAudio(std::string& error) {
+            const int32_t inputDeviceId = mPreferredAndroidInputDeviceId.load(std::memory_order_relaxed);
+            const int32_t outputDeviceId = mPreferredAndroidOutputDeviceId.load(std::memory_order_relaxed);
+            if (inputDeviceId < 0 || outputDeviceId < 0) {
+                error = "Android AudioManager did not expose both EVO4 device IDs (input=" +
+                        std::to_string(inputDeviceId) + ", output=" +
+                        std::to_string(outputDeviceId) + ")";
+                return false;
+            }
+
+            std::string exclusiveError;
+            if (openOboeUsbAudioWithSharingMode(
+                    inputDeviceId, outputDeviceId, oboe::SharingMode::Exclusive, exclusiveError)) {
+                return true;
+            }
+            LOGI("Oboe exclusive EVO4 route unavailable; retrying shared mode: %s", exclusiveError.c_str());
+
+            std::string sharedError;
+            if (openOboeUsbAudioWithSharingMode(
+                    inputDeviceId, outputDeviceId, oboe::SharingMode::Shared, sharedError)) {
+                return true;
+            }
+            error = "Oboe exclusive route failed: " + exclusiveError +
+                    "\nOboe shared route failed: " + sharedError;
+            return false;
+        }
+
+        bool openOboeUsbAudioWithSharingMode(
+                int32_t inputDeviceId,
+                int32_t outputDeviceId,
+                oboe::SharingMode sharingMode,
+                std::string& error
+        ) {
+            closeOboeUsbAudio();
+
+            oboe::AudioStreamBuilder inputBuilder;
+            inputBuilder.setDirection(oboe::Direction::Input);
+            inputBuilder.setDeviceId(inputDeviceId);
+            inputBuilder.setFormat(oboe::AudioFormat::Float);
+            inputBuilder.setFormatConversionAllowed(true);
+            inputBuilder.setSampleRate(static_cast<int32_t>(TARGET_RATE));
+            inputBuilder.setChannelCount(2);
+            inputBuilder.setPerformanceMode(oboe::PerformanceMode::LowLatency);
+            inputBuilder.setSharingMode(sharingMode);
+            inputBuilder.setInputPreset(oboe::InputPreset::VoicePerformance);
+
+            oboe::Result result;
+            oboe::AudioStreamBuilder outputBuilder;
+            outputBuilder.setDirection(oboe::Direction::Output);
+            outputBuilder.setDeviceId(outputDeviceId);
+            outputBuilder.setFormat(oboe::AudioFormat::Float);
+            outputBuilder.setFormatConversionAllowed(true);
+            outputBuilder.setSampleRate(static_cast<int32_t>(TARGET_RATE));
+            outputBuilder.setChannelCount(2);
+            outputBuilder.setPerformanceMode(oboe::PerformanceMode::LowLatency);
+            outputBuilder.setSharingMode(sharingMode);
+            outputBuilder.setUsage(oboe::Usage::Media);
+            outputBuilder.setDataCallback(this);
+
+            {
+                std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+                result = outputBuilder.openStream(mOboePlayback);
+            }
+            if (result != oboe::Result::OK || !mOboePlayback) {
+                error = std::string("Oboe could not open EVO4 output: ") + oboe::convertToText(result);
+                closeOboeUsbAudio();
+                return false;
+            }
+
+            // Oboe's full-duplex guidance opens output first and gives input
+            // twice the output capacity so the capture side can absorb burst
+            // timing differences without overrunning.
+            inputBuilder.setSampleRate(mOboePlayback->getSampleRate());
+            inputBuilder.setBufferCapacityInFrames(
+                    mOboePlayback->getBufferCapacityInFrames() * 2);
+            {
+                std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+                result = inputBuilder.openStream(mOboeCapture);
+            }
+            if (result != oboe::Result::OK || !mOboeCapture) {
+                error = std::string("Oboe could not open EVO4 input: ") + oboe::convertToText(result);
+                closeOboeUsbAudio();
+                return false;
+            }
+
+            const int32_t captureRate = mOboeCapture->getSampleRate();
+            const int32_t playbackRate = mOboePlayback->getSampleRate();
+            const int32_t actualInputDeviceId = mOboeCapture->getDeviceId();
+            const int32_t actualOutputDeviceId = mOboePlayback->getDeviceId();
+            if (captureRate != static_cast<int32_t>(TARGET_RATE) ||
+                playbackRate != static_cast<int32_t>(TARGET_RATE)) {
+                error = "Oboe did not grant 48000 Hz full duplex (capture=" +
+                        std::to_string(captureRate) + ", playback=" +
+                        std::to_string(playbackRate) + ")";
+                closeOboeUsbAudio();
+                return false;
+            }
+            if (actualInputDeviceId != inputDeviceId || actualOutputDeviceId != outputDeviceId) {
+                error = "Oboe opened different device IDs (capture=" +
+                        std::to_string(actualInputDeviceId) + ", playback=" +
+                        std::to_string(actualOutputDeviceId) + ")";
+                closeOboeUsbAudio();
+                return false;
+            }
+
+            mCaptureChannels = static_cast<unsigned int>(mOboeCapture->getChannelCount());
+            mPlaybackChannels = static_cast<unsigned int>(mOboePlayback->getChannelCount());
+            mCaptureFormat = PCM_FORMAT_FLOAT_LE;
+            mPlaybackFormat = PCM_FORMAT_FLOAT_LE;
+            mUsingOboeUsbAudio = true;
+            mDeviceName = "EVO4 via Oboe";
+
+            LOGI("Opened EVO4 through Oboe (%s): capture id=%d/%d %uch %dHz burst=%d, playback id=%d/%d %uch %dHz burst=%d, block=%u",
+                 sharingMode == oboe::SharingMode::Exclusive ? "exclusive" : "shared",
+                 inputDeviceId, actualInputDeviceId, mCaptureChannels, captureRate,
+                 mOboeCapture->getFramesPerBurst(), outputDeviceId, actualOutputDeviceId,
+                 mPlaybackChannels, playbackRate, mOboePlayback->getFramesPerBurst(), mBlockSize);
+            return true;
+        }
+
+        void closeOboeUsbAudio() {
+            mUsingOboeUsbAudio = false;
+            std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+            if (mOboePlayback) {
+                mOboePlayback->requestStop();
+                mOboePlayback->close();
+                mOboePlayback.reset();
+            }
+            if (mOboeCapture) {
+                mOboeCapture->requestStop();
+                mOboeCapture->close();
+                mOboeCapture.reset();
+            }
+            mOboeCaptureRing.clear();
+            mOboePlaybackRing.clear();
+        }
+
+        bool openAndroidUsbAudio(std::string& error) {
+            const int32_t inputDeviceId = mPreferredAndroidInputDeviceId.load(std::memory_order_relaxed);
+            const int32_t outputDeviceId = mPreferredAndroidOutputDeviceId.load(std::memory_order_relaxed);
+            if (inputDeviceId < 0 || outputDeviceId < 0) {
+                error = "TinyALSA cannot see USB PCM and Android did not expose both EVO4 routes.\n"
+                        "Reconnect the EVO4 and retry.";
+                return false;
+            }
+
+            std::string exclusiveError;
+            if (openAndroidUsbAudioWithSharingMode(
+                    inputDeviceId, outputDeviceId, AAUDIO_SHARING_MODE_EXCLUSIVE, exclusiveError)) {
+                return true;
+            }
+            LOGI("AAudio exclusive EVO4 route unavailable; retrying shared mode: %s", exclusiveError.c_str());
+
+            std::string sharedError;
+            if (openAndroidUsbAudioWithSharingMode(
+                    inputDeviceId, outputDeviceId, AAUDIO_SHARING_MODE_SHARED, sharedError)) {
+                return true;
+            }
+            error = "AAudio exclusive route failed: " + exclusiveError +
+                    "\nAAudio shared route failed: " + sharedError;
+            return false;
+        }
+
+        bool openAndroidUsbAudioWithSharingMode(
+                int32_t inputDeviceId,
+                int32_t outputDeviceId,
+                aaudio_sharing_mode_t sharingMode,
+                std::string& error
+        ) {
+
+            closeAndroidUsbAudio();
+            AAudioStreamBuilder* builder = nullptr;
+            aaudio_result_t result = AAudio_createStreamBuilder(&builder);
+            if (result != AAUDIO_OK || !builder) {
+                error = std::string("AAudio input builder failed: ") + AAudio_convertResultToText(result);
+                return false;
+            }
+
+            AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_INPUT);
+            // Android defaults AAudio capture to VOICE_RECOGNITION, which is
+            // intended for speech. USB instrument input should use the live
+            // performance preset so the platform configures capture for
+            // real-time processing and playback.
+            if (android_get_device_api_level() >= 29) {
+                using SetInputPresetFn = void (*)(AAudioStreamBuilder*, aaudio_input_preset_t);
+                const auto setInputPreset = reinterpret_cast<SetInputPresetFn>(
+                        dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setInputPreset"));
+                if (setInputPreset) {
+                    setInputPreset(builder, AAUDIO_INPUT_PRESET_VOICE_PERFORMANCE);
+                }
+            }
+            AAudioStreamBuilder_setDeviceId(builder, inputDeviceId);
+            AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_FLOAT);
+            AAudioStreamBuilder_setSampleRate(builder, TARGET_RATE);
+            AAudioStreamBuilder_setChannelCount(builder, 2);
+            AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+            AAudioStreamBuilder_setSharingMode(builder, sharingMode);
+            {
+                std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+                result = AAudioStreamBuilder_openStream(builder, &mAAudioCapture);
+            }
+            AAudioStreamBuilder_delete(builder);
+            builder = nullptr;
+            if (result != AAUDIO_OK || !mAAudioCapture) {
+                error = std::string("AAudio could not open EVO4 input: ") + AAudio_convertResultToText(result);
+                closeAndroidUsbAudio();
+                return false;
+            }
+
+            result = AAudio_createStreamBuilder(&builder);
+            if (result != AAUDIO_OK || !builder) {
+                error = std::string("AAudio output builder failed: ") + AAudio_convertResultToText(result);
+                closeAndroidUsbAudio();
+                return false;
+            }
+
+            AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
+            AAudioStreamBuilder_setDeviceId(builder, outputDeviceId);
+            AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_FLOAT);
+            AAudioStreamBuilder_setSampleRate(builder, TARGET_RATE);
+            AAudioStreamBuilder_setChannelCount(builder, 2);
+            AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+            AAudioStreamBuilder_setSharingMode(builder, sharingMode);
+            {
+                std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+                result = AAudioStreamBuilder_openStream(builder, &mAAudioPlayback);
+            }
+            AAudioStreamBuilder_delete(builder);
+            builder = nullptr;
+            if (result != AAUDIO_OK || !mAAudioPlayback) {
+                error = std::string("AAudio could not open EVO4 output: ") + AAudio_convertResultToText(result);
+                closeAndroidUsbAudio();
+                return false;
+            }
+
+            const int32_t captureRate = AAudioStream_getSampleRate(mAAudioCapture);
+            const int32_t playbackRate = AAudioStream_getSampleRate(mAAudioPlayback);
+            if (captureRate != static_cast<int32_t>(TARGET_RATE) ||
+                playbackRate != static_cast<int32_t>(TARGET_RATE)) {
+                error = "Android USB route did not grant 48000 Hz full duplex (capture=" +
+                        std::to_string(captureRate) + ", playback=" + std::to_string(playbackRate) + ")";
+                closeAndroidUsbAudio();
+                return false;
+            }
+
+            const int32_t actualInputDeviceId = AAudioStream_getDeviceId(mAAudioCapture);
+            const int32_t actualOutputDeviceId = AAudioStream_getDeviceId(mAAudioPlayback);
+            if (actualInputDeviceId != inputDeviceId || actualOutputDeviceId != outputDeviceId) {
+                error = "Android opened a different route than EVO4 (capture=" +
+                        std::to_string(actualInputDeviceId) + ", playback=" +
+                        std::to_string(actualOutputDeviceId) + ")";
+                closeAndroidUsbAudio();
+                return false;
+            }
+
+            mCaptureChannels = static_cast<unsigned int>(AAudioStream_getChannelCount(mAAudioCapture));
+            mPlaybackChannels = static_cast<unsigned int>(AAudioStream_getChannelCount(mAAudioPlayback));
+            mCaptureFormat = PCM_FORMAT_FLOAT_LE;
+            mPlaybackFormat = PCM_FORMAT_FLOAT_LE;
+            const int32_t outputBurst = AAudioStream_getFramesPerBurst(mAAudioPlayback);
+            const int32_t inputBurst = AAudioStream_getFramesPerBurst(mAAudioCapture);
+            // Keep DSP work bounded even when Android reports a large HAL burst.
+            mBlockSize = DEFAULT_BLOCK_SIZE;
+            mCapturePeriodCount = 0;
+            mPlaybackPeriodCount = 0;
+            mUsingAndroidUsbAudio = true;
+            mDeviceName = "EVO4 via Android USB Audio";
+
+            result = AAudioStream_requestStart(mAAudioCapture);
+            if (result == AAUDIO_OK) result = AAudioStream_requestStart(mAAudioPlayback);
+            if (result != AAUDIO_OK) {
+                error = std::string("AAudio could not start EVO4 streams: ") + AAudio_convertResultToText(result);
+                closeAndroidUsbAudio();
+                return false;
+            }
+
+            LOGI("Opened EVO4 through Android USB audio (%s): capture id=%d/%d %uch %dHz burst=%d, playback id=%d/%d %uch %dHz burst=%d, block=%u",
+                 sharingMode == AAUDIO_SHARING_MODE_EXCLUSIVE ? "exclusive" : "shared",
+                 inputDeviceId, actualInputDeviceId, mCaptureChannels, captureRate, inputBurst,
+                 outputDeviceId, actualOutputDeviceId, mPlaybackChannels, playbackRate, outputBurst, mBlockSize);
+            return true;
+        }
+
+        void closeAndroidUsbAudio() {
+            mUsingAndroidUsbAudio = false;
+            std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+            if (mAAudioCapture) {
+                AAudioStream_requestStop(mAAudioCapture);
+                AAudioStream_close(mAAudioCapture);
+                mAAudioCapture = nullptr;
+            }
+            if (mAAudioPlayback) {
+                AAudioStream_requestStop(mAAudioPlayback);
+                AAudioStream_close(mAAudioPlayback);
+                mAAudioPlayback = nullptr;
+            }
         }
 
         void resetStats() {
@@ -4606,6 +5159,8 @@ namespace {
                     0.0f
             );
 
+            mInputMeterPeak.store(0.0f, std::memory_order_relaxed);
+
             mNamInputPeak.store(
                     0.0f
             );
@@ -4617,6 +5172,11 @@ namespace {
             mPostEqPeak.store(
                     0.0f
             );
+
+            mFinalOutputPeak.store(0.0f, std::memory_order_relaxed);
+            mDigitalClipSamples.store(0, std::memory_order_relaxed);
+            mCallbackOutputUnderrunFrames.store(0, std::memory_order_relaxed);
+            mCaptureRingOverrunFrames.store(0, std::memory_order_relaxed);
 
             mGateGainMonitor.store(
                     1.0f
@@ -5362,6 +5922,10 @@ namespace {
             const unsigned int frames =
                     mBlockSize;
 
+            const float inputMeterReleaseCoeff = std::exp(
+                    -static_cast<float>(frames) /
+                    (0.35f * static_cast<float>(TARGET_RATE)));
+
             const size_t captureBufferSize =
                     static_cast<size_t>(
                             frames
@@ -5391,6 +5955,13 @@ namespace {
             std::vector<NAM_SAMPLE> namInput(
                     frames
             );
+
+            std::array<float, 1024> tunerWindow{};
+            size_t tunerWindowWrite = 0;
+            size_t tunerWindowCount = 0;
+            unsigned int tunerDecimationPhase = 0;
+            float tunerDecimationSum = 0.0f;
+            unsigned int tunerSamplesSinceEstimate = 0;
 
             std::vector<NAM_SAMPLE> namOutput(
                     frames
@@ -5467,6 +6038,8 @@ namespace {
 
             uint64_t successfulLoopBlocks =
                     0;
+            uint64_t readinessEpoch = mAudioReadinessEpoch.load(std::memory_order_acquire);
+            uint64_t stableReadinessBlocks = 0;
 
             bool havePreviousCaptureWake =
                     false;
@@ -5541,111 +6114,72 @@ namespace {
             Biquad midEq;
             Biquad highEq;
 
-            std::array<Biquad, MAX_NAM_BLOCKS> namLowEq;
-            std::array<Biquad, MAX_NAM_BLOCKS> namMidEq;
-            std::array<Biquad, MAX_NAM_BLOCKS> namHighEq;
-            std::array<Biquad, MAX_NAM_BLOCKS> namBand3Eq;
-            std::array<Biquad, MAX_NAM_BLOCKS> namBand4Eq;
-            std::array<Biquad, MAX_NAM_BLOCKS> namBand5Eq;
-
-            std::array<float, MAX_NAM_BLOCKS> currentNamLowDb;
-            std::array<float, MAX_NAM_BLOCKS> currentNamMidDb;
-            std::array<float, MAX_NAM_BLOCKS> currentNamHighDb;
-            std::array<float, MAX_NAM_BLOCKS> currentNamBand3Db;
-            std::array<float, MAX_NAM_BLOCKS> currentNamBand4Db;
-            std::array<float, MAX_NAM_BLOCKS> currentNamBand5Db;
-            currentNamLowDb.fill(999.0f);
-            currentNamMidDb.fill(999.0f);
-            currentNamHighDb.fill(999.0f);
-            currentNamBand3Db.fill(999.0f);
-            currentNamBand4Db.fill(999.0f);
-            currentNamBand5Db.fill(999.0f);
+            std::array<std::array<Biquad, 6>, MAX_NAM_BLOCKS> namEq;
+            std::array<std::array<float, 6>, MAX_NAM_BLOCKS> currentNamEq{};
+            std::array<std::array<float, 6>, MAX_NAM_BLOCKS> currentNamFreq{};
+            std::array<std::array<float, 6>, MAX_NAM_BLOCKS> currentNamQ{};
+            std::array<std::array<int, 6>, MAX_NAM_BLOCKS> currentNamType{};
+            for (unsigned int slot = 0; slot < MAX_NAM_BLOCKS; ++slot) {
+                currentNamEq[slot].fill(999.0f);
+                currentNamFreq[slot].fill(-1.0f);
+                currentNamQ[slot].fill(-1.0f);
+                currentNamType[slot].fill(-1);
+            }
 
             auto processNamControls = [&](unsigned int slot, NAM_SAMPLE* buffer, const NAM_SAMPLE* dry) {
-                const float lowDb = mNamEqLowDb[slot].load(std::memory_order_relaxed);
-                const float midDb = mNamEqMidDb[slot].load(std::memory_order_relaxed);
-                const float highDb = mNamEqHighDb[slot].load(std::memory_order_relaxed);
-                const float band3Db = mNamEqBand3Db[slot].load(std::memory_order_relaxed);
-                const float band4Db = mNamEqBand4Db[slot].load(std::memory_order_relaxed);
-                const float band5Db = mNamEqBand5Db[slot].load(std::memory_order_relaxed);
-                if (std::abs(lowDb - currentNamLowDb[slot]) > 0.001f) {
-                    namLowEq[slot].setLowShelf(TARGET_RATE, 120.0, lowDb);
-                    currentNamLowDb[slot] = lowDb;
-                }
-                if (std::abs(midDb - currentNamMidDb[slot]) > 0.001f) {
-                    namMidEq[slot].setPeaking(TARGET_RATE, 750.0, 0.8, midDb);
-                    currentNamMidDb[slot] = midDb;
-                }
-                if (std::abs(highDb - currentNamHighDb[slot]) > 0.001f) {
-                    namHighEq[slot].setHighShelf(TARGET_RATE, 4000.0, highDb);
-                    currentNamHighDb[slot] = highDb;
-                }
-                if (std::abs(band3Db - currentNamBand3Db[slot]) > 0.001f) {
-                    namBand3Eq[slot].setPeaking(TARGET_RATE, 1800.0, 0.8, band3Db);
-                    currentNamBand3Db[slot] = band3Db;
-                }
-                if (std::abs(band4Db - currentNamBand4Db[slot]) > 0.001f) {
-                    namBand4Eq[slot].setPeaking(TARGET_RATE, 3500.0, 0.8, band4Db);
-                    currentNamBand4Db[slot] = band4Db;
-                }
-                if (std::abs(band5Db - currentNamBand5Db[slot]) > 0.001f) {
-                    namBand5Eq[slot].setHighShelf(TARGET_RATE, 8000.0, band5Db);
-                    currentNamBand5Db[slot] = band5Db;
+                bool eqHasEffect = false;
+                for (unsigned int band = 0; band < 6; ++band) {
+                    const float gainDb = mNamEqGainDb[slot][band].load(std::memory_order_relaxed);
+                    const float frequency = std::clamp(mNamEqFrequencyHz[slot][band].load(std::memory_order_relaxed), 20.0f, TARGET_RATE * 0.49f);
+                    const float q = mNamEqQ[slot][band].load(std::memory_order_relaxed);
+                    const int type = mNamEqType[slot][band].load(std::memory_order_relaxed);
+                    if (std::abs(gainDb - currentNamEq[slot][band]) > 0.001f ||
+                        std::abs(frequency - currentNamFreq[slot][band]) > 0.01f ||
+                        std::abs(q - currentNamQ[slot][band]) > 0.001f || type != currentNamType[slot][band]) {
+                        switch (type) {
+                            case 0: namEq[slot][band].setHighPass(TARGET_RATE, frequency, q); break;
+                            case 1: namEq[slot][band].setLowShelf(TARGET_RATE, frequency, gainDb, q); break;
+                            case 3: namEq[slot][band].setHighShelf(TARGET_RATE, frequency, gainDb, q); break;
+                            case 4: namEq[slot][band].setLowPass(TARGET_RATE, frequency, q); break;
+                            default: namEq[slot][band].setPeaking(TARGET_RATE, frequency, q, gainDb); break;
+                        }
+                        currentNamEq[slot][band] = gainDb;
+                        currentNamFreq[slot][band] = frequency;
+                        currentNamQ[slot][band] = q;
+                        currentNamType[slot][band] = type;
+                    }
+                    eqHasEffect = eqHasEffect || type == 0 || type == 4 || std::abs(gainDb) > 0.001f;
                 }
                 const float gain = std::pow(10.0f,
                                             mNamGainDb[slot].load(std::memory_order_relaxed) / 20.0f);
                 const float mix = mNamMix[slot].load(std::memory_order_relaxed);
-                const bool normalize = mNamNormalize[slot].load(std::memory_order_relaxed);
-                const float normalizeGain = mNamNormalizeGain[slot].load(std::memory_order_relaxed);
-                const bool eqActive = mNamEqEnabled[slot].load(std::memory_order_relaxed) &&
-                        (std::abs(lowDb) > 0.001f || std::abs(midDb) > 0.001f ||
-                         std::abs(highDb) > 0.001f || std::abs(band3Db) > 0.001f ||
-                         std::abs(band4Db) > 0.001f || std::abs(band5Db) > 0.001f);
-                float blockPeak = 0.0f;
+                const bool eqActive = mNamEqEnabled[slot].load(std::memory_order_relaxed) && eqHasEffect;
                 for (unsigned int frame = 0; frame < frames; ++frame) {
                     float value = static_cast<float>(buffer[frame]);
                     if (eqActive && !mNamEqPre[slot].load(std::memory_order_relaxed)) {
-                        value = namLowEq[slot].process(value);
-                        value = namMidEq[slot].process(value);
-                        value = namHighEq[slot].process(value);
-                        value = namBand3Eq[slot].process(value);
-                        value = namBand4Eq[slot].process(value);
-                        value = namBand5Eq[slot].process(value);
+                        for (unsigned int band = 0; band < 6; ++band) value = namEq[slot][band].process(value);
                     }
-                    value = (static_cast<float>(dry[frame]) * (1.0f - mix) + value * mix) * gain * normalizeGain;
-                    blockPeak = std::max(blockPeak, std::abs(value));
+                    value = (static_cast<float>(dry[frame]) * (1.0f - mix) + value * mix) * gain;
                     buffer[frame] = static_cast<NAM_SAMPLE>(value);
-                }
-                if (normalize && blockPeak > 0.0001f) {
-                    const float targetGain = std::clamp(0.65f / blockPeak, 0.25f, 4.0f);
-                    const float smoothed = normalizeGain * 0.98f + targetGain * 0.02f;
-                    mNamNormalizeGain[slot].store(smoothed, std::memory_order_relaxed);
-                } else if (!normalize) {
-                    // Do not retain a gain learned while normalization was on.
-                    // Turning NORM off must return the block to unity gain.
-                    mNamNormalizeGain[slot].store(1.0f, std::memory_order_relaxed);
                 }
             };
 
             auto processNamPreEq = [&](unsigned int slot, NAM_SAMPLE* buffer) {
                 if (!mNamEqEnabled[slot].load(std::memory_order_relaxed) ||
                     !mNamEqPre[slot].load(std::memory_order_relaxed)) return;
-                const bool eqActive =
-                        std::abs(mNamEqLowDb[slot].load(std::memory_order_relaxed)) > 0.001f ||
-                        std::abs(mNamEqMidDb[slot].load(std::memory_order_relaxed)) > 0.001f ||
-                        std::abs(mNamEqHighDb[slot].load(std::memory_order_relaxed)) > 0.001f ||
-                        std::abs(mNamEqBand3Db[slot].load(std::memory_order_relaxed)) > 0.001f ||
-                        std::abs(mNamEqBand4Db[slot].load(std::memory_order_relaxed)) > 0.001f ||
-                        std::abs(mNamEqBand5Db[slot].load(std::memory_order_relaxed)) > 0.001f;
+                const bool eqActive = mNamEqEnabled[slot].load(std::memory_order_relaxed) &&
+                        (mNamEqType[slot][0].load(std::memory_order_relaxed) == 0 ||
+                         mNamEqType[slot][5].load(std::memory_order_relaxed) == 4 ||
+                         std::abs(mNamEqGainDb[slot][0].load(std::memory_order_relaxed)) > 0.001f ||
+                         std::abs(mNamEqGainDb[slot][1].load(std::memory_order_relaxed)) > 0.001f ||
+                         std::abs(mNamEqGainDb[slot][2].load(std::memory_order_relaxed)) > 0.001f ||
+                         std::abs(mNamEqGainDb[slot][3].load(std::memory_order_relaxed)) > 0.001f ||
+                         std::abs(mNamEqGainDb[slot][4].load(std::memory_order_relaxed)) > 0.001f ||
+                         std::abs(mNamEqGainDb[slot][5].load(std::memory_order_relaxed)) > 0.001f);
                 if (!eqActive) return;
                 for (unsigned int frame = 0; frame < frames; ++frame) {
                     float value = static_cast<float>(buffer[frame]);
-                    value = namLowEq[slot].process(value);
-                    value = namMidEq[slot].process(value);
-                    value = namHighEq[slot].process(value);
-                    value = namBand3Eq[slot].process(value);
-                    value = namBand4Eq[slot].process(value);
-                    value = namBand5Eq[slot].process(value);
+                    for (unsigned int band = 0; band < 6; ++band) value = namEq[slot][band].process(value);
                     buffer[frame] = static_cast<NAM_SAMPLE>(value);
                 }
             };
@@ -5779,12 +6313,38 @@ namespace {
                         std::chrono::steady_clock::now();
 
 
-                const int readResult =
-                        pcm_readi(
-                                mCapture,
-                                captureBuffer.data(),
-                                frames
-                        );
+                int readResult = -1;
+                if (mUsingOboeUsbAudio && mOboeCapture) {
+                    while (mRunning.load(std::memory_order_acquire) &&
+                           mOboeCaptureRing.availableFrames() < frames) {
+                        std::this_thread::sleep_for(std::chrono::microseconds(100));
+                    }
+                    if (!mRunning.load(std::memory_order_acquire)) break;
+                    const size_t framesRead = mOboeCaptureRing.pop(
+                            mOboeWorkerCaptureBuffer.data(), frames);
+                    if (framesRead == frames) {
+                        std::memcpy(captureBuffer.data(), mOboeWorkerCaptureBuffer.data(),
+                                    frames * 2 * sizeof(float));
+                        readResult = static_cast<int>(framesRead);
+                    }
+                } else if (mUsingAndroidUsbAudio && mAAudioCapture) {
+                    const aaudio_result_t result = AAudioStream_read(
+                            mAAudioCapture,
+                            captureBuffer.data(),
+                            static_cast<int32_t>(frames),
+                            100'000'000);
+                    if (result >= 0) {
+                        readResult = result;
+                        const size_t bytesRead = static_cast<size_t>(result) *
+                                mCaptureChannels * bytesPerSample(mCaptureFormat);
+                        if (bytesRead < captureBuffer.size()) {
+                            std::memset(captureBuffer.data() + bytesRead, 0,
+                                        captureBuffer.size() - bytesRead);
+                        }
+                    }
+                } else {
+                    readResult = pcm_readi(mCapture, captureBuffer.data(), frames);
+                }
 
 
                 const auto readEnd =
@@ -5806,6 +6366,7 @@ namespace {
                     mCaptureErrors.fetch_add(
                             1
                     );
+                    stableReadinessBlocks = 0;
 
                     std::this_thread::sleep_for(
                             std::chrono::milliseconds(
@@ -6047,6 +6608,75 @@ namespace {
                                     mCaptureFormat
                             );
 
+                    if (mTunerEnabled.load(std::memory_order_relaxed)) {
+                        tunerDecimationSum += captureSample;
+                        if (++tunerDecimationPhase == 4) {
+                            tunerWindow[tunerWindowWrite] = tunerDecimationSum * 0.25f;
+                            tunerWindowWrite = (tunerWindowWrite + 1) % tunerWindow.size();
+                            tunerWindowCount = std::min(tunerWindowCount + 1, tunerWindow.size());
+                            tunerDecimationPhase = 0;
+                            tunerDecimationSum = 0.0f;
+                            if (++tunerSamplesSinceEstimate >= 256 && tunerWindowCount == tunerWindow.size()) {
+                                tunerSamplesSinceEstimate = 0;
+                                double signalEnergy = 0.0;
+                                for (size_t i = 0; i < tunerWindow.size(); i += 2) {
+                                    const double sample = tunerWindow[(tunerWindowWrite + i) % tunerWindow.size()];
+                                    signalEnergy += sample * sample;
+                                }
+                                const float level = static_cast<float>(std::sqrt(signalEnergy / 256.0));
+                                mTunerInputLevel.store(level, std::memory_order_relaxed);
+                                if (level < 0.0012f) {
+                                    mTunerFrequencyHz.store(0.0f, std::memory_order_relaxed);
+                                } else {
+                                    constexpr int minLag = 10;
+                                    constexpr int maxLag = 400;
+                                    std::array<double, maxLag + 1> difference{};
+                                    for (int lag = minLag; lag <= maxLag; ++lag) {
+                                        double sum = 0.0;
+                                        for (size_t i = 0; i < 512; i += 2) {
+                                            const double delta =
+                                                    tunerWindow[(tunerWindowWrite + i) % tunerWindow.size()] -
+                                                    tunerWindow[(tunerWindowWrite + i + static_cast<size_t>(lag)) % tunerWindow.size()];
+                                            sum += delta * delta;
+                                        }
+                                        difference[lag] = sum;
+                                    }
+                                    double runningDifference = 0.0;
+                                    int bestLag = 0;
+                                    double bestScore = 1.0;
+                                    for (int lag = minLag; lag <= maxLag; ++lag) {
+                                        runningDifference += difference[lag];
+                                        const double score = runningDifference > 0.0
+                                                ? difference[lag] * (lag - minLag + 1) / runningDifference
+                                                : 1.0;
+                                        if (score < bestScore) {
+                                            bestScore = score;
+                                            bestLag = lag;
+                                        }
+                                        if (score < 0.18 && lag < maxLag && difference[lag] <= difference[lag + 1]) {
+                                            bestLag = lag;
+                                            break;
+                                        }
+                                    }
+                                    if (bestLag > 0 && bestScore < 0.42) {
+                                        const double before = difference[std::max(minLag, bestLag - 1)];
+                                        const double center = difference[bestLag];
+                                        const double after = difference[std::min(maxLag, bestLag + 1)];
+                                        const double denominator = before - 2.0 * center + after;
+                                        const double offset = std::abs(denominator) > 1.0e-12
+                                                ? 0.5 * (before - after) / denominator
+                                                : 0.0;
+                                        mTunerFrequencyHz.store(
+                                                static_cast<float>(12000.0 / (bestLag + std::clamp(offset, -0.5, 0.5))),
+                                                std::memory_order_relaxed);
+                                    } else {
+                                        mTunerFrequencyHz.store(0.0f, std::memory_order_relaxed);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     captureBlockPeak =
                             std::max(
                                     captureBlockPeak,
@@ -6163,6 +6793,11 @@ namespace {
                         captureBlockPeak
                 );
 
+                const float previousInputMeterPeak = mInputMeterPeak.load(std::memory_order_relaxed);
+                mInputMeterPeak.store(
+                        std::max(captureBlockPeak, previousInputMeterPeak * inputMeterReleaseCoeff),
+                        std::memory_order_relaxed);
+
                 updatePeak(
                         mNamInputPeak,
                         namInputBlockPeak
@@ -6230,7 +6865,9 @@ namespace {
                     std::copy(namInput.begin(), namInput.end(), namDry.begin());
                     const float inGain = std::pow(10.0f,
                             mNamInGainDb[0].load(std::memory_order_relaxed) / 20.0f);
-                    for (auto& sample : namInput) sample = static_cast<NAM_SAMPLE>(sample * inGain);
+                    for (auto& sample : namInput) {
+                        sample = static_cast<NAM_SAMPLE>(sample * inGain);
+                    }
                     processNamPreEq(0, namInput.data());
                     if (crossfadeThisBlock) {
                         mCrossfadeOldModel->process(
@@ -6471,9 +7108,17 @@ namespace {
                 std::copy(postEqBuffer.begin(), postEqBuffer.end(), postEqRightBuffer.begin());
                 processFxNativesStereo(postEqBuffer.data(), postEqRightBuffer.data());
 
+                const float muteGain = mOutputMuted.load(std::memory_order_relaxed) ||
+                        !mAudioReady.load(std::memory_order_acquire) ? 0.0f : 1.0f;
+                float finalOutputBlockPeak = 0.0f;
+                uint64_t clippedSamples = 0;
                 for (unsigned int frame = 0; frame < frames; ++frame) {
-                    const float outputLeft = postEqBuffer[frame] * outputGain;
-                    const float outputRight = postEqRightBuffer[frame] * outputGain;
+                    const float outputLeft = postEqBuffer[frame] * outputGain * muteGain;
+                    const float outputRight = postEqRightBuffer[frame] * outputGain * muteGain;
+                    finalOutputBlockPeak = std::max(finalOutputBlockPeak, std::abs(outputLeft));
+                    finalOutputBlockPeak = std::max(finalOutputBlockPeak, std::abs(outputRight));
+                    if (std::abs(outputLeft) > 1.0f) ++clippedSamples;
+                    if (std::abs(outputRight) > 1.0f) ++clippedSamples;
                     if (outputLeftChannel < mPlaybackChannels) {
                         writeSample(playbackBuffer.data(), frame, outputLeftChannel,
                                     mPlaybackChannels, mPlaybackFormat, outputLeft);
@@ -6482,6 +7127,10 @@ namespace {
                         writeSample(playbackBuffer.data(), frame, outputRightChannel,
                                     mPlaybackChannels, mPlaybackFormat, outputRight);
                     }
+                }
+                updatePeak(mFinalOutputPeak, finalOutputBlockPeak);
+                if (clippedSamples > 0) {
+                    mDigitalClipSamples.fetch_add(clippedSamples, std::memory_order_relaxed);
                 }
 
                 if (crossfadeThisBlock) {
@@ -6539,12 +7188,26 @@ namespace {
                         );
 
 
-                const int writeResult =
-                        pcm_writei(
-                                mPlayback,
-                                playbackBuffer.data(),
-                                frames
-                        );
+                int writeResult = -1;
+                if (mUsingOboeUsbAudio && mOboePlayback) {
+                    while (mRunning.load(std::memory_order_acquire) &&
+                           mOboePlaybackRing.writableFrames() < frames) {
+                        std::this_thread::sleep_for(std::chrono::microseconds(100));
+                    }
+                    if (!mRunning.load(std::memory_order_acquire)) break;
+                    const size_t framesQueued = mOboePlaybackRing.push(
+                            reinterpret_cast<const float*>(playbackBuffer.data()), frames);
+                    writeResult = framesQueued == frames ? static_cast<int>(framesQueued) : -1;
+                } else if (mUsingAndroidUsbAudio && mAAudioPlayback) {
+                    const aaudio_result_t result = AAudioStream_write(
+                            mAAudioPlayback,
+                            playbackBuffer.data(),
+                            static_cast<int32_t>(frames),
+                            100'000'000);
+                    if (result >= 0) writeResult = result;
+                } else {
+                    writeResult = pcm_writei(mPlayback, playbackBuffer.data(), frames);
+                }
 
 
                 const auto writeEnd =
@@ -6568,6 +7231,22 @@ namespace {
                     mPlaybackErrors.fetch_add(
                             1
                     );
+                }
+
+                const uint64_t currentReadinessEpoch =
+                        mAudioReadinessEpoch.load(std::memory_order_acquire);
+                if (currentReadinessEpoch != readinessEpoch) {
+                    readinessEpoch = currentReadinessEpoch;
+                    stableReadinessBlocks = 0;
+                }
+                if (readResult >= 0 && writeResult >= 0 && elapsedNs <= budgetNs) {
+                    ++stableReadinessBlocks;
+                    if (stableReadinessBlocks >= JITTER_WARMUP_BLOCKS &&
+                        mAudioReadinessEpoch.load(std::memory_order_acquire) == readinessEpoch) {
+                        mAudioReady.store(true, std::memory_order_release);
+                    }
+                } else {
+                    stableReadinessBlocks = 0;
                 }
 
 
@@ -6643,8 +7322,10 @@ namespace {
         std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamGainDb{};
         std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamInGainDb{};
         std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamMix{};
-        std::array<std::atomic<bool>, MAX_NAM_BLOCKS> mNamNormalize{};
-        std::array<std::atomic<float>, MAX_NAM_BLOCKS> mNamNormalizeGain{};
+        std::array<std::array<std::atomic<float>, 6>, MAX_NAM_BLOCKS> mNamEqGainDb{};
+        std::array<std::array<std::atomic<float>, 6>, MAX_NAM_BLOCKS> mNamEqFrequencyHz{};
+        std::array<std::array<std::atomic<float>, 6>, MAX_NAM_BLOCKS> mNamEqQ{};
+        std::array<std::array<std::atomic<int>, 6>, MAX_NAM_BLOCKS> mNamEqType{};
 
         std::unique_ptr<dsp::ImpulseResponse> mOutputIr;
         std::array<std::unique_ptr<dsp::ImpulseResponse>, MAX_FX_IR_BLOCKS> mFxIrs;
@@ -6758,11 +7439,34 @@ namespace {
         pcm* mPlayback =
                 nullptr;
 
+        AAudioStream* mAAudioCapture = nullptr;
+        AAudioStream* mAAudioPlayback = nullptr;
+        bool mUsingAndroidUsbAudio = false;
+        std::shared_ptr<oboe::AudioStream> mOboeCapture;
+        std::shared_ptr<oboe::AudioStream> mOboePlayback;
+        StereoFloatFrameRing<kOboeRingCapacityFrames> mOboeCaptureRing;
+        StereoFloatFrameRing<kOboeRingCapacityFrames> mOboePlaybackRing;
+        std::array<float, kMaxOboeCallbackFrames * 2> mOboeCallbackCaptureBuffer{};
+        std::array<float, DEFAULT_BLOCK_SIZE * 2> mOboeWorkerCaptureBuffer{};
+        std::atomic<uint64_t> mCallbackOutputUnderrunFrames{0};
+        std::atomic<uint64_t> mCaptureRingOverrunFrames{0};
+        bool mUsingOboeUsbAudio = false;
+        std::mutex mAudioStreamMutex;
+        std::atomic<int32_t> mPreferredAndroidInputDeviceId{-1};
+        std::atomic<int32_t> mPreferredAndroidOutputDeviceId{-1};
+
         std::thread mThread;
 
         std::atomic<bool> mRunning{
                 false
         };
+
+        std::atomic<bool> mTunerEnabled{false};
+        std::atomic<bool> mOutputMuted{false};
+        std::atomic<bool> mAudioReady{false};
+        std::atomic<uint64_t> mAudioReadinessEpoch{0};
+        std::atomic<float> mTunerFrequencyHz{0.0f};
+        std::atomic<float> mTunerInputLevel{0.0f};
 
         std::atomic<bool> mIsSlimmable{
                 false
@@ -6787,6 +7491,8 @@ namespace {
         std::atomic<float> mCapturePeak{
                 0.0f
         };
+
+        std::atomic<float> mInputMeterPeak{0.0f};
 
         std::atomic<float> mNamInputPeak{
                 0.0f
@@ -6975,6 +7681,9 @@ namespace {
         std::atomic<float> mPostEqPeak{
                 0.0f
         };
+
+        std::atomic<float> mFinalOutputPeak{0.0f};
+        std::atomic<uint64_t> mDigitalClipSamples{0};
 
 
         std::atomic<uint64_t> mBlocks{
@@ -7357,6 +8066,14 @@ Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetChainNamEqDb(
 
 extern "C"
 JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetChainNamEqBand(
+        JNIEnv*, jobject, jint chainIndex, jint band, jint type, jfloat frequencyHz, jfloat gainDb, jfloat q
+) {
+    gEngine.setChainNamEqBand(static_cast<int>(chainIndex), static_cast<int>(band), static_cast<int>(type), frequencyHz, gainDb, q);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
 Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetChainNamEqPre(
         JNIEnv*, jobject, jint chainIndex, jboolean pre
 ) {
@@ -7462,6 +8179,18 @@ Java_com_pedro_tone3000m1_NativeAudioEngine_nativeIsRunning(
     return gEngine.isRunning()
            ? JNI_TRUE
            : JNI_FALSE;
+}
+
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetPreferredAndroidUsbDevices(
+        JNIEnv*,
+        jobject,
+        jint inputDeviceId,
+        jint outputDeviceId
+) {
+    gEngine.setPreferredAndroidUsbDevices(inputDeviceId, outputDeviceId);
 }
 
 
@@ -7707,4 +8436,32 @@ Java_com_pedro_tone3000m1_NativeAudioEngine_nativeGetStats(
             env,
             gEngine.stats()
     );
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetTunerEnabled(
+        JNIEnv*, jobject, jboolean enabled) {
+    gEngine.setTunerEnabled(enabled == JNI_TRUE);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeSetOutputMuted(
+        JNIEnv*, jobject, jboolean muted) {
+    gEngine.setOutputMuted(muted == JNI_TRUE);
+}
+
+extern "C"
+JNIEXPORT jfloat JNICALL
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeGetTunerFrequencyHz(
+        JNIEnv*, jobject) {
+    return gEngine.tunerFrequencyHz();
+}
+
+extern "C"
+JNIEXPORT jfloat JNICALL
+Java_com_pedro_tone3000m1_NativeAudioEngine_nativeGetTunerInputLevel(
+        JNIEnv*, jobject) {
+    return gEngine.tunerInputLevel();
 }

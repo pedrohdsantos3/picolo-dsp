@@ -8,6 +8,7 @@ import com.pedro.tone3000m1.controller.FxChainRemovalController
 import com.pedro.tone3000m1.controller.FxParameterController
 import com.pedro.tone3000m1.controller.NamParameterController
 import com.pedro.tone3000m1.controller.PackageCaptureController
+import com.pedro.tone3000m1.domain.engine.TunerEngine
 import com.pedro.tone3000m1.ui.model.UiLocalNamCapture
 
 /** Adapts tested domain controllers to the command contract consumed by Compose. */
@@ -29,9 +30,10 @@ internal class PicoloActionsCoordinator(
     private val persistGlobalTapTempo: (Float) -> Unit,
     private val loadPresetAction: (Int) -> Unit,
     private val savePresetAction: (Int) -> Unit,
-    private val scanUsbAudioAction: () -> String,
+    private val scanUsbAudioAction: suspend () -> String,
     private val startAudioAction: () -> String,
     private val stopAudioAction: () -> String,
+    private val tunerEngine: TunerEngine,
 ) : PicoloActions {
     override fun setInputGain(db: Double) = audioParameters.setInputGain(db)
     override fun setOutputGain(db: Double) = audioParameters.setOutputGain(db)
@@ -42,9 +44,14 @@ internal class PicoloActionsCoordinator(
     override fun setEqHigh(db: Double) = audioParameters.setEqHigh(db)
     override fun setEqEnabled(enabled: Boolean) = audioParameters.setEqEnabled(enabled)
 
+    override suspend fun cycleInput(): Int = audioSession.cycleInput()
     override suspend fun cycleOutput(): Int = audioSession.cycleOutput()
     override fun startAudio(): String = startAudioAction.invoke()
     override fun stopAudio(): String = stopAudioAction.invoke()
+    override fun setTunerEnabled(enabled: Boolean) = tunerEngine.setTunerEnabled(enabled)
+    override fun setTunerMuted(muted: Boolean) = tunerEngine.setOutputMuted(muted)
+    override fun tunerFrequencyHz(): Float = tunerEngine.tunerFrequencyHz()
+    override fun tunerInputLevel(): Float = tunerEngine.tunerInputLevel()
 
     override fun addFxNative(effect: Int) = addFxNativeAction.invoke(effect)
     override fun removeFxNative(nativeIndex: Int) = removeFxNativeAction.invoke(nativeIndex)
@@ -82,10 +89,14 @@ internal class PicoloActionsCoordinator(
     override fun setNamInGain(chainIndex: Int, db: Double) = namParameters.setInGain(chainIndex, db)
     override fun setNamMix(chainIndex: Int, mix: Double) = namParameters.setMix(chainIndex, mix)
     override fun setNamEq(chainIndex: Int, band: Int, db: Double) = namParameters.setEq(chainIndex, band, db)
+    override fun setNamEqFrequency(chainIndex: Int, band: Int, frequencyHz: Float) = namParameters.setEqFrequency(chainIndex, band, frequencyHz)
+    override fun setNamEqQ(chainIndex: Int, band: Int, q: Float) = namParameters.setEqQ(chainIndex, band, q)
+    override fun setNamEqType(chainIndex: Int, band: Int, type: String) = namParameters.setEqType(chainIndex, band, type)
     override fun setNamEqPosition(chainIndex: Int, pre: Boolean) = namParameters.setEqPosition(chainIndex, pre)
     override fun setNamEqEnabled(chainIndex: Int, enabled: Boolean) = namParameters.setEqEnabled(chainIndex, enabled)
     override fun setNamNormalize(chainIndex: Int, enabled: Boolean) = namParameters.setNormalize(chainIndex, enabled)
     override fun setNamQuality(chainIndex: Int, full: Boolean) = namParameters.setQuality(chainIndex, full)
+    override fun resetNamParameters(chainIndex: Int) = namParameters.resetParameters(chainIndex)
 
     override fun moveModule(blockId: String, direction: Int) = moveModuleAction.invoke(blockId, direction)
     override fun selectPackageCaptures(blockId: String): Boolean = packageCaptureAction.selectPackageCaptures(blockId)
@@ -93,5 +104,5 @@ internal class PicoloActionsCoordinator(
         localNamAction(capture, importMode)
     override fun loadPreset(slot: Int) = loadPresetAction.invoke(slot)
     override fun savePreset(slot: Int) = savePresetAction.invoke(slot)
-    override fun scanUsbAudio(): String = scanUsbAudioAction.invoke()
+    override suspend fun scanUsbAudio(): String = scanUsbAudioAction.invoke()
 }

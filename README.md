@@ -45,6 +45,25 @@ firmware changes, USB routing, and ALSA permissions require care. Review the
 scripts and understand how to remove the module before proceeding. Validate
 stability with the actual interface, measuring xruns, latency, and artifacts.
 
+### Oboe full-duplex path
+
+When Android exposes both USB audio device IDs, the app opens the EVO4 with
+Oboe's low-latency streams, trying exclusive mode before shared mode. It opens
+output first, requests an input buffer capacity twice the output capacity, and
+uses a high-priority output callback. The callback reads capture input without
+blocking and moves samples through preallocated single-producer/single-consumer
+rings to the existing 64-frame NAM processing worker. NAM and effects remain
+outside the real-time callback. The output ring is primed with two bursts of
+silence when a session starts; actual latency still depends on stream settings,
+ring occupancy, interface, and firmware. See Oboe's
+[`FullDuplexStream`](https://github.com/google/oboe/blob/1.11.0/include/oboe/FullDuplexStream.h)
+guidance for input/output synchronization.
+
+The editor's processing monitor reports DSP budget, capture/playback XRuns,
+audio I/O errors, final output level, and digitally clipped samples. These are
+runtime diagnostics, not a substitute for listening tests with the target
+interface and signal chain.
+
 ## Build
 
 Requirements: Android Studio/SDK, the NDK and CMake configured for this project,
@@ -87,6 +106,11 @@ The app maintains an ordered chain of typed blocks. NAM and Cabinet/IR blocks
 can be moved in the chain; FXNative blocks are processed after the NAM/CAB
 stages and do not make the NAM engine stereo. Presets persist the chain and its
 corresponding controls.
+
+Selecting or replacing an offline block mutes the output while the selector is
+open and keeps it muted until the edited graph has passed the audio engine's
+readiness window. NAM graph changes are serialized with native audio commands
+so model loading and chain edits do not race the processing thread.
 
 Each NAM has In Gain, Mix, Out Gain, normalization, A2 Lite/Full, bypass, and a
 six-band parametric EQ with PRE/POST selection. The Cabinet has gain/mix
@@ -140,6 +164,15 @@ the root companion active, one observed measurement was: 128-frame blocks,
 1.126 ms average processing time, 2.123 ms maximum, a 2.667 ms budget, no
 over-budget blocks, and no capture/playback errors. The Magisk service had
 reapplied `SCHED_FIFO:2` to the audio thread.
+
+After adding the Oboe callback and the larger input-side buffer, a short test on
+a Samsung SM-S916B (Galaxy S23+) with an Audient EVO4, one NAM, 48 kHz, and
+64-frame DSP blocks showed zero capture/playback XRuns in two readings about
+eight and ten seconds apart. The DSP average was 37–50 µs against a 1.333 ms
+block budget; one block reached 4.114 ms and was counted over budget. There
+were no audio I/O errors or clipped samples, and the output peak was −7.4 dBFS.
+This brief device check is an observation, not a long-duration stability
+guarantee.
 
 ## Credits
 

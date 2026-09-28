@@ -1,8 +1,18 @@
 package com.pedro.tone3000m1
 
 import android.Manifest
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
+import android.media.AudioDeviceInfo
+import android.media.AudioDeviceCallback
+import android.media.AudioManager
 import android.provider.OpenableColumns
 import android.net.Uri
 import android.os.Bundle
@@ -22,6 +32,7 @@ import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import com.pedro.tone3000m1.domain.model.ExtraNamEntry
+import com.pedro.tone3000m1.domain.model.NamEqDefaults
 import com.pedro.tone3000m1.domain.model.FxImpulseEntry
 import com.pedro.tone3000m1.domain.model.FxNativeEntry
 import com.pedro.tone3000m1.domain.model.DualDelayTiming
@@ -86,13 +97,19 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.resume
 
 class MainActivity : AppCompatActivity() {
 
@@ -254,6 +271,26 @@ class MainActivity : AppCompatActivity() {
         Handler(
             Looper.getMainLooper()
         )
+    private val audioSetupCompleted = CompletableDeferred<Unit>()
+    private val initialModelRestoreRequested = AtomicBoolean(false)
+    @Volatile
+    private var audioSetupReady = false
+
+    @Volatile
+    private var usbAudioInterfaceConnected = false
+    @Volatile
+    private var autoStartIssuedForUsbConnection = false
+    private var audioDeviceCallbackRegistered = false
+    private val usbAudioDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+            refreshPreferredAndroidUsbAudioDevices()
+            maybeAutoStartAudioForUsbInterface()
+        }
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+            refreshPreferredAndroidUsbAudioDevices()
+        }
+    }
 
     private var pendingOAuthIntent: Intent? =
         null
@@ -344,6 +381,16 @@ class MainActivity : AppCompatActivity() {
             readEntries = ::readNamChainEntries,
             persistEntries = ::persistNamChainEntries,
             rebuildNativeChain = ::rebuildNativeNamChain,
+            readCabinetPosition = { default -> prefs.getInt(PREF_CABINET_IR_POSITION, default) },
+            persistCabinetPosition = { position -> prefs.edit().putInt(PREF_CABINET_IR_POSITION, position).apply() },
+            setCabinetPosition = audioEngine::nativeSetImpulseResponsePosition,
+            readFxEntries = ::readFxChain,
+            persistFxEntries = ::persistFxChain,
+            setFxPosition = audioEngine::nativeSetFxImpulseResponsePosition,
+            readNativeEntries = ::readFxNativeChain,
+            persistNativeEntries = ::persistFxNativeChain,
+            syncNativeChain = ::syncNativeChainPreservingAudio,
+            maxNamBlocks = MAX_NAM_BLOCKS,
         )
     }
     private val namParameterController by lazy {
@@ -360,6 +407,7 @@ class MainActivity : AppCompatActivity() {
             setNormalizeNative = audioEngine::nativeSetChainNamNormalize,
             setQualityNative = audioEngine::nativeSetChainNamQuality,
             publishStatus = { message -> runOnUiThread { status.value = message } },
+            setEqBandParamsNative = audioEngine::setBlockEqBand,
         )
     }
     private val fxParameterController by lazy {
@@ -377,7 +425,7 @@ class MainActivity : AppCompatActivity() {
             readGlobalTapTempoBpm = { prefs.getFloat(PresetPreferenceKeys.GLOBAL_TAP_TEMPO_BPM, 120f) },
             isAudioRunning = audioEngine::nativeIsRunning,
             syncNativeChain = { entries -> syncFxNativeChain(entries, reset = true) },
-            restartAudio = { audioEngine.nativeStart() },
+            restartAudio = { startNativeAudio() },
         )
     }
     private val fxNativeChainController by lazy {
@@ -386,7 +434,7 @@ class MainActivity : AppCompatActivity() {
             persistEntries = ::persistFxNativeChain,
             isAudioRunning = audioEngine::nativeIsRunning,
             syncNativeChain = { entries -> syncFxNativeChain(entries, reset = true) },
-            restartAudio = audioEngine::nativeStart,
+            restartAudio = ::startNativeAudio,
             hasOtherModules = {
                 audioEngine.nativeGetNamBlockCount() > 0 ||
                     readFxChain().isNotEmpty() ||
@@ -408,8 +456,9 @@ class MainActivity : AppCompatActivity() {
             setFxPosition = audioEngine::nativeSetFxImpulseResponsePosition,
             cabinetPathExists = { prefs.getString(PREF_CABINET_IR_PATH, null) != null },
             deleteFile = { path -> File(path).delete() },
-            restartAudio = audioEngine::nativeStart,
+            restartAudio = ::startNativeAudio,
             publishStatus = { message -> runOnUiThread { status.value = message } },
+            nativeFxCount = { readFxNativeChain().size },
         )
     }
     private val signalChainReorderController by lazy {
@@ -432,7 +481,7 @@ class MainActivity : AppCompatActivity() {
                 audioEngine.nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty() ||
                     readFxNativeChain().isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null) != null
             },
-            restartAudio = audioEngine::nativeStart,
+            restartAudio = ::startNativeAudio,
             publishStatus = { message -> runOnUiThread { status.value = message } },
             reportError = { error -> Log.e(API_TAG, "Chain reorder failed", error) },
             readNativeEntries = ::readFxNativeChain,
@@ -454,6 +503,10 @@ class MainActivity : AppCompatActivity() {
             readFxEntries = ::readFxChain,
             persistFxEntries = ::persistFxChain,
             setFxPosition = audioEngine::nativeSetFxImpulseResponsePosition,
+            readNativeEntries = ::readFxNativeChain,
+            persistNativeEntries = ::persistFxNativeChain,
+            syncNativeChain = ::syncNativeChainPreservingAudio,
+            maxNamBlocks = MAX_NAM_BLOCKS,
         )
     }
     private val cabinetParameterController by lazy {
@@ -507,8 +560,11 @@ class MainActivity : AppCompatActivity() {
                     }
                     .apply()
             },
-            hasOtherModules = { audioEngine.nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty() },
-            restartAudio = audioEngine::nativeStart,
+            hasOtherModules = {
+                audioEngine.nativeGetNamBlockCount() > 0 || readFxChain().isNotEmpty() ||
+                    readFxNativeChain().isNotEmpty()
+            },
+            restartAudio = ::startNativeAudio,
             publishStatus = { message -> runOnUiThread { status.value = message } },
         )
     }
@@ -556,7 +612,7 @@ class MainActivity : AppCompatActivity() {
     private val audioSessionController by lazy {
         AudioSessionController(
             prepareBeforeStart = { syncFxNativeChain(readFxNativeChain(), reset = true) },
-            startNative = audioEngine::nativeStart,
+            startNative = ::startNativeAudio,
             stopNative = audioEngine::nativeStop,
             cycleInputRoute = audioRoutingUseCase::cycleInput,
             cycleOutputRoute = audioRoutingUseCase::cycleOutput,
@@ -658,6 +714,7 @@ class MainActivity : AppCompatActivity() {
             persistEntries = ::persistNamChainEntries,
             rebuildChain = ::rebuildNativeNamChain,
             maxEntries = MAX_NAM_BLOCKS,
+            onInserted = ::shiftModulesAfterNamInsertion,
         )
     }
     private val prepareImpulseResponseUseCase get() = appContainer.prepareImpulseResponseUseCase
@@ -687,7 +744,7 @@ class MainActivity : AppCompatActivity() {
                 ) {
                     lifecycleScope.launch {
                         prefs.awaitLoaded()
-                        restoreLastModel()
+                        restoreSavedModelAfterAudioSetup()
                     }
                 }
 
@@ -701,14 +758,16 @@ class MainActivity : AppCompatActivity() {
     private val openIrFile =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) return@registerForActivityResult
-            Thread {
+            lifecycleScope.launch(Dispatchers.IO) {
+                val destination = File(filesDir, "cabinet-${System.currentTimeMillis()}.wav")
+                var loaded = false
                 try {
-                    val destination = File(filesDir, "cabinet-${System.currentTimeMillis()}.wav")
                     contentResolver.openInputStream(uri).use { input ->
                         requireNotNull(input) { "Unable to open selected IR" }
                         FileOutputStream(destination).use { output -> input.copyTo(output) }
                     }
                     val result = audioEngine.nativeLoadImpulseResponse(destination.absolutePath)
+                    loaded = result.startsWith("IR LOADED")
                     if (result.startsWith("IR LOADED")) {
                         val position = if (prefs.contains(PREF_CABINET_IR_POSITION)) {
                             prefs.getInt(PREF_CABINET_IR_POSITION, audioEngine.nativeGetNamBlockCount())
@@ -716,27 +775,93 @@ class MainActivity : AppCompatActivity() {
                             audioEngine.nativeGetNamBlockCount()
                         }.coerceIn(0, audioEngine.nativeGetNamBlockCount())
                         audioEngine.nativeSetImpulseResponsePosition(position)
+                        audioEngine.nativeSetImpulseResponseBypass(false)
+                        audioEngine.nativeSetImpulseResponseInGainDb(0f)
+                        audioEngine.nativeSetImpulseResponseOutGainDb(0f)
+                        audioEngine.nativeSetImpulseResponseMix(1f)
+                        audioEngine.nativeSetImpulseResponseEqPre(false)
+                        audioEngine.nativeSetImpulseResponseEqEnabled(true)
+                        for (band in 0 until 6) audioEngine.nativeSetImpulseResponseEqDb(band, 0f)
                         prefs.edit()
                             .putString(PREF_CABINET_IR_PATH, destination.absolutePath)
                             .putString(PREF_CABINET_IR_TITLE, destination.nameWithoutExtension)
                             .remove(PREF_CABINET_IR_TONE_ID)
                             .putString(PREF_CABINET_IR_TYPE, "IR")
+                            .putBoolean(PREF_CABINET_IR_BYPASS, false)
+                            .putFloat(PREF_CABINET_IR_IN_GAIN, 0f)
+                            .putFloat(PREF_CABINET_IR_OUT_GAIN, 0f)
+                            .putFloat(PREF_CABINET_IR_MIX, 1f)
                             .putInt(PREF_CABINET_IR_POSITION, position)
+                            .putBoolean(PREF_CABINET_IR_EQ_PRE, false)
+                            .putBoolean(PREF_CABINET_IR_EQ_ENABLED, true)
+                            .apply {
+                                for (band in 0 until 6) putFloat(PREF_CABINET_IR_EQ_PREFIX + band, 0f)
+                            }
                             .apply()
+                        prefs.awaitPendingWrites()
+                    } else {
+                        destination.delete()
                     }
-                    runOnUiThread { status.value = result }
+                    withContext(Dispatchers.Main.immediate) {
+                        status.value = result
+                        publishComposeState()
+                    }
                 } catch (e: Exception) {
-                    runOnUiThread { status.value = "IR LOAD FAILED\n${e.message}" }
+                    if (!loaded) destination.delete()
+                    withContext(Dispatchers.Main.immediate) {
+                        status.value = "IR LOAD FAILED\n${e.message}"
+                        publishComposeState()
+                    }
                 }
-            }.start()
+            }
         }
 
     private var pendingLocalNamImportMode: String = "add"
+    @Volatile
+    private var offlineBlockSelectionPending = false
+    @Volatile
+    private var offlineBlockSelectionGeneration = 0L
+
+    private fun beginOfflineBlockSelection(@Suppress("UNUSED_PARAMETER") wasRunning: Boolean) {
+        if (offlineBlockSelectionPending) return
+        offlineBlockSelectionPending = true
+        offlineBlockSelectionGeneration += 1
+        // Keep the audio stream and DSP thread alive while the selector is open.
+        // The native setter is an atomic output gate and is safe to call here.
+        audioEngine.setOutputMuted(true)
+    }
+
+    private fun finishOfflineBlockSelection(@Suppress("UNUSED_PARAMETER") resumeIfNeeded: Boolean) {
+        if (!offlineBlockSelectionPending) return
+        offlineBlockSelectionPending = false
+        val generation = offlineBlockSelectionGeneration
+        // Restart the native readiness window after the selected graph edit.
+        // The output gate will stay closed until processing settles again.
+        audioEngine.setOutputMuted(true)
+        audioGraphCommands.execute {
+            if (generation == offlineBlockSelectionGeneration && !offlineBlockSelectionPending) {
+                audioEngine.setOutputMuted(false)
+            }
+        }
+    }
+
+    private fun <T> runAudioGraphCommandAndWait(command: () -> T): T {
+        try {
+            return audioGraphCommands.submit<T> { command() }.get()
+        } catch (error: ExecutionException) {
+            throw error.cause ?: error
+        }
+    }
+
     private val openNamFile =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri == null) return@registerForActivityResult
+            if (uri == null) {
+                finishOfflineBlockSelection(resumeIfNeeded = true)
+                return@registerForActivityResult
+            }
             val importMode = pendingLocalNamImportMode
             lifecycleScope.launch(Dispatchers.IO) {
+                var handedToLoader = false
                 try {
                     val displayName = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                         val nameColumn = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -765,12 +890,17 @@ class MainActivity : AppCompatActivity() {
                         moduleType = item.moduleType,
                         modelId = item.modelId,
                     )
-                    withContext(Dispatchers.Main) { loadLocalNam(capture, importMode.substringBeforeLast(':')) }
+                    withContext(Dispatchers.Main) {
+                        handedToLoader = loadLocalNam(capture, importMode.substringBeforeLast(':'))
+                    }
                 } catch (error: Exception) {
                     Log.e(API_TAG, "Could not import local NAM", error)
                     runOnUiThread { status.value = "NAM IMPORT FAILED\n\n${error.message ?: error}" }
                 } finally {
-                    withContext(Dispatchers.Main) { publishComposeState() }
+                    withContext(Dispatchers.Main) {
+                        if (!handedToLoader) finishOfflineBlockSelection(resumeIfNeeded = true)
+                        publishComposeState()
+                    }
                 }
             }
         }
@@ -796,15 +926,6 @@ class MainActivity : AppCompatActivity() {
 
         createUi()
 
-        lifecycleScope.launch {
-            prefs.awaitLoaded()
-            applyRequestedAudioDefaultsOnce()
-            restoreGainSettings()
-            restoreRoutingSettings()
-            restoreDspSettings()
-            audioGraphCommands.execute { syncFxNativeChain(readFxNativeChain(), reset = true) }
-        }
-
         val launchedFromOAuth =
             isOAuthCallback(
                 intent?.data
@@ -813,6 +934,28 @@ class MainActivity : AppCompatActivity() {
         if (launchedFromOAuth) {
             pendingOAuthIntent =
                 intent
+        }
+
+        lifecycleScope.launch {
+            try {
+                prefs.awaitLoaded()
+                applyRequestedAudioDefaultsOnce()
+                restoreGainSettings()
+                restoreRoutingSettings()
+                restoreDspSettings()
+                withContext(Dispatchers.IO) {
+                    audioGraphCommands.submit {
+                        syncFxNativeChain(readFxNativeChain(), reset = true)
+                    }.get()
+                }
+                audioSetupReady = true
+                audioSetupCompleted.complete(Unit)
+                maybeAutoStartAudioForUsbInterface()
+            } catch (error: Exception) {
+                Log.e(API_TAG, "Audio setup failed before model restore", error)
+                audioSetupCompleted.completeExceptionally(error)
+                status.value = "AUDIO SETUP FAILED\n\n${error.message ?: error}"
+            }
         }
 
         if (
@@ -826,7 +969,7 @@ class MainActivity : AppCompatActivity() {
             if (!launchedFromOAuth) {
                 lifecycleScope.launch {
                     prefs.awaitLoaded()
-                    restoreLastModel()
+                    restoreSavedModelAfterAudioSetup()
                 }
             }
 
@@ -878,7 +1021,25 @@ class MainActivity : AppCompatActivity() {
 
         super.onResume()
 
+        if (!audioDeviceCallbackRegistered) {
+            getSystemService(AudioManager::class.java)
+                .registerAudioDeviceCallback(usbAudioDeviceCallback, mainHandler)
+            audioDeviceCallbackRegistered = true
+        }
+        refreshPreferredAndroidUsbAudioDevices()
+        maybeAutoStartAudioForUsbInterface()
+        publishComposeState()
+
         processPendingOAuthIntent()
+    }
+
+    override fun onPause() {
+        if (audioDeviceCallbackRegistered) {
+            getSystemService(AudioManager::class.java)
+                .unregisterAudioDeviceCallback(usbAudioDeviceCallback)
+            audioDeviceCallbackRegistered = false
+        }
+        super.onPause()
     }
 
     private fun processPendingOAuthIntent() {
@@ -963,7 +1124,7 @@ class MainActivity : AppCompatActivity() {
             },
             loadPresetAction = { slot -> if (slot in 1..PRESET_COUNT) runOnUiThread { loadPreset(slot) } },
             savePresetAction = { slot -> if (slot in 1..PRESET_COUNT) runOnUiThread { savePreset(slot) } },
-            scanUsbAudioAction = audioEngine::nativeScanUsbAudio,
+            scanUsbAudioAction = ::probeUsbAudioHost,
             startAudioAction = {
                 audioGraphCommands.execute { audioSessionController.startAudio() }
                 "STARTING"
@@ -972,6 +1133,7 @@ class MainActivity : AppCompatActivity() {
                 audioGraphCommands.execute { audioSessionController.stopAudio() }
                 "STOPPING"
             },
+            tunerEngine = audioEngine,
         )
         val publishingActions = StatePublishingPicoloActions(composeActions, ::publishComposeState)
         composeView = ComposeView(this).apply {
@@ -982,6 +1144,8 @@ class MainActivity : AppCompatActivity() {
                 PicoloComposeApp(
                     actions = publishingActions,
                     viewModel = composeViewModel,
+                    onOfflineSelectionStarted = ::beginOfflineBlockSelection,
+                    onOfflineSelectionFinished = ::finishOfflineBlockSelection,
                     onBrowse = { mode ->
                         if (mode.startsWith("pick-local-nam:")) {
                             pendingLocalNamImportMode = mode.removePrefix("pick-local-nam:")
@@ -1013,6 +1177,136 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Runs the no-root USB host probe on a UsbManager-authorized device handle. */
+    private suspend fun probeUsbAudioHost(): String {
+        val usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
+        val audioDevice = usbManager.deviceList.values.firstOrNull { device ->
+            (0 until device.interfaceCount).any { index ->
+                device.getInterface(index).interfaceClass == UsbConstants.USB_CLASS_AUDIO
+            }
+        }
+        val alsaReport = withContext(Dispatchers.IO) { audioEngine.nativeScanUsbAudio() }
+        if (audioDevice == null) {
+            return "Android USB host did not list a connected USB Audio interface.\n\n" +
+                "TinyALSA /proc scan:\n$alsaReport"
+        }
+
+        if (!usbManager.hasPermission(audioDevice) && !requestUsbHostPermission(usbManager, audioDevice)) {
+            return "USB access was not granted for ${usbDeviceLabel(audioDevice)}.\n\n" +
+                "TinyALSA /proc scan:\n$alsaReport"
+        }
+
+        val connection = usbManager.openDevice(audioDevice)
+            ?: return "Android granted USB access but could not open ${usbDeviceLabel(audioDevice)}.\n\n" +
+                "TinyALSA /proc scan:\n$alsaReport"
+        return try {
+            val directReport = withContext(Dispatchers.IO) {
+                audioEngine.nativeProbeUsbAudio(connection.fileDescriptor)
+            }
+            "USB host device: ${usbDeviceLabel(audioDevice)}\n\n" +
+                "Direct libusb probe:\n$directReport\n" +
+                "TinyALSA /proc scan:\n$alsaReport"
+        } finally {
+            connection.close()
+        }
+    }
+
+    /** Selects Android's public USB audio route for the native fallback backend. */
+    private fun refreshPreferredAndroidUsbAudioDevices() {
+        val audioManager = getSystemService(AudioManager::class.java)
+        fun isUsbAudio(device: AudioDeviceInfo): Boolean =
+            device.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                device.type == AudioDeviceInfo.TYPE_USB_DEVICE
+
+        fun selectUsbAudio(flag: Int): AudioDeviceInfo? {
+            val devices = audioManager.getDevices(flag).filter(::isUsbAudio)
+            return devices.firstOrNull {
+                it.productName.toString().contains("EVO4", ignoreCase = true)
+            } ?: devices.firstOrNull()
+        }
+
+        val input = selectUsbAudio(AudioManager.GET_DEVICES_INPUTS)
+        val output = selectUsbAudio(AudioManager.GET_DEVICES_OUTPUTS)
+        audioEngine.setPreferredAndroidUsbDevices(input?.id ?: -1, output?.id ?: -1)
+        val connected = input != null && output != null
+        if (connected != usbAudioInterfaceConnected) {
+            usbAudioInterfaceConnected = connected
+            if (!connected) autoStartIssuedForUsbConnection = false
+        }
+        Log.i(API_TAG, "USB audio routes: input=${input?.productName ?: "none"}, output=${output?.productName ?: "none"}")
+    }
+
+    private fun maybeAutoStartAudioForUsbInterface() {
+        if (!audioSetupReady || !usbAudioInterfaceConnected || autoStartIssuedForUsbConnection || offlineBlockSelectionPending) return
+        if (pendingOAuthIntent != null || audioEngine.nativeGetNamBlockCount() <= 0) return
+        if (audioEngine.isRunning()) {
+            autoStartIssuedForUsbConnection = true
+            return
+        }
+        autoStartIssuedForUsbConnection = true
+        audioGraphCommands.execute {
+            if (!audioEngine.isRunning()) {
+                audioSessionController.startAudio()
+                if (!audioEngine.isRunning()) autoStartIssuedForUsbConnection = false
+            }
+        }
+    }
+
+    private fun startNativeAudio(): String {
+        refreshPreferredAndroidUsbAudioDevices()
+        return audioEngine.nativeStart()
+    }
+
+    private suspend fun requestUsbHostPermission(
+        usbManager: UsbManager,
+        device: UsbDevice,
+    ): Boolean = suspendCancellableCoroutine { continuation ->
+        val permissionAction = "$packageName.USB_HOST_PERMISSION"
+        val receiverRegistered = AtomicBoolean(false)
+        val receiverFinished = AtomicBoolean(false)
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                if (intent.action != permissionAction || !receiverFinished.compareAndSet(false, true)) {
+                    return
+                }
+                if (receiverRegistered.compareAndSet(true, false)) {
+                    unregisterReceiver(this)
+                }
+                if (continuation.isActive) {
+                    continuation.resume(intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false))
+                }
+            }
+        }
+
+        ContextCompat.registerReceiver(
+            this,
+            receiver,
+            IntentFilter(permissionAction),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        receiverRegistered.set(true)
+        continuation.invokeOnCancellation {
+            receiverFinished.set(true)
+            if (receiverRegistered.compareAndSet(true, false)) {
+                unregisterReceiver(receiver)
+            }
+        }
+
+        val permissionIntent = PendingIntent.getBroadcast(
+            this,
+            device.deviceId,
+            Intent(permissionAction).setPackage(packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+        )
+        usbManager.requestPermission(device, permissionIntent)
+    }
+
+    private fun usbDeviceLabel(device: UsbDevice): String =
+        "${device.productName ?: "USB Audio"} (VID=%04X PID=%04X)".format(
+            device.vendorId,
+            device.productId,
+        )
+
     private fun loadOnlineCapture(
         toneId: String,
         toneTitle: String,
@@ -1026,6 +1320,8 @@ class MainActivity : AppCompatActivity() {
             try {
                 onlineCaptureImportController.loadSelected(toneId, toneTitle, imageUrl, model, token, moduleType)
             } finally {
+                runCatching { prefs.awaitPendingWrites() }
+                    .onFailure { error -> Log.e(API_TAG, "Could not finish saving selected capture before UI refresh", error) }
                 clearLoadingMessage()
             }
         }
@@ -1057,8 +1353,6 @@ class MainActivity : AppCompatActivity() {
                 val staging = File(cacheDir, "local-nam-selection-${System.currentTimeMillis()}.nam")
                 source.copyTo(staging, overwrite = true)
                 pendingFile = staging
-                audioEngine.nativeStop()
-                saveSelectedModuleType(capture.moduleType)
                 val model = OnlineModel(
                     id = capture.modelId,
                     name = capture.modelName,
@@ -1067,22 +1361,28 @@ class MainActivity : AppCompatActivity() {
                 )
                 val replacementIndex = importMode.removePrefix("replace:").toIntOrNull()
 
+                saveSelectedModuleType(capture.moduleType)
                 when {
                     importMode == "add" -> {
-                        check(audioEngine.nativeGetNamBlockCount() < MAX_NAM_BLOCKS) { "NAM chain full" }
-                        val added = addExtraNamCaptureUseCase.execute(
-                            pendingFile = staging,
-                            toneId = capture.toneId,
-                            toneTitle = capture.toneTitle,
-                            imageUrl = capture.imageUrl,
-                            model = model,
-                            moduleType = capture.moduleType,
-                        )
+                        val added = runAudioGraphCommandAndWait {
+                            audioEngine.nativeStop()
+                            check(audioEngine.nativeGetNamBlockCount() < MAX_NAM_BLOCKS) { "NAM chain full" }
+                            addExtraNamCaptureUseCase.execute(
+                                pendingFile = staging,
+                                toneId = capture.toneId,
+                                toneTitle = capture.toneTitle,
+                                imageUrl = capture.imageUrl,
+                                model = model,
+                                moduleType = capture.moduleType,
+                            )
+                        }
                         appContainer.localNamLibraryRepository.save(
                             File(added.entry.path), capture.modelName, capture.moduleType,
                             capture.toneTitle, capture.toneId, capture.imageUrl, capture.modelId,
                         )
-                        val placementWarning = namImportPlacementController.placeImportedNam(added.entry.path)
+                        val placementWarning = runAudioGraphCommandAndWait {
+                            namImportPlacementController.placeImportedNam(added.entry.path)
+                        }
                         pendingFile = null
                         runOnUiThread {
                             status.value = "NAM ADDED FROM LIBRARY\n\n${capture.modelName}\n${added.audioResult}" +
@@ -1091,22 +1391,27 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     replacementIndex != null -> {
-                        val replaced = replaceNamCaptureUseCase.execute(
-                            currentEntries = readNamChainEntries(),
-                            replacementIndex = replacementIndex,
-                            pendingFile = staging,
-                            toneId = capture.toneId,
-                            toneTitle = capture.toneTitle,
-                            imageUrl = capture.imageUrl,
-                            model = model,
-                            moduleType = capture.moduleType,
-                        )
+                        val currentEntries = readNamChainEntries()
+                        val replaced = runAudioGraphCommandAndWait {
+                            audioEngine.nativeStop()
+                            replaceNamCaptureUseCase.execute(
+                                currentEntries = currentEntries,
+                                replacementIndex = replacementIndex,
+                                pendingFile = staging,
+                                toneId = capture.toneId,
+                                toneTitle = capture.toneTitle,
+                                imageUrl = capture.imageUrl,
+                                model = model,
+                                moduleType = capture.moduleType,
+                            )
+                        }
                         appContainer.localNamLibraryRepository.save(
                             File(replaced.replacement.path), capture.modelName, capture.moduleType,
                             capture.toneTitle, capture.toneId, capture.imageUrl, capture.modelId,
                         )
                         pendingFile = null
                         persistNamChainEntries(replaced.entries)
+                        prefs.awaitPendingWrites()
                         deleteNamFileIfUnreferenced(replaced.previousPath)
                         runOnUiThread {
                             status.value = "NAM BLOCK ${replacementIndex + 1} REPLACED FROM LIBRARY\n\n" +
@@ -1115,6 +1420,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     else -> {
+                        runAudioGraphCommandAndWait { audioEngine.nativeStop() }
                         val loaded = loadPrimaryToneCaptureUseCase.execute(
                             toneId = capture.toneId,
                             toneTitle = capture.toneTitle,
@@ -1141,6 +1447,9 @@ class MainActivity : AppCompatActivity() {
                     status.value = "LOCAL NAM LOAD FAILED\n\n${error.message ?: error}"
                 }
             } finally {
+                runOnUiThread { finishOfflineBlockSelection(resumeIfNeeded = true) }
+                runCatching { prefs.awaitPendingWrites() }
+                    .onFailure { error -> Log.e(API_TAG, "Could not finish saving local NAM before UI refresh", error) }
                 clearLoadingMessage()
             }
         }
@@ -1181,21 +1490,24 @@ class MainActivity : AppCompatActivity() {
                     // A missing preference means a fresh active block, never
                     // the stale value left in the Activity from a previous chain.
                     bypass = prefs.getBoolean(PREF_NAM_BYPASS, false),
-                    gainDb = prefs.getFloat(PREF_NAM_GAIN_DB, -15.0f),
+                    gainDb = prefs.getFloat(PREF_NAM_GAIN_DB, 0.0f),
                     inGainDb = prefs.getFloat(PREF_NAM_IN_GAIN_DB, 0.0f),
                     mix = prefs.getFloat(PREF_NAM_MIX, 1.0f),
                     eqLowDb = prefs.getFloat(PREF_NAM_EQ_LOW_DB, 0.0f),
                     eqMidDb = prefs.getFloat(PREF_NAM_EQ_MID_DB, 0.0f),
-                    eqHighDb = prefs.getFloat(PREF_NAM_EQ_HIGH_DB, 0.0f)
-                    ,eqBand3Db = prefs.getFloat(PREF_NAM_EQ_BAND3_DB, 0.0f)
-                    ,eqBand4Db = prefs.getFloat(PREF_NAM_EQ_BAND4_DB, 0.0f)
-                    ,eqBand5Db = prefs.getFloat(PREF_NAM_EQ_BAND5_DB, 0.0f)
-                    ,eqPre = prefs.getBoolean(PREF_NAM_EQ_PRE, false)
-                    ,eqEnabled = prefs.getBoolean(PREF_NAM_EQ_ENABLED, true)
-                    ,normalize = prefs.getBoolean(PREF_NAM_NORMALIZE, true)
-                    ,a2Full = prefs.getBoolean(PREF_NAM_A2_FULL, false)
-                    ,imageUrl = prefs.getString(PREF_LAST_TONE_IMAGE, "") ?: ""
-                    ,moduleType = prefs.getString(PREF_LAST_MODEL_TYPE, "AMP") ?: "AMP"
+                    eqHighDb = prefs.getFloat(PREF_NAM_EQ_HIGH_DB, 0.0f),
+                    eqBand3Db = prefs.getFloat(PREF_NAM_EQ_BAND3_DB, 0.0f),
+                    eqBand4Db = prefs.getFloat(PREF_NAM_EQ_BAND4_DB, 0.0f),
+                    eqBand5Db = prefs.getFloat(PREF_NAM_EQ_BAND5_DB, 0.0f),
+                    eqFrequenciesHz = List(6) { band -> prefs.getFloat(PresetPreferenceKeys.NAM_EQ_FREQUENCY_PREFIX + band, NamEqDefaults.frequenciesHz[band]) },
+                    eqQValues = List(6) { band -> prefs.getFloat(PresetPreferenceKeys.NAM_EQ_Q_PREFIX + band, NamEqDefaults.qValues[band]) },
+                    eqTypes = List(6) { band -> prefs.getString(PresetPreferenceKeys.NAM_EQ_TYPE_PREFIX + band, NamEqDefaults.types[band]) ?: NamEqDefaults.types[band] },
+                    eqPre = prefs.getBoolean(PREF_NAM_EQ_PRE, false),
+                    eqEnabled = prefs.getBoolean(PREF_NAM_EQ_ENABLED, true),
+                    normalize = prefs.getBoolean(PREF_NAM_NORMALIZE, true),
+                    a2Full = prefs.getBoolean(PREF_NAM_A2_FULL, false),
+                    imageUrl = prefs.getString(PREF_LAST_TONE_IMAGE, "") ?: "",
+                    moduleType = prefs.getString(PREF_LAST_MODEL_TYPE, "AMP") ?: "AMP",
                 )
             )
         }
@@ -1207,6 +1519,44 @@ class MainActivity : AppCompatActivity() {
     private fun readFxChain(): MutableList<FxImpulseEntry> = fxChainRepository.readImpulseChain()
 
     private fun persistFxChain(entries: List<FxImpulseEntry>) = fxChainRepository.persistImpulseChain(entries)
+
+    /** Keep positional effects attached to their signal-chain boundary when a local NAM is appended. */
+    private fun shiftModulesAfterNamInsertion(insertionIndex: Int, oldNamCount: Int) {
+        if (prefs.getString(PREF_CABINET_IR_PATH, null)?.let { File(it).isFile } == true) {
+            val current = prefs.getInt(PREF_CABINET_IR_POSITION, oldNamCount).coerceIn(0, oldNamCount)
+            if (insertionIndex <= current) {
+                val next = (current + 1).coerceAtMost(MAX_NAM_BLOCKS)
+                prefs.edit().putInt(PREF_CABINET_IR_POSITION, next).apply()
+                audioEngine.nativeSetImpulseResponsePosition(next)
+            }
+        }
+
+        val fxEntries = readFxChain()
+        var fxChanged = false
+        val shiftedFx = fxEntries.map { entry ->
+            val next = (if (insertionIndex <= entry.position) entry.position + 1 else entry.position)
+                .coerceIn(0, oldNamCount + 1)
+            if (next != entry.position) fxChanged = true
+            entry.copy(position = next)
+        }
+        if (fxChanged) {
+            persistFxChain(shiftedFx)
+            shiftedFx.forEachIndexed { slot, entry -> audioEngine.nativeSetFxImpulseResponsePosition(slot, entry.position) }
+        }
+
+        val nativeEntries = readFxNativeChain()
+        var nativeChanged = false
+        val shiftedNative = nativeEntries.map { entry ->
+            // MAX_NAM_BLOCKS + 1 remains the post-chain sentinel.
+            val next = if (entry.position in insertionIndex..oldNamCount) entry.position + 1 else entry.position
+            if (next != entry.position) nativeChanged = true
+            entry.copy(position = next)
+        }
+        if (nativeChanged) {
+            persistFxNativeChain(shiftedNative)
+            syncNativeChainPreservingAudio(shiftedNative)
+        }
+    }
 
     private fun readFxNativeChain(): MutableList<FxNativeEntry> = fxChainRepository.readNativeChain()
 
@@ -1239,6 +1589,12 @@ class MainActivity : AppCompatActivity() {
             audioEngine.nativeSetFxNativeParameter(slot, 2, parameter3)
             audioEngine.nativeSetFxNativePosition(slot, item.position)
         }
+    }
+
+    private fun syncNativeChainPreservingAudio(entries: List<FxNativeEntry>) {
+        val wasRunning = audioEngine.nativeIsRunning()
+        syncFxNativeChain(entries, reset = true)
+        if (wasRunning) startNativeAudio()
     }
 
 
@@ -1328,6 +1684,13 @@ class MainActivity : AppCompatActivity() {
                 .putBoolean(PREF_NAM_EQ_ENABLED, entry.eqEnabled)
                 .putBoolean(PREF_NAM_NORMALIZE, entry.normalize)
                 .putBoolean(PREF_NAM_A2_FULL, entry.a2Full)
+                .apply {
+                    repeat(6) { band ->
+                        putFloat(PresetPreferenceKeys.NAM_EQ_FREQUENCY_PREFIX + band, entry.eqFrequenciesHz.getOrElse(band) { NamEqDefaults.frequenciesHz[band] })
+                        putFloat(PresetPreferenceKeys.NAM_EQ_Q_PREFIX + band, entry.eqQValues.getOrElse(band) { NamEqDefaults.qValues[band] })
+                        putString(PresetPreferenceKeys.NAM_EQ_TYPE_PREFIX + band, entry.eqTypes.getOrElse(band) { NamEqDefaults.types[band] })
+                    }
+                }
                 .apply()
             return
         }
@@ -1350,12 +1713,13 @@ class MainActivity : AppCompatActivity() {
             audioEngine.nativeSetChainNamGainDb(index, entry.gainDb)
             audioEngine.nativeSetChainNamInGainDb(index, entry.inGainDb)
             audioEngine.nativeSetChainNamMix(index, entry.mix)
-            audioEngine.nativeSetChainNamEqDb(index, 0, entry.eqLowDb)
-            audioEngine.nativeSetChainNamEqDb(index, 1, entry.eqMidDb)
-            audioEngine.nativeSetChainNamEqDb(index, 2, entry.eqHighDb)
-            audioEngine.nativeSetChainNamEqDb(index, 3, entry.eqBand3Db)
-            audioEngine.nativeSetChainNamEqDb(index, 4, entry.eqBand4Db)
-            audioEngine.nativeSetChainNamEqDb(index, 5, entry.eqBand5Db)
+            val gains = listOf(entry.eqLowDb, entry.eqMidDb, entry.eqHighDb, entry.eqBand3Db, entry.eqBand4Db, entry.eqBand5Db)
+            repeat(6) { band ->
+                audioEngine.setBlockEqBand(index, band,
+                    entry.eqTypes.getOrElse(band) { NamEqDefaults.types[band] },
+                    entry.eqFrequenciesHz.getOrElse(band) { NamEqDefaults.frequenciesHz[band] },
+                    gains[band], entry.eqQValues.getOrElse(band) { NamEqDefaults.qValues[band] })
+            }
             audioEngine.nativeSetChainNamEqPre(index, entry.eqPre)
             audioEngine.nativeSetChainNamEqEnabled(index, entry.eqEnabled)
             audioEngine.nativeSetChainNamNormalize(index, entry.normalize && entry.moduleType != "PEDAL")
@@ -1379,7 +1743,8 @@ class MainActivity : AppCompatActivity() {
             prefs.awaitPendingWrites()
 
             runOnUiThread {
-                val otherModulesRemain = readFxChain().isNotEmpty() || prefs.getString(PREF_CABINET_IR_PATH, null)?.let { File(it).exists() } == true
+                val otherModulesRemain = readFxChain().isNotEmpty() || readFxNativeChain().isNotEmpty() ||
+                    prefs.getString(PREF_CABINET_IR_PATH, null)?.let { File(it).exists() } == true
                 status.value = if (removal.remainingBlockCount == 0 && !otherModulesRemain) {
                     "NAM CHAIN EMPTY\n\nUse ADD NAM to insert a block."
                 } else {
@@ -1800,7 +2165,7 @@ class MainActivity : AppCompatActivity() {
 
                     status.value = "PRESET $slot READY\n\n$result\n$restoredChain\n\nSTARTING"
                     audioGraphCommands.execute {
-                        val audioResult = audioEngine.nativeStart()
+                        val audioResult = startNativeAudio()
                         runOnUiThread { status.value = "PRESET $slot READY\n\n$result\n$restoredChain\n\n$audioResult" }
                     }
                 }
@@ -1886,6 +2251,18 @@ class MainActivity : AppCompatActivity() {
     // SAVED MODEL
     // ========================================================
 
+    private suspend fun restoreSavedModelAfterAudioSetup() {
+        try {
+            audioSetupCompleted.await()
+        } catch (error: Exception) {
+            Log.e(API_TAG, "Saved model restore skipped because audio setup failed", error)
+            return
+        }
+        if (initialModelRestoreRequested.compareAndSet(false, true)) {
+            restoreLastModel()
+        }
+    }
+
     private fun restoreLastModel() {
 
         val path =
@@ -1906,7 +2283,7 @@ class MainActivity : AppCompatActivity() {
                         status.value = restored + "\n" + audio
                     }
                     if (shouldStart) audioGraphCommands.execute {
-                        val startResult = audioEngine.nativeStart()
+                        val startResult = startNativeAudio()
                         runOnUiThread { status.value = "$restored\n$startResult" }
                     }
                 }.start()
@@ -2035,6 +2412,7 @@ class MainActivity : AppCompatActivity() {
                     audioEngine.nativeSetBypass(
                         false
                     )
+                    maybeAutoStartAudioForUsbInterface()
 
 
                 } else {
@@ -2103,7 +2481,7 @@ class MainActivity : AppCompatActivity() {
          * but the currently persisted/current DSP remains available until
          * a new capture has been downloaded and loaded successfully.
          */
-        audioEngine.nativeStop()
+        audioGraphCommands.execute { audioEngine.nativeStop() }
 
 
 
@@ -2809,9 +3187,6 @@ class MainActivity : AppCompatActivity() {
                     .toIntOrNull()
 
 
-                audioEngine.nativeStop()
-
-
                 val downloaded =
                     downloadToneModelUseCase.execute(
                         model =
@@ -2836,18 +3211,21 @@ class MainActivity : AppCompatActivity() {
                     )
 
 
-                    val added = addExtraNamCaptureUseCase.execute(
-                        pendingFile = downloaded,
-                        toneId = toneId,
-                        toneTitle = toneTitle,
-                        imageUrl = imageUrl,
-                        model = model,
-                        moduleType = moduleType,
-                    )
+                    val (added, placementWarning) = runAudioGraphCommandAndWait {
+                        audioEngine.nativeStop()
+                        val added = addExtraNamCaptureUseCase.execute(
+                            pendingFile = downloaded,
+                            toneId = toneId,
+                            toneTitle = toneTitle,
+                            imageUrl = imageUrl,
+                            model = model,
+                            moduleType = moduleType,
+                        )
+                        added to namImportPlacementController.placeImportedNam(added.entry.path)
+                    }
                     appContainer.localNamLibraryRepository.save(
                         File(added.entry.path), model.name, moduleType, toneTitle, toneId, imageUrl, model.id,
                     )
-                    val placementWarning = namImportPlacementController.placeImportedNam(added.entry.path)
                     pendingFile = null
 
 
@@ -2884,22 +3262,27 @@ class MainActivity : AppCompatActivity() {
                 if (replacementIndex != null && replacementIndex >= 0) {
                     stage("REPLACING NAM BLOCK ${replacementIndex + 1}...\n${model.name}")
 
-                    val replaced = replaceNamCaptureUseCase.execute(
-                        currentEntries = readNamChainEntries(),
-                        replacementIndex = replacementIndex,
-                        pendingFile = downloaded,
-                        toneId = toneId,
-                        toneTitle = toneTitle,
-                        imageUrl = imageUrl,
-                        model = model,
-                        moduleType = moduleType,
-                    )
+                    val currentEntries = readNamChainEntries()
+                    val replaced = runAudioGraphCommandAndWait {
+                        audioEngine.nativeStop()
+                        replaceNamCaptureUseCase.execute(
+                            currentEntries = currentEntries,
+                            replacementIndex = replacementIndex,
+                            pendingFile = downloaded,
+                            toneId = toneId,
+                            toneTitle = toneTitle,
+                            imageUrl = imageUrl,
+                            model = model,
+                            moduleType = moduleType,
+                        )
+                    }
                     appContainer.localNamLibraryRepository.save(
                         File(replaced.replacement.path), model.name, moduleType, toneTitle, toneId, imageUrl, model.id,
                     )
                     pendingFile = null
 
                     persistNamChainEntries(replaced.entries)
+                    prefs.awaitPendingWrites()
                     if (replaced.previousPath != replaced.replacement.path) {
                         File(replaced.previousPath).delete()
                     }
@@ -2919,13 +3302,18 @@ class MainActivity : AppCompatActivity() {
 
 
                 stage("LOADING CAPTURE...\n${model.name}")
-                val loadedCapture = loadPrimaryToneCaptureUseCase.execute(
-                    toneId = toneId,
-                    toneTitle = toneTitle,
-                    model = model,
-                    moduleType = moduleType,
-                    downloadedFile = downloaded,
-                )
+                val loadedCapture = runAudioGraphCommandAndWait {
+                    audioEngine.nativeStop()
+                    runBlocking {
+                        loadPrimaryToneCaptureUseCase.execute(
+                            toneId = toneId,
+                            toneTitle = toneTitle,
+                            model = model,
+                            moduleType = moduleType,
+                            downloadedFile = downloaded,
+                        )
+                    }
+                }
                 appContainer.localNamLibraryRepository.save(
                     loadedCapture.file, model.name, moduleType, toneTitle, toneId, imageUrl, model.id,
                 )

@@ -12,6 +12,7 @@ import com.pedro.tone3000m1.domain.model.FxImpulseEntry
 import com.pedro.tone3000m1.domain.model.FxNativeEntry
 import com.pedro.tone3000m1.domain.model.PresetData
 import com.pedro.tone3000m1.domain.model.LocalNamLibraryItem
+import com.pedro.tone3000m1.domain.model.NamEqDefaults
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.flow.first
@@ -53,7 +54,7 @@ internal class PicoloUiStateFactory(
                         moduleType = primaryType,
                         index = 0,
                         bypass = bypass,
-                        gainDb = preferences.getFloat(PresetPreferenceKeys.NAM_GAIN_DB, -15f),
+                        gainDb = preferences.getFloat(PresetPreferenceKeys.NAM_GAIN_DB, 0f),
                         inGainDb = preferences.getFloat(PresetPreferenceKeys.NAM_IN_GAIN_DB, 0f),
                         mix = preferences.getFloat(PresetPreferenceKeys.NAM_MIX, 1f),
                         eqEnabled = preferences.getBoolean(PresetPreferenceKeys.NAM_EQ_ENABLED, true),
@@ -61,6 +62,9 @@ internal class PicoloUiStateFactory(
                         normalize = preferences.getBoolean(PresetPreferenceKeys.NAM_NORMALIZE, true),
                         a2Full = preferences.getBoolean(PresetPreferenceKeys.NAM_A2_FULL, false),
                         eqBands = namEqBands(preferences),
+                        eqFrequenciesHz = List(6) { band -> preferences.getFloat(PresetPreferenceKeys.NAM_EQ_FREQUENCY_PREFIX + band, NamEqDefaults.frequenciesHz[band]) },
+                        eqQValues = List(6) { band -> preferences.getFloat(PresetPreferenceKeys.NAM_EQ_Q_PREFIX + band, NamEqDefaults.qValues[band]) },
+                        eqTypes = List(6) { band -> preferences.getString(PresetPreferenceKeys.NAM_EQ_TYPE_PREFIX + band, NamEqDefaults.types[band]) ?: NamEqDefaults.types[band] },
                     ),
                 )
             }
@@ -238,6 +242,9 @@ internal class PicoloUiStateFactory(
         normalize = normalize,
         a2Full = a2Full,
         eqBands = listOf(eqLowDb, eqMidDb, eqHighDb, eqBand3Db, eqBand4Db, eqBand5Db),
+        eqFrequenciesHz = eqFrequenciesHz,
+        eqQValues = eqQValues,
+        eqTypes = eqTypes,
     )
 
     private fun FxImpulseEntry.toUiModule(index: Int) = UiModule(

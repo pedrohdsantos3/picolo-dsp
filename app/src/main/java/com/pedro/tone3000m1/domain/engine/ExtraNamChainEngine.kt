@@ -8,6 +8,7 @@ internal interface ExtraNamChainEngine {
     fun setMix(index: Int, mix: Float)
     fun setGain(index: Int, db: Float)
     fun setEqDb(index: Int, band: Int, db: Float)
+    fun setEqBand(index: Int, band: Int, type: String, frequencyHz: Float, gainDb: Float, q: Float)
     fun setEqPre(index: Int, pre: Boolean)
     fun setNormalize(index: Int, normalize: Boolean)
     fun setEqEnabled(index: Int, enabled: Boolean)

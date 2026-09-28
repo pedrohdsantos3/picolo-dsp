@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.pedro.tone3000m1.domain.model.OnlineModel
+import com.pedro.tone3000m1.domain.model.NamEqDefaults
 import com.pedro.tone3000m1.domain.repository.ActiveToneRepository
 import com.pedro.tone3000m1.domain.repository.CurrentToneRepository
 import java.io.File
@@ -26,7 +27,7 @@ internal class CurrentToneRepositoryImpl(
             values[stringPreferencesKey(PresetPreferenceKeys.LAST_MODEL_TYPE)] = moduleType
             values[stringPreferencesKey(PresetPreferenceKeys.LAST_TONE_ID)] = toneId
             values[stringPreferencesKey(PresetPreferenceKeys.LAST_TONE_TITLE)] = toneTitle
-            values[floatPreferencesKey(PresetPreferenceKeys.NAM_GAIN_DB)] = if (moduleType == "PEDAL") -10f else -15f
+            values[floatPreferencesKey(PresetPreferenceKeys.NAM_GAIN_DB)] = 0f
             values[floatPreferencesKey(PresetPreferenceKeys.NAM_IN_GAIN_DB)] = 0f
             values[floatPreferencesKey(PresetPreferenceKeys.NAM_MIX)] = 1f
             values[floatPreferencesKey(PresetPreferenceKeys.NAM_EQ_LOW_DB)] = 0f
@@ -35,6 +36,11 @@ internal class CurrentToneRepositoryImpl(
             values[floatPreferencesKey(PresetPreferenceKeys.NAM_EQ_BAND3_DB)] = 0f
             values[floatPreferencesKey(PresetPreferenceKeys.NAM_EQ_BAND4_DB)] = 0f
             values[floatPreferencesKey(PresetPreferenceKeys.NAM_EQ_BAND5_DB)] = 0f
+            repeat(6) { band ->
+                values[floatPreferencesKey(PresetPreferenceKeys.NAM_EQ_FREQUENCY_PREFIX + band)] = NamEqDefaults.frequenciesHz[band]
+                values[floatPreferencesKey(PresetPreferenceKeys.NAM_EQ_Q_PREFIX + band)] = NamEqDefaults.qValues[band]
+                values[stringPreferencesKey(PresetPreferenceKeys.NAM_EQ_TYPE_PREFIX + band)] = NamEqDefaults.types[band]
+            }
             values[booleanPreferencesKey(PresetPreferenceKeys.NAM_EQ_PRE)] = false
             values[booleanPreferencesKey(PresetPreferenceKeys.NAM_EQ_ENABLED)] = true
             values[booleanPreferencesKey(PresetPreferenceKeys.NAM_NORMALIZE)] = moduleType != "PEDAL"

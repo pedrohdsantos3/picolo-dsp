@@ -8,23 +8,29 @@ import com.pedro.tone3000m1.domain.engine.FxImpulseEngine
 import com.pedro.tone3000m1.domain.engine.PresetAudioEngine
 import com.pedro.tone3000m1.domain.engine.PrimaryToneCaptureEngine
 import com.pedro.tone3000m1.domain.engine.ToneModelEngine
+import com.pedro.tone3000m1.domain.engine.TunerEngine
+import com.pedro.tone3000m1.domain.model.NamEqBandType
+import com.pedro.tone3000m1.domain.model.NamEqDefaults
 
 /** JNI boundary for the native audio engine. Keep blocking work off the audio callback. */
-internal class NativeAudioEngine : AudioRoutingEngine, PresetAudioEngine, ToneModelEngine, PrimaryToneCaptureEngine, FxImpulseEngine, CabinetImpulseEngine, ExtraNamChainEngine, NamChainRebuildEngine {
+internal class NativeAudioEngine : AudioRoutingEngine, PresetAudioEngine, ToneModelEngine, PrimaryToneCaptureEngine, FxImpulseEngine, CabinetImpulseEngine, ExtraNamChainEngine, NamChainRebuildEngine, TunerEngine {
     external fun nativeLoadModel(path: String): String
 
     override fun loadModel(path: String): String = nativeLoadModel(path)
 
     override fun applyModuleDefaults(moduleType: String) {
-        if (moduleType == "PEDAL") {
-            nativeSetChainNamGainDb(0, -10.0f)
-            nativeSetChainNamInGainDb(0, 0.0f)
-            nativeSetChainNamMix(0, 1.0f)
-            for (band in 0 until 6) nativeSetChainNamEqDb(0, band, 0.0f)
-            nativeSetChainNamEqPre(0, false)
-            nativeSetChainNamEqEnabled(0, true)
-            nativeSetChainNamNormalize(0, false)
+        nativeSetChainNamGainDb(0, 0f)
+        nativeSetChainNamInGainDb(0, 0f)
+        nativeSetChainNamMix(0, 1f)
+        for (band in 0 until 6) {
+            nativeSetChainNamEqBand(
+                0, band, nativeEqType(NamEqDefaults.types[band], band), NamEqDefaults.frequenciesHz[band], 0f,
+                NamEqDefaults.qValues[band],
+            )
         }
+        nativeSetChainNamEqPre(0, false)
+        nativeSetChainNamEqEnabled(0, true)
+        nativeSetChainNamNormalize(0, moduleType != "PEDAL")
         nativeSetChainNamQuality(0, moduleType == "AMP")
     }
 
@@ -50,6 +56,8 @@ internal class NativeAudioEngine : AudioRoutingEngine, PresetAudioEngine, ToneMo
     override fun setMix(index: Int, mix: Float) = nativeSetChainNamMix(index, mix)
     override fun setGain(index: Int, db: Float) = nativeSetChainNamGainDb(index, db)
     override fun setEqDb(index: Int, band: Int, db: Float) = nativeSetChainNamEqDb(index, band, db)
+    override fun setEqBand(index: Int, band: Int, type: String, frequencyHz: Float, gainDb: Float, q: Float) =
+        nativeSetChainNamEqBand(index, band, nativeEqType(type, band), frequencyHz, gainDb, q)
     override fun setEqPre(index: Int, pre: Boolean) = nativeSetChainNamEqPre(index, pre)
     override fun setNormalize(index: Int, normalize: Boolean) = nativeSetChainNamNormalize(index, normalize)
     override fun setEqEnabled(index: Int, enabled: Boolean) = nativeSetChainNamEqEnabled(index, enabled)
@@ -63,6 +71,8 @@ internal class NativeAudioEngine : AudioRoutingEngine, PresetAudioEngine, ToneMo
     override fun setBlockInGain(index: Int, db: Float) = nativeSetChainNamInGainDb(index, db)
     override fun setBlockMix(index: Int, mix: Float) = nativeSetChainNamMix(index, mix)
     override fun setBlockEqDb(index: Int, band: Int, db: Float) = nativeSetChainNamEqDb(index, band, db)
+    override fun setBlockEqBand(index: Int, band: Int, type: String, frequencyHz: Float, gainDb: Float, q: Float) =
+        nativeSetChainNamEqBand(index, band, nativeEqType(type, band), frequencyHz, gainDb, q)
     override fun setBlockEqPre(index: Int, pre: Boolean) = nativeSetChainNamEqPre(index, pre)
     override fun setBlockEqEnabled(index: Int, enabled: Boolean) = nativeSetChainNamEqEnabled(index, enabled)
     override fun setBlockNormalize(index: Int, enabled: Boolean) = nativeSetChainNamNormalize(index, enabled)
@@ -116,6 +126,9 @@ internal class NativeAudioEngine : AudioRoutingEngine, PresetAudioEngine, ToneMo
         eqHighDb: Float,
     ): String
     external fun nativeStart(): String
+    fun setPreferredAndroidUsbDevices(inputDeviceId: Int, outputDeviceId: Int) =
+        nativeSetPreferredAndroidUsbDevices(inputDeviceId, outputDeviceId)
+    private external fun nativeSetPreferredAndroidUsbDevices(inputDeviceId: Int, outputDeviceId: Int)
     external fun nativeIsRunning(): Boolean
     external fun nativeStop()
     external fun nativeSetBypass(bypass: Boolean)
@@ -134,8 +147,28 @@ internal class NativeAudioEngine : AudioRoutingEngine, PresetAudioEngine, ToneMo
     external fun nativeCycleOutputPair(): Int
     external fun nativeGetRoutingInfo(): String
     external fun nativeScanUsbAudio(): String
+    external fun nativeProbeUsbAudio(fileDescriptor: Int): String
     external fun nativeGetAudioDeviceInfo(): String
     external fun nativeGetStats(): String
+    private external fun nativeSetTunerEnabled(enabled: Boolean)
+    private external fun nativeSetOutputMuted(muted: Boolean)
+    private external fun nativeGetTunerFrequencyHz(): Float
+    private external fun nativeGetTunerInputLevel(): Float
+    private external fun nativeSetChainNamEqBand(index: Int, band: Int, type: Int, frequencyHz: Float, gainDb: Float, q: Float)
+
+    override fun setTunerEnabled(enabled: Boolean) = nativeSetTunerEnabled(enabled)
+    override fun setOutputMuted(muted: Boolean) = nativeSetOutputMuted(muted)
+    override fun tunerFrequencyHz(): Float = nativeGetTunerFrequencyHz()
+    override fun tunerInputLevel(): Float = nativeGetTunerInputLevel()
+
+    private fun nativeEqType(type: String, band: Int): Int = when (NamEqBandType.coerce(band, type)) {
+        NamEqBandType.LOW_CUT -> 0
+        NamEqBandType.LOW_SHELF -> 1
+        NamEqBandType.BELL -> 2
+        NamEqBandType.HIGH_SHELF -> 3
+        NamEqBandType.HIGH_CUT -> 4
+        else -> 2
+    }
 
     override fun cycleInputChannel(): Int = nativeCycleInputChannel()
 

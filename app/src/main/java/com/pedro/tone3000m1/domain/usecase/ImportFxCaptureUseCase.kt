@@ -33,7 +33,8 @@ internal class ImportFxCaptureUseCase(
             "FX chain full (maximum $MAX_FX_EFFECTS)"
         }
         val slot = targetIndex ?: entries.size
-        val replacedPath = targetIndex?.let { entries[it].path }
+        val previousEntry = targetIndex?.let(entries::get)
+        val replacedPath = previousEntry?.path
         var downloaded: File? = null
         var normalized: File? = null
         var chainPersisted = false
@@ -52,7 +53,8 @@ internal class ImportFxCaptureUseCase(
                 path = normalized.absolutePath,
                 bypass = false,
                 mix = 0.5f,
-                position = engine.namBlockCount(),
+                position = previousEntry?.position?.coerceIn(0, engine.namBlockCount())
+                    ?: engine.namBlockCount(),
             )
             if (targetIndex == null) entries.add(entry) else entries[targetIndex] = entry
             effects.persistImpulseChain(entries)

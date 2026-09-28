@@ -30,6 +30,7 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags += "-std=c++20"
+                arguments("-DANDROID_STL=c++_shared")
             }
         }
     }
@@ -63,10 +64,12 @@ android {
     buildFeatures {
         viewBinding = true
         compose = true
+        prefab = true
     }
 }
 
 dependencies {
+    implementation("com.google.oboe:oboe:1.11.0")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)

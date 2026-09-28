@@ -83,6 +83,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.painterResource
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -90,6 +91,9 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlin.math.abs
+import kotlin.math.ln
+import kotlin.math.pow
 
 private val PicoloBackground = Color(0xFF090D10)
 private val PicoloSurface = Color(0xFF11171C)
@@ -108,7 +112,8 @@ private enum class PicoloPage(val title: String, val icon: Int) {
     PRESETS("Presets", R.drawable.ic_picolo_presets),
     EDITOR("Editor", R.drawable.ic_picolo_editor),
     FOOTSWITCH("Footswitch", R.drawable.ic_picolo_footswitch),
-    SETTINGS("Settings", R.drawable.ic_picolo_settings)
+    SETTINGS("Settings", R.drawable.ic_picolo_settings),
+    TUNER("Tuner", R.drawable.ic_picolo_editor)
 }
 
 internal class PicoloComposeViewModel : ViewModel() {
@@ -144,21 +149,25 @@ internal class PicoloComposeViewModel : ViewModel() {
 
         mutableState.update {
             screenState.copy(
-                inputDbFs = stats.metricDbFs("capturePeak"),
-                outputDbFs = stats.metricDbFs("postEqPeak"),
+                inputDbFs = stats.metricDbFs("inputMeter"),
+                outputDbFs = stats.metricDbFs("finalOutputPeak"),
                 processingPercent = livePercent ?: if (!it.running) null else it.processingPercent,
                 processingAvgUs = liveAverageUs ?: if (!it.running) null else it.processingAvgUs,
                 processingMaxUs = (stats.metricFloat("maxProcess") ?: 0f),
                 processingBudgetUs = budgetUs ?: 0f,
                 overBudgetCount = stats.metricLong("overBudget") ?: 0L,
                 audioIoErrors = (stats.metricLong("captureErrors") ?: 0L) + (stats.metricLong("playbackErrors") ?: 0L),
+                captureXRuns = stats.metricLong("captureXRuns") ?: -1L,
+                playbackXRuns = stats.metricLong("playbackXRuns") ?: -1L,
+                finalOutputPeakDbFs = stats.metricDbFs("finalOutputPeak"),
+                digitalClipSamples = stats.metricLong("digitalClipSamples") ?: 0L,
             )
         }
     }
 }
 
 private fun String.metricLong(name: String): Long? =
-    Regex("(?m)^${Regex.escape(name)}=([0-9]+)$").find(this)?.groupValues?.getOrNull(1)?.toLongOrNull()
+    Regex("(?m)^${Regex.escape(name)}=(-?[0-9]+)$").find(this)?.groupValues?.getOrNull(1)?.toLongOrNull()
 
 private fun String.metricFloat(name: String): Float? =
     Regex("(?m)^${Regex.escape(name)}=([0-9]+(?:\\.[0-9]+)?)").find(this)?.groupValues?.getOrNull(1)?.toFloatOrNull()
@@ -172,13 +181,23 @@ internal fun PicoloComposeApp(
     actions: PicoloActions,
     viewModel: PicoloComposeViewModel,
     onBrowse: (String) -> Unit,
+    onOfflineSelectionStarted: (wasRunning: Boolean) -> Unit,
+    onOfflineSelectionFinished: (resumeIfNeeded: Boolean) -> Unit,
 ) {
     var page by remember { mutableStateOf(PicoloPage.EDITOR) }
     var selectedModuleId by remember { mutableStateOf<String?>(null) }
     var localLibraryMode by remember { mutableStateOf<String?>(null) }
     var localLibraryCategory by remember { mutableStateOf("AMP") }
+    var offlineSelectionOpen by remember { mutableStateOf(false) }
+    var tunerReferenceHz by remember { mutableStateOf(440) }
+    var tunerMuted by remember { mutableStateOf(true) }
     val state by viewModel.state.collectAsStateWithLifecycle()
     BackHandler(enabled = state.loadingMessage != null) { }
+    BackHandler(enabled = page == PicoloPage.TUNER) {
+        actions.setTunerEnabled(false)
+        actions.setTunerMuted(false)
+        page = PicoloPage.EDITOR
+    }
     MaterialTheme(colorScheme = darkColorScheme(
         primary = PicoloOrange, onPrimary = PicoloBackground,
         secondary = PicoloTeal, onSecondary = PicoloBackground,
@@ -187,12 +206,28 @@ internal fun PicoloComposeApp(
         surfaceVariant = PicoloSurfaceRaised, onSurfaceVariant = PicoloSecondary,
     )) {
         Box(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize().background(PicoloBackground).statusBarsPadding()) {
+            if (page == PicoloPage.TUNER) {
+                TunerPage(
+                    state = state,
+                    actions = actions,
+                    referenceHz = tunerReferenceHz,
+                    onReferenceHz = { tunerReferenceHz = it },
+                    muted = tunerMuted,
+                    onMuted = { tunerMuted = it; actions.setTunerMuted(it) },
+                    onClose = {
+                        actions.setTunerEnabled(false)
+                        actions.setTunerMuted(false)
+                        page = PicoloPage.EDITOR
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else Column(Modifier.fillMaxSize().background(PicoloBackground).statusBarsPadding()) {
                 TopBar(
                     state, actions,
                     onOpenPresets = { page = PicoloPage.PRESETS },
                     onOpenFootswitch = { page = PicoloPage.FOOTSWITCH },
                     onOpenSettings = { page = PicoloPage.SETTINGS },
+                    onOpenTuner = { tunerMuted = true; page = PicoloPage.TUNER },
                 )
                 when (page) {
                     PicoloPage.EDITOR -> EditorPage(
@@ -202,6 +237,8 @@ internal fun PicoloComposeApp(
                             if (mode == "add-cabinet") {
                                 onBrowse(mode)
                             } else {
+                                offlineSelectionOpen = true
+                                onOfflineSelectionStarted(state.running)
                                 localLibraryMode = mode
                                 localLibraryCategory = if (state.selectedModuleType == "PEDAL") "PEDAL" else "AMP"
                             }
@@ -209,14 +246,17 @@ internal fun PicoloComposeApp(
                         selectedModuleId,
                         { selectedModuleId = it },
                         { page = PicoloPage.PRESETS },
+                        onOfflineSelectionStarted = { onOfflineSelectionStarted(state.running) },
+                        onOfflineSelectionFinished = { onOfflineSelectionFinished(true) },
                         Modifier.weight(1f),
                     )
                     PicoloPage.PRESETS -> PresetsPage(state, actions, Modifier.weight(1f))
                     PicoloPage.FOOTSWITCH -> FootswitchPage(state, Modifier.weight(1f))
                     PicoloPage.SETTINGS -> SettingsPage(state, actions, Modifier.weight(1f))
+                    PicoloPage.TUNER -> Unit
                 }
                 Row(Modifier.fillMaxWidth().navigationBarsPadding().height(64.dp).background(PicoloSurface), verticalAlignment = Alignment.CenterVertically) {
-                    PicoloPage.entries.forEach { destination ->
+                    PicoloPage.entries.filter { it != PicoloPage.TUNER }.forEach { destination ->
                         val selected = page == destination
                         Column(
                             Modifier.weight(1f).height(64.dp).clickable { page = destination }.padding(top = 6.dp),
@@ -246,13 +286,23 @@ internal fun PicoloComposeApp(
                     },
                     onBrowseWeb = {
                         localLibraryMode = null
+                        if (offlineSelectionOpen) {
+                            offlineSelectionOpen = false
+                            onOfflineSelectionFinished(true)
+                        }
                         onBrowse(mode)
                     },
                     onImportFromDevice = {
                         localLibraryMode = null
                         onBrowse("pick-local-nam:$mode:$localLibraryCategory")
                     },
-                    onDismiss = { localLibraryMode = null },
+                    onDismiss = {
+                        localLibraryMode = null
+                        if (offlineSelectionOpen) {
+                            offlineSelectionOpen = false
+                            onOfflineSelectionFinished(true)
+                        }
+                    },
                 )
             }
             state.loadingMessage?.let { LoadingOverlay(it) }
@@ -492,6 +542,7 @@ private fun TopBar(
     onOpenPresets: () -> Unit,
     onOpenFootswitch: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenTuner: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     var lastGlobalTapAt by remember { mutableStateOf(0L) }
@@ -532,10 +583,131 @@ private fun TopBar(
                     )
                     DropdownMenuItem(text = { Text("Presets") }, onClick = { menuExpanded = false; onOpenPresets() })
                     DropdownMenuItem(text = { Text("Footswitch") }, onClick = { menuExpanded = false; onOpenFootswitch() })
+                    DropdownMenuItem(text = { Text("Afinador") }, onClick = { menuExpanded = false; onOpenTuner() })
                     DropdownMenuItem(text = { Text("Settings") }, onClick = { menuExpanded = false; onOpenSettings() })
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun TunerPage(
+    state: PicoloUiState,
+    actions: PicoloActions,
+    referenceHz: Int,
+    onReferenceHz: (Int) -> Unit,
+    muted: Boolean,
+    onMuted: (Boolean) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var frequencyHz by remember { mutableStateOf(0f) }
+    var inputLevel by remember { mutableStateOf(0f) }
+    LaunchedEffect(Unit) {
+        actions.setTunerEnabled(true)
+        actions.setTunerMuted(muted)
+        try {
+            while (true) {
+                frequencyHz = actions.tunerFrequencyHz()
+                inputLevel = actions.tunerInputLevel()
+                delay(45)
+            }
+        } finally {
+            actions.setTunerEnabled(false)
+            actions.setTunerMuted(false)
+        }
+    }
+
+    val hasPitch = frequencyHz in 25f..1400f
+    val midiNote = if (hasPitch) (69 + 12 * (ln(frequencyHz / referenceHz) / ln(2f))).roundToInt() else 69
+    val noteNames = listOf("C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B")
+    val noteName = if (hasPitch) "${noteNames[Math.floorMod(midiNote, 12)]}${midiNote / 12 - 1}" else "—"
+    val targetHz = referenceHz * 2.0.pow((midiNote - 69) / 12.0)
+    val cents = if (hasPitch) (1200.0 * (ln(frequencyHz / targetHz) / ln(2.0))).toFloat() else 0f
+    val inTune = hasPitch && abs(cents) < 5f
+    val tuningColor = if (!hasPitch) PicoloSecondary else if (inTune) PicoloTeal else PicoloOrange
+
+    Column(
+        modifier.fillMaxSize().background(PicoloBackground).statusBarsPadding().navigationBarsPadding()
+            .padding(horizontal = 24.dp, vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onClose) { Text("‹", color = PicoloText, fontSize = 34.sp) }
+            Text("AFINADOR", color = PicoloText, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            Text(if (state.running) "ENTRADA ATIVA" else "ÁUDIO PARADO", color = if (state.running) PicoloTeal else PicoloSecondary, fontSize = 10.sp)
+        }
+
+        Spacer(Modifier.weight(0.55f))
+        Text(noteName, color = tuningColor, fontSize = 88.sp, fontWeight = FontWeight.Light)
+        Text(
+            if (hasPitch) "${if (cents > 0) "+" else ""}${cents.roundToInt()} cents" else if (state.running) "Toque uma corda" else "Inicie o áudio para afinar",
+            color = tuningColor,
+            fontSize = 18.sp,
+        )
+        if (hasPitch) Text("${"%.1f".format(Locale.US, frequencyHz)} Hz  ·  alvo ${"%.2f".format(Locale.US, targetHz)} Hz", color = PicoloSecondary, fontSize = 13.sp)
+
+        Canvas(Modifier.fillMaxWidth().height(112.dp).padding(top = 14.dp)) {
+            val centerX = size.width / 2f
+            val centerY = size.height - 15.dp.toPx()
+            val radius = size.width * .40f
+            for (tick in -5..5) {
+                val x = centerX + radius * (tick / 5f)
+                val major = tick % 5 == 0
+                drawLine(
+                    color = if (tick == 0) PicoloTeal else PicoloSecondary.copy(alpha = .65f),
+                    start = Offset(x, centerY - if (major) 28.dp.toPx() else 16.dp.toPx()),
+                    end = Offset(x, centerY),
+                    strokeWidth = if (major) 2.dp.toPx() else 1.dp.toPx(),
+                )
+            }
+            val needleX = centerX + radius * (cents.coerceIn(-50f, 50f) / 50f)
+            drawLine(tuningColor, Offset(needleX, centerY - 44.dp.toPx()), Offset(needleX, centerY + 3.dp.toPx()), strokeWidth = 3.dp.toPx())
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("♭", color = PicoloSecondary, fontSize = 16.sp)
+            Text("AFINADO", color = PicoloTeal, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("♯", color = PicoloSecondary, fontSize = 16.sp)
+        }
+
+        Spacer(Modifier.weight(0.65f))
+        Row(
+            Modifier.fillMaxWidth().background(PicoloSurface, RoundedCornerShape(18.dp)).padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("REFERÊNCIA", color = PicoloSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { onReferenceHz((referenceHz - 1).coerceAtLeast(428)) }, enabled = referenceHz > 428) { Text("−", color = PicoloText, fontSize = 24.sp) }
+                Text("${referenceHz} Hz", color = PicoloText, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                IconButton(onClick = { onReferenceHz((referenceHz + 1).coerceAtMost(447)) }, enabled = referenceHz < 447) { Text("+", color = PicoloText, fontSize = 24.sp) }
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(top = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column {
+                Text(if (muted) "ÁUDIO MUDO" else "ÁUDIO ATIVO", color = PicoloText, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text("A entrada continua sendo analisada", color = PicoloSecondary, fontSize = 11.sp)
+            }
+            Switch(checked = muted, onCheckedChange = onMuted)
+        }
+        LinearProgressIndicator(
+            progress = { (inputLevel * 12f).coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            color = PicoloTeal,
+            trackColor = PicoloSurfaceRaised,
+        )
+        if (!state.running) {
+            Button(onClick = { actions.startAudio() }, modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) {
+                Text("Iniciar áudio", color = PicoloBackground)
+            }
+        }
+        Spacer(Modifier.weight(0.35f))
     }
 }
 
@@ -567,6 +739,8 @@ private fun EditorPage(
     selectedModuleId: String?,
     onSelectModule: (String) -> Unit,
     onOpenPresets: () -> Unit,
+    onOfflineSelectionStarted: () -> Unit,
+    onOfflineSelectionFinished: () -> Unit,
     modifier: Modifier,
 ) {
     val selected = state.modules.firstOrNull { it.id == selectedModuleId } ?: state.modules.firstOrNull()
@@ -578,10 +752,10 @@ private fun EditorPage(
     ) {
         item { PresetSelector(state, actions, onOpenPresets) }
         item { ProcessingMonitor(state) }
-        item { SignalChain(state, selectedChainId, onSelectModule, onBrowse, actions) }
+        item { SignalChain(state, selectedChainId, onSelectModule, onBrowse, actions, onOfflineSelectionStarted, onOfflineSelectionFinished) }
         if (selectedModuleId == "input") item { InputOutputCard(isInput = true, state = state, actions = actions) }
         else if (selectedModuleId == "output") item { InputOutputCard(isInput = false, state = state, actions = actions) }
-        else if (selected != null) item { ModuleCard(selected, actions, state, onBrowse) }
+        else if (selected != null) item { ModuleCard(selected, actions, state, onBrowse, onOfflineSelectionStarted, onOfflineSelectionFinished) }
         else item { EmptyChainCard(onBrowse) }
         item { GlobalControls(state, actions) }
         item { Text(state.status, color = PicoloSecondary, fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp)) }
@@ -625,6 +799,13 @@ private fun ProcessingMonitor(state: PicoloUiState) {
                 Text("Over budget: ${state.overBudgetCount}", color = if (state.overBudgetCount > 0) PicoloYellow else PicoloSecondary, fontSize = 10.sp)
                 Text("Audio I/O errors: ${state.audioIoErrors}", color = if (state.audioIoErrors > 0) Color(0xFFFF4D4D) else PicoloSecondary, fontSize = 10.sp)
             }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                val captureXRuns = state.captureXRuns.takeIf { it >= 0 }?.toString() ?: "—"
+                val playbackXRuns = state.playbackXRuns.takeIf { it >= 0 }?.toString() ?: "—"
+                Text("XRuns in/out: $captureXRuns / $playbackXRuns", color = if (state.captureXRuns > 0 || state.playbackXRuns > 0) Color(0xFFFF4D4D) else PicoloSecondary, fontSize = 10.sp)
+                val outputPeak = state.finalOutputPeakDbFs?.let { String.format(Locale.US, "%.1f", it) } ?: "—"
+                Text("Out $outputPeak dBFS · clips ${state.digitalClipSamples}", color = if (state.digitalClipSamples > 0) Color(0xFFFF4D4D) else PicoloSecondary, fontSize = 10.sp)
+            }
         }
     }
 }
@@ -660,6 +841,8 @@ private fun SignalChain(
     onSelect: (String) -> Unit,
     onBrowse: (String) -> Unit,
     actions: PicoloActions,
+    onOfflineSelectionStarted: () -> Unit,
+    onOfflineSelectionFinished: () -> Unit,
 ) {
     var draggingBlockId by remember { mutableStateOf<String?>(null) }
     var dragOffsetX by remember { mutableStateOf(0f) }
@@ -739,7 +922,7 @@ private fun SignalChain(
                     ChainTile("+", PicoloTeal, false, null, onClick = { addSheetExpanded = true })
                     if (addSheetExpanded) {
                         AddModuleSheet(
-                            onDismiss = { addSheetExpanded = false },
+                            onDismiss = { addSheetExpanded = false; onOfflineSelectionFinished() },
                             onBrowseNam = {
                                 addSheetExpanded = false
                                 onBrowse("add")
@@ -751,7 +934,10 @@ private fun SignalChain(
                             onAddFxNative = { effectIndex ->
                                 addSheetExpanded = false
                                 actions.addFxNative(effectIndex)
+                                onOfflineSelectionFinished()
                             },
+                            onOfflineSelectionStarted = onOfflineSelectionStarted,
+                            onOfflineSelectionFinished = onOfflineSelectionFinished,
                         )
                     }
                 }
@@ -768,8 +954,11 @@ private fun AddModuleSheet(
     onBrowseNam: () -> Unit,
     onBrowseCabinet: () -> Unit,
     onAddFxNative: (Int) -> Unit,
+    onOfflineSelectionStarted: () -> Unit,
+    onOfflineSelectionFinished: () -> Unit,
 ) {
     var fxCategory by remember { mutableStateOf<String?>(null) }
+    var offlineFxSelectionActive by remember { mutableStateOf(false) }
     val fxNames = listOf(
         "ChowMatrix Delay",
         "BYOD BBD Delay",
@@ -818,7 +1007,13 @@ private fun AddModuleSheet(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (fxCategory != null) {
                             IconButton(onClick = {
-                                fxCategory = if (fxCategory == "CHOOSE") null else "CHOOSE"
+                                fxCategory = if (fxCategory == "CHOOSE") {
+                                    if (offlineFxSelectionActive) {
+                                        offlineFxSelectionActive = false
+                                        onOfflineSelectionFinished()
+                                    }
+                                    null
+                                } else "CHOOSE"
                             }) {
                                 Text("‹", color = PicoloSecondary, fontSize = 30.sp)
                             }
@@ -874,7 +1069,13 @@ private fun AddModuleSheet(
                                 icon = null,
                                 accent = PicoloYellow,
                                 iconBackground = Color(0xFF29231A),
-                                onClick = { fxCategory = "CHOOSE" },
+                                onClick = {
+                                    if (!offlineFxSelectionActive) {
+                                        offlineFxSelectionActive = true
+                                        onOfflineSelectionStarted()
+                                    }
+                                    fxCategory = "CHOOSE"
+                                },
                             )
                         }
                         "CHOOSE" -> {
@@ -1104,9 +1305,18 @@ private fun EmptyChainCard(onBrowse: (String) -> Unit) {
 }
 
 @Composable
-private fun ModuleCard(module: UiModule, actions: PicoloActions, state: PicoloUiState, onBrowse: (String) -> Unit) {
+private fun ModuleCard(
+    module: UiModule,
+    actions: PicoloActions,
+    state: PicoloUiState,
+    onBrowse: (String) -> Unit,
+    onOfflineSelectionStarted: () -> Unit,
+    onOfflineSelectionFinished: () -> Unit,
+) {
     var expanded by remember(module.id) { mutableStateOf(false) }
     var menuExpanded by remember(module.id) { mutableStateOf(false) }
+    var selectedEqBand by remember(module.id) { mutableStateOf(0) }
+    var eqTypeMenuExpanded by remember(module.id) { mutableStateOf(false) }
     val color = moduleAccent(module, state)
     Card(
         colors = CardDefaults.cardColors(containerColor = when {
@@ -1170,9 +1380,7 @@ private fun ModuleCard(module: UiModule, actions: PicoloActions, state: PicoloUi
                                 menuExpanded = false
                                 actions.moveModule(module.id, 1)
                             })
-                            if (module.moduleType != "PEDAL") {
-                                DropdownMenuItem(text = { Text("Advanced parameters") }, onClick = { menuExpanded = false; expanded = !expanded })
-                            }
+                            DropdownMenuItem(text = { Text("Advanced parameters") }, onClick = { menuExpanded = false; expanded = !expanded })
                             if (module.type != "FX_NATIVE") DropdownMenuItem(text = { Text("Replace") }, onClick = {
                                 menuExpanded = false
                                 onBrowse(if (module.type == "FX") "replace-fx:${module.index}" else "replace:${module.index}")
@@ -1203,16 +1411,32 @@ private fun ModuleCard(module: UiModule, actions: PicoloActions, state: PicoloUi
             } else if (module.type == "FX_NATIVE") {
                 val effects = listOf("ChowMatrix Delay", "BYOD BBD Delay", "BYOD Smooth Reverb", "BYOD Shimmer Reverb", "Spring Reverb", "Ping-Pong Delay", "Plate Reverb", "Airwindows kPlate140", "MVerb Reverb", "Airwindows Tape Delay 2", "Dual Delay", "Chorus")
                 var effectMenuExpanded by remember(module.id) { mutableStateOf(false) }
+                var offlineEffectSelectionOpen by remember(module.id) { mutableStateOf(false) }
                 androidx.compose.foundation.layout.Box {
                     val routingLabel = if (module.nativePosition <= 4) {
                         "MONO · IN NAM / CAB CHAIN"
                     } else {
                         "STEREO · POST NAM / CAB"
                     }
-                    ModelSelector(effects.getOrElse(module.nativeEffect) { effects.first() }, routingLabel, color) { effectMenuExpanded = true }
-                    DropdownMenu(expanded = effectMenuExpanded, onDismissRequest = { effectMenuExpanded = false }) {
+                    ModelSelector(effects.getOrElse(module.nativeEffect) { effects.first() }, routingLabel, color) {
+                        offlineEffectSelectionOpen = true
+                        onOfflineSelectionStarted()
+                        effectMenuExpanded = true
+                    }
+                    DropdownMenu(expanded = effectMenuExpanded, onDismissRequest = {
+                        effectMenuExpanded = false
+                        if (offlineEffectSelectionOpen) {
+                            offlineEffectSelectionOpen = false
+                            onOfflineSelectionFinished()
+                        }
+                    }) {
                         effects.forEachIndexed { index, label ->
-                            DropdownMenuItem(text = { Text(label) }, onClick = { effectMenuExpanded = false; actions.setFxNativeType(module.index, index) })
+                            DropdownMenuItem(text = { Text(label) }, onClick = {
+                                effectMenuExpanded = false
+                                actions.setFxNativeType(module.index, index)
+                                offlineEffectSelectionOpen = false
+                                onOfflineSelectionFinished()
+                            })
                         }
                     }
                 }
@@ -1331,36 +1555,17 @@ private fun ModuleCard(module: UiModule, actions: PicoloActions, state: PicoloUi
                 ModelSelector(module.name, "SELECT CAPTURE", color) { actions.selectPackageCaptures(module.id) }
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    RotaryKnob("DRIVE", ((module.inGainDb / 2.4f).coerceIn(0f, 10f)), 0f..10f, "", Color(0xFFFF5266)) {
-                        actions.setNamInGain(module.index, (it * 2.4f).toDouble())
-                    }
-                    RotaryKnob("BASS", module.eqBands[0], -12f..12f, "dB", Color(0xFFD6E0E4)) {
-                        actions.setNamEq(module.index, 0, it.toDouble())
-                        actions.setNamEqEnabled(module.index, true)
-                    }
-                    RotaryKnob("MIDDLE", module.eqBands[1], -12f..12f, "dB", Color(0xFFD6E0E4)) {
-                        actions.setNamEq(module.index, 1, it.toDouble())
-                        actions.setNamEqEnabled(module.index, true)
-                    }
-                    RotaryKnob("TREBLE", module.eqBands[2], -12f..12f, "dB", Color(0xFFD6E0E4)) {
-                        actions.setNamEq(module.index, 2, it.toDouble())
-                        actions.setNamEqEnabled(module.index, true)
-                    }
-                    RotaryKnob("LEVEL", (((module.gainDb + 24f) / 36f) * 10f).coerceIn(0f, 10f), 0f..10f, "", PicoloBlue) {
-                        actions.setNamGain(module.index, ((it / 10f) * 36f - 24f).toDouble())
-                    }
+                    RotaryKnob("INPUT", module.inGainDb, -24f..24f, "dB", Color(0xFFFF5266)) { actions.setNamInGain(module.index, it.toDouble()) }
+                    RotaryKnob("OUTPUT", module.gainDb, -24f..24f, "dB", PicoloBlue) { actions.setNamGain(module.index, it.toDouble()) }
                 }
             } else {
                 ModelSelector(module.name, "Captures from this package", color) { actions.selectPackageCaptures(module.id) }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    RotaryKnob("GAIN", module.inGainDb, -24f..24f, "dB", color) { actions.setNamInGain(module.index, it.toDouble()) }
-                    RotaryKnob("BASS", module.eqBands[0], -12f..12f, "dB", color) { actions.setNamEq(module.index, 0, it.toDouble()) }
-                    RotaryKnob("MIDDLE", module.eqBands[1], -12f..12f, "dB", color) { actions.setNamEq(module.index, 1, it.toDouble()) }
-                    RotaryKnob("TREBLE", module.eqBands[2], -12f..12f, "dB", color) { actions.setNamEq(module.index, 2, it.toDouble()) }
-                    RotaryKnob("LEVEL", module.gainDb, -24f..12f, "dB", color) { actions.setNamGain(module.index, it.toDouble()) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    RotaryKnob("INPUT", module.inGainDb, -24f..24f, "dB", color) { actions.setNamInGain(module.index, it.toDouble()) }
+                    RotaryKnob("OUTPUT", module.gainDb, -24f..24f, "dB", color) { actions.setNamGain(module.index, it.toDouble()) }
                 }
             }
             if (expanded) {
@@ -1371,14 +1576,66 @@ private fun ModuleCard(module: UiModule, actions: PicoloActions, state: PicoloUi
                     }
                 } else if (module.type == "FX") {
                     Text("Space IR convolution", color = PicoloSecondary, fontSize = 12.sp)
-                } else if (module.moduleType != "PEDAL") {
+                } else {
+                    Button(
+                        onClick = { actions.resetNamParameters(module.index) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = PicoloSurfaceRaised),
+                    ) {
+                        Text("RESET PARAMETERS · KEEP NAM", color = color, fontWeight = FontWeight.SemiBold)
+                    }
                     RotaryKnob("MIX", module.mix, 0f..1f, "%", color) { actions.setNamMix(module.index, it.toDouble()) }
                     ToggleRow("EQ", module.eqEnabled, PicoloPurple) { actions.setNamEqEnabled(module.index, it) }
-                    ToggleRow("NORMALIZE", module.normalize, PicoloTeal) { actions.setNamNormalize(module.index, it) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(if (module.eqPre) "EQ PRE ✓" else "EQ PRE", modifier = Modifier.clickable { actions.setNamEqPosition(module.index, true) }.padding(8.dp), color = PicoloSecondary)
                         Text(if (!module.eqPre) "EQ POST ✓" else "EQ POST", modifier = Modifier.clickable { actions.setNamEqPosition(module.index, false) }.padding(8.dp), color = PicoloSecondary)
-                        Text(if (module.a2Full) "A2 FULL ✓" else "A2 LITE ✓", modifier = Modifier.clickable { actions.setNamQuality(module.index, !module.a2Full) }.padding(8.dp), color = PicoloSecondary)
+                        if (module.moduleType != "PEDAL") Text(if (module.a2Full) "A2 FULL ✓" else "A2 LITE ✓", modifier = Modifier.clickable { actions.setNamQuality(module.index, !module.a2Full) }.padding(8.dp), color = PicoloSecondary)
+                    }
+                    if (module.eqEnabled) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            (0 until 6).forEach { band ->
+                                val selected = selectedEqBand == band
+                                Surface(
+                                    modifier = Modifier.weight(1f).clickable { selectedEqBand = band },
+                                    color = if (selected) PicoloPurple.copy(alpha = .32f) else PicoloSurfaceRaised,
+                                    shape = RoundedCornerShape(6.dp),
+                                ) {
+                                    Column(Modifier.padding(vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("${band + 1}", color = if (selected) PicoloText else PicoloSecondary, fontSize = 12.sp)
+                                        Text("${module.eqFrequenciesHz.getOrElse(band) { 0f }.toInt()}Hz", color = PicoloSecondary, fontSize = 8.sp, maxLines = 1)
+                                    }
+                                }
+                            }
+                        }
+                        val band = selectedEqBand
+                        val bandTypes = when (band) {
+                            0 -> listOf("low_cut", "low_shelf")
+                            5 -> listOf("high_shelf", "high_cut")
+                            else -> listOf("bell")
+                        }
+                        androidx.compose.foundation.layout.Box {
+                            Text(
+                                "${module.eqTypes.getOrElse(band) { "bell" }.replace('_', ' ').uppercase()}  ·  BAND ${band + 1}  ·  ${module.eqFrequenciesHz.getOrElse(band) { 1000f }.let { if (it >= 1000f) "%.2f kHz".format(Locale.US, it / 1000f) else "%.0f Hz".format(Locale.US, it) }}",
+                                modifier = Modifier.clickable { eqTypeMenuExpanded = true }.padding(vertical = 6.dp),
+                                color = PicoloText, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            )
+                            DropdownMenu(expanded = eqTypeMenuExpanded, onDismissRequest = { eqTypeMenuExpanded = false }) {
+                                bandTypes.forEach { type -> DropdownMenuItem(text = { Text(type.replace('_', ' ').uppercase()) }, onClick = {
+                                    eqTypeMenuExpanded = false
+                                    actions.setNamEqType(module.index, band, type)
+                                }) }
+                            }
+                        }
+                        ValueSlider("GAIN", module.eqBands.getOrElse(band) { 0f }, -15f..15f, "dB") {
+                            actions.setNamEq(module.index, band, it.toDouble())
+                            actions.setNamEqEnabled(module.index, true)
+                        }
+                        LogValueSlider("FREQUENCY", module.eqFrequenciesHz.getOrElse(band) { 1000f }, 20f, 20000f, "Hz") {
+                            actions.setNamEqFrequency(module.index, band, it)
+                        }
+                        LogValueSlider("Q", module.eqQValues.getOrElse(band) { 1f }, 0.1f, 10f, "") {
+                            actions.setNamEqQ(module.index, band, it)
+                        }
                     }
                 }
             }
@@ -1470,7 +1727,11 @@ private fun GlobalControls(state: PicoloUiState, actions: PicoloActions) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("SIGNAL METERS", fontWeight = FontWeight.Bold, color = PicoloText, fontSize = 14.sp)
             Row(Modifier.fillMaxWidth().height(94.dp), verticalAlignment = Alignment.CenterVertically) {
-                MeterChannel("INPUT", if (state.running) state.inputDbFs else null, Modifier.weight(1f))
+                val inputMeter = state.inputDbFs.takeIf { state.running }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    MeterChannel("MAIN INPUT", inputMeter)
+                    InputGainAdvice(inputMeter)
+                }
                 Spacer(Modifier.size(1.dp, 62.dp).background(PicoloSurfaceRaised))
                 MeterChannel("OUTPUT", if (state.running) state.outputDbFs else null, Modifier.weight(1f))
             }
@@ -1498,6 +1759,8 @@ private fun GlobalControls(state: PicoloUiState, actions: PicoloActions) {
 
 @Composable
 private fun InputOutputCard(isInput: Boolean, state: PicoloUiState, actions: PicoloActions) {
+    val scope = rememberCoroutineScope()
+    var selectedInputChannel by remember { mutableStateOf<Int?>(null) }
     val accent = if (isInput) PicoloTeal else PicoloBlue
     val label = if (isInput) "INPUT" else "OUTPUT"
     val gain = if (isInput) state.inputGain else state.outputGain
@@ -1510,6 +1773,18 @@ private fun InputOutputCard(isInput: Boolean, state: PicoloUiState, actions: Pic
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("$label · LEVEL", color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             MeterChannel("${label} METER", if (state.running) meter else null)
+            if (isInput) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("INPUT CHANNEL", color = PicoloSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Button(
+                        onClick = { scope.launch { selectedInputChannel = actions.cycleInput() } },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    ) {
+                        Text(selectedInputChannel?.let { "CHANNEL ${it + 1}" } ?: "CHECK CHANNEL", fontSize = 10.sp)
+                    }
+                }
+                InputGainAdvice(meter.takeIf { state.running })
+            }
             ValueSlider(
                 "$label GAIN",
                 gain,
@@ -1520,6 +1795,17 @@ private fun InputOutputCard(isInput: Boolean, state: PicoloUiState, actions: Pic
             }
         }
     }
+}
+
+@Composable
+private fun InputGainAdvice(levelDbFs: Float?) {
+    val (advice, adviceColor) = when {
+        levelDbFs == null -> "START AUDIO TO METER INPUT" to PicoloSecondary
+        levelDbFs < -30f -> "LOW SIGNAL · RAISE INTERFACE GAIN" to PicoloYellow
+        levelDbFs > -3f -> "HOT SIGNAL · LOWER INTERFACE GAIN" to PicoloRed
+        else -> "INPUT LEVEL OK" to PicoloTeal
+    }
+    Text(advice, color = adviceColor, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
 }
 
 @Composable
@@ -1569,6 +1855,31 @@ private fun ValueSlider(label: String, value: Float, range: ClosedFloatingPointR
             Text(String.format(Locale.US, format, shown, unit), color = PicoloText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         }
         Slider(value = dragging.coerceIn(range), onValueChange = { dragging = it; onValueChange(it) }, valueRange = range)
+    }
+}
+
+@Composable
+private fun LogValueSlider(
+    label: String,
+    value: Float,
+    minimum: Float,
+    maximum: Float,
+    unit: String,
+    onValueChange: (Float) -> Unit,
+) {
+    fun toProgress(number: Float) = (kotlin.math.ln(number.coerceIn(minimum, maximum) / minimum) /
+        kotlin.math.ln(maximum / minimum)).coerceIn(0f, 1f)
+    fun fromProgress(progress: Float) = minimum * kotlin.math.exp(progress * kotlin.math.ln(maximum / minimum))
+    var progress by remember(label) { mutableStateOf(toProgress(value)) }
+    LaunchedEffect(value) { progress = toProgress(value) }
+    Column {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, color = PicoloSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            val shown = if (unit == "Hz" && value >= 1000f) "%.2f kHz".format(Locale.US, value / 1000f)
+                else if (unit == "Hz") "%.0f Hz".format(Locale.US, value) else "%.2f".format(Locale.US, value)
+            Text(shown, color = PicoloText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        }
+        Slider(value = progress, onValueChange = { progress = it; onValueChange(fromProgress(it)) }, valueRange = 0f..1f)
     }
 }
 
@@ -1680,6 +1991,8 @@ private fun FootswitchPage(state: PicoloUiState, modifier: Modifier) {
 @Composable
 private fun SettingsPage(state: PicoloUiState, actions: PicoloActions, modifier: Modifier) {
     val scope = rememberCoroutineScope()
+    var scanningUsb by remember { mutableStateOf(false) }
+    var usbScanResult by remember { mutableStateOf<String?>(null) }
     LazyColumn(modifier.fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text("Settings", color = PicoloText, fontSize = 24.sp, fontWeight = FontWeight.SemiBold) }
         item {
@@ -1709,8 +2022,51 @@ private fun SettingsPage(state: PicoloUiState, actions: PicoloActions, modifier:
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { actions.scanUsbAudio() }, modifier = Modifier.weight(1f).height(48.dp)) { Text("SCAN USB") }
+                Button(
+                    onClick = {
+                        if (!scanningUsb) {
+                            scope.launch {
+                                scanningUsb = true
+                                usbScanResult = try {
+                                    actions.scanUsbAudio()
+                                } catch (error: Exception) {
+                                    "USB scan failed: ${error.localizedMessage ?: error.javaClass.simpleName}"
+                                } finally {
+                                    scanningUsb = false
+                                }
+                            }
+                        }
+                    },
+                    enabled = !scanningUsb,
+                    modifier = Modifier.weight(1f).height(48.dp),
+                ) { Text(if (scanningUsb) "SCANNING…" else "SCAN USB") }
                 Button(onClick = { scope.launch { actions.cycleOutput() } }, modifier = Modifier.weight(1f).height(48.dp)) { Text("CYCLE OUTPUT") }
+            }
+        }
+    }
+    usbScanResult?.let { result ->
+        Dialog(onDismissRequest = { usbScanResult = null }) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = PicoloSurface,
+                shape = RoundedCornerShape(18.dp),
+                tonalElevation = 0.dp,
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Text("USB audio scan", color = PicoloText, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        result,
+                        modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                        color = PicoloSecondary,
+                        fontSize = 14.sp,
+                    )
+                    Button(onClick = { usbScanResult = null }, modifier = Modifier.fillMaxWidth()) {
+                        Text("CLOSE")
+                    }
+                }
             }
         }
     }

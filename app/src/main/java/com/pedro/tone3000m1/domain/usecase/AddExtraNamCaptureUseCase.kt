@@ -3,6 +3,7 @@ package com.pedro.tone3000m1.domain.usecase
 import com.pedro.tone3000m1.domain.engine.ExtraNamChainEngine
 import com.pedro.tone3000m1.domain.model.ExtraNamEntry
 import com.pedro.tone3000m1.domain.model.OnlineModel
+import com.pedro.tone3000m1.domain.model.NamEqDefaults
 import com.pedro.tone3000m1.domain.repository.ExtraNamChainRepository
 import java.io.File
 
@@ -22,14 +23,14 @@ internal class AddExtraNamCaptureUseCase(
             addedToEngine = true
 
             val index = engine.namBlockCount() - 1
-            val gainDb = if (moduleType == "PEDAL") -10.0f else -15.0f
+            val gainDb = 0f
             val normalize = moduleType != "PEDAL"
             val a2Full = moduleType == "AMP"
             engine.setBypass(index, false)
             engine.setInGain(index, 0.0f)
             engine.setMix(index, 1.0f)
             engine.setGain(index, gainDb)
-            for (band in 0 until 6) engine.setEqDb(index, band, 0.0f)
+            for (band in 0 until 6) engine.setEqBand(index, band, NamEqDefaults.types[band], NamEqDefaults.frequenciesHz[band], 0f, NamEqDefaults.qValues[band])
             engine.setEqPre(index, false)
             engine.setNormalize(index, normalize)
             engine.setEqEnabled(index, true)
