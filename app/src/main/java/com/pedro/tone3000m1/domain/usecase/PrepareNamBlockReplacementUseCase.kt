@@ -26,7 +26,7 @@ internal class PrepareNamBlockReplacementUseCase {
             imageUrl = imageUrl,
             bypass = false,
             moduleType = normalizedType,
-            a2Full = normalizedType == "AMP",
+            a2Full = false,
             gainDb = defaultGain(normalizedType),
             inGainDb = 0f,
             mix = 1f,

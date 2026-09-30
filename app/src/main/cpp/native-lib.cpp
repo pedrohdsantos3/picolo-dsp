@@ -2695,12 +2695,13 @@ namespace {
             }
             const bool wasRunning = isRunning();
             stop();
-            slimmable->SetSlimmableSize(full ? 1.0 : A2_LITE_SLIM_SIZE);
+            (void) full;
+            slimmable->SetSlimmableSize(A2_LITE_SLIM_SIZE);
             if (wasRunning) {
                 const auto result = start();
                 if (!result.starts_with("AUDIO ACTIVE")) return result;
             }
-            return full ? "A2 FULL ACTIVE" : "A2 LITE ACTIVE";
+            return "A2 LITE ACTIVE";
         }
 
         void setChainNamGainDb(int chainIndex, float db) {
@@ -3675,7 +3676,28 @@ namespace {
                 }
                 if (mOboePlayback) {
                     const auto result = mOboePlayback->getXRunCount();
-                    if (result) playbackXRuns = result.value();
+                    if (result) {
+                        playbackXRuns = result.value();
+                        const bool newXRun = mOboeLastPlaybackXRuns >= 0 &&
+                                playbackXRuns > mOboeLastPlaybackXRuns;
+                        mOboeLastPlaybackXRuns = playbackXRuns;
+                        if (newXRun) {
+                            const int32_t burst = mOboePlayback->getFramesPerBurst();
+                            const int32_t current = mOboePlayback->getBufferSizeInFrames();
+                            const int32_t capacity = mOboePlayback->getBufferCapacityInFrames();
+                            if (burst > 0 && current > 0 && capacity > current) {
+                                const int32_t ceiling = std::min(capacity, burst * 32);
+                                const int32_t requested = std::min(ceiling, current + burst);
+                                if (requested > current) {
+                                    const auto adjusted = mOboePlayback->setBufferSizeInFrames(requested);
+                                    if (adjusted && adjusted.value() > current) {
+                                        LOGI("Raised Oboe output buffer after xrun: %d -> %d frames (xruns=%d)",
+                                             current, adjusted.value(), playbackXRuns);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 } else if (mAAudioPlayback) {
                     const int32_t count = AAudioStream_getXRunCount(mAAudioPlayback);
                     if (count >= 0) playbackXRuns = count;
@@ -4893,7 +4915,23 @@ namespace {
 
             {
                 std::lock_guard<std::mutex> lock(mAudioStreamMutex);
-                result = outputBuilder.openStream(mOboePlayback);
+            result = outputBuilder.openStream(mOboePlayback);
+            }
+
+            const int32_t outputBurst = mOboePlayback->getFramesPerBurst();
+            const int32_t outputCapacity = mOboePlayback->getBufferCapacityInFrames();
+            {
+                std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+                mOboeLastPlaybackXRuns = -1;
+                if (outputBurst > 0 && outputCapacity > 0) {
+                    const int32_t requested = std::min(outputCapacity, outputBurst * 16);
+                    const auto adjusted = mOboePlayback->setBufferSizeInFrames(requested);
+                    if (adjusted) {
+                        LOGI("Configured Oboe output buffer: %d frames (%d burst periods), capacity=%d",
+                             adjusted.value(), outputBurst > 0 ? adjusted.value() / outputBurst : 0,
+                             outputCapacity);
+                    }
+                }
             }
             if (result != oboe::Result::OK || !mOboePlayback) {
                 error = std::string("Oboe could not open EVO4 output: ") + oboe::convertToText(result);
@@ -4944,17 +4982,19 @@ namespace {
             mUsingOboeUsbAudio = true;
             mDeviceName = "EVO4 via Oboe";
 
-            LOGI("Opened EVO4 through Oboe (%s): capture id=%d/%d %uch %dHz burst=%d, playback id=%d/%d %uch %dHz burst=%d, block=%u",
+            LOGI("Opened EVO4 through Oboe (%s): capture id=%d/%d %uch %dHz burst=%d, playback id=%d/%d %uch %dHz burst=%d buffer=%d, block=%u",
                  sharingMode == oboe::SharingMode::Exclusive ? "exclusive" : "shared",
                  inputDeviceId, actualInputDeviceId, mCaptureChannels, captureRate,
                  mOboeCapture->getFramesPerBurst(), outputDeviceId, actualOutputDeviceId,
-                 mPlaybackChannels, playbackRate, mOboePlayback->getFramesPerBurst(), mBlockSize);
+                 mPlaybackChannels, playbackRate, mOboePlayback->getFramesPerBurst(),
+                 mOboePlayback->getBufferSizeInFrames(), mBlockSize);
             return true;
         }
 
         void closeOboeUsbAudio() {
             mUsingOboeUsbAudio = false;
             std::lock_guard<std::mutex> lock(mAudioStreamMutex);
+            mOboeLastPlaybackXRuns = -1;
             if (mOboePlayback) {
                 mOboePlayback->requestStop();
                 mOboePlayback->close();
@@ -7444,6 +7484,7 @@ namespace {
         bool mUsingAndroidUsbAudio = false;
         std::shared_ptr<oboe::AudioStream> mOboeCapture;
         std::shared_ptr<oboe::AudioStream> mOboePlayback;
+        int32_t mOboeLastPlaybackXRuns = -1;
         StereoFloatFrameRing<kOboeRingCapacityFrames> mOboeCaptureRing;
         StereoFloatFrameRing<kOboeRingCapacityFrames> mOboePlaybackRing;
         std::array<float, kMaxOboeCallbackFrames * 2> mOboeCallbackCaptureBuffer{};

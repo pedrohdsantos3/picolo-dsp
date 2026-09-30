@@ -32,7 +32,7 @@ internal class RebuildNamChainUseCase(private val engine: NamChainRebuildEngine)
             engine.setBlockEqPre(index, entry.eqPre)
             engine.setBlockEqEnabled(index, entry.eqEnabled)
             engine.setBlockNormalize(index, entry.normalize && entry.moduleType != "PEDAL")
-            engine.setBlockQuality(index, entry.a2Full && entry.moduleType == "AMP")
+            engine.setBlockQuality(index, false)
         }
 
         if (wasRunning) {

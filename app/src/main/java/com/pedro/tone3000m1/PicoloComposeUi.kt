@@ -1589,7 +1589,7 @@ private fun ModuleCard(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(if (module.eqPre) "EQ PRE ✓" else "EQ PRE", modifier = Modifier.clickable { actions.setNamEqPosition(module.index, true) }.padding(8.dp), color = PicoloSecondary)
                         Text(if (!module.eqPre) "EQ POST ✓" else "EQ POST", modifier = Modifier.clickable { actions.setNamEqPosition(module.index, false) }.padding(8.dp), color = PicoloSecondary)
-                        if (module.moduleType != "PEDAL") Text(if (module.a2Full) "A2 FULL ✓" else "A2 LITE ✓", modifier = Modifier.clickable { actions.setNamQuality(module.index, !module.a2Full) }.padding(8.dp), color = PicoloSecondary)
+                        if (module.moduleType != "PEDAL") Text("A2 LITE · FIXO PARA TESTE", modifier = Modifier.padding(8.dp), color = PicoloSecondary)
                     }
                     if (module.eqEnabled) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {

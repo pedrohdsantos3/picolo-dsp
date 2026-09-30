@@ -25,7 +25,7 @@ internal class AddExtraNamCaptureUseCase(
             val index = engine.namBlockCount() - 1
             val gainDb = 0f
             val normalize = moduleType != "PEDAL"
-            val a2Full = moduleType == "AMP"
+            val a2Full = false
             engine.setBypass(index, false)
             engine.setInGain(index, 0.0f)
             engine.setMix(index, 1.0f)

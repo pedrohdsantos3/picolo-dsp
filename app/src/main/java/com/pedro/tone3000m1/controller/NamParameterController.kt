@@ -94,16 +94,12 @@ internal class NamParameterController(
     fun setQuality(chainIndex: Int, full: Boolean) {
         val entries = readEntries()
         val current = entries.getOrNull(chainIndex) ?: return
-        if (full && current.moduleType != "AMP") {
-            publishStatus("A2 Full is available for AMP blocks only.")
-            return
-        }
-        val result = setQualityNative(chainIndex, full)
+        val result = setQualityNative(chainIndex, false)
         if (!result.startsWith("A2 ")) {
             publishStatus(result)
             return
         }
-        val updated = current.copy(a2Full = full)
+        val updated = current.copy(a2Full = false)
         entries[chainIndex] = updated
         persistEntry(chainIndex, updated)
         publishStatus(result)
@@ -114,10 +110,7 @@ internal class NamParameterController(
         val entries = readEntries()
         val current = entries.getOrNull(chainIndex) ?: return
         val isPedal = current.moduleType.equals("PEDAL", ignoreCase = true)
-        val defaultFull = !isPedal
-        val qualityResult = if (isPedal) null else setQualityNative(chainIndex, defaultFull)
-        val expectedQualityResult = if (defaultFull) "A2 FULL ACTIVE" else "A2 LITE ACTIVE"
-        val full = if (qualityResult == expectedQualityResult) defaultFull else current.a2Full
+        val qualityResult = if (isPedal) null else setQualityNative(chainIndex, false)
         val updated = current.copy(
             bypass = false,
             gainDb = 0f,
@@ -135,7 +128,7 @@ internal class NamParameterController(
             eqPre = false,
             eqEnabled = true,
             normalize = !isPedal,
-            a2Full = full,
+            a2Full = false,
         )
         entries[chainIndex] = updated
         persistEntry(chainIndex, updated)
@@ -149,7 +142,7 @@ internal class NamParameterController(
         setEqEnabledNative(chainIndex, true)
         setNormalizeNative(chainIndex, !isPedal)
         publishStatus(
-            if (qualityResult != null && qualityResult != expectedQualityResult) qualityResult
+            if (qualityResult != null && qualityResult != "A2 LITE ACTIVE") qualityResult
             else "Block parameters reset. NAM kept loaded."
         )
     }

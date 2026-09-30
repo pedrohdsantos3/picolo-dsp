@@ -1469,7 +1469,7 @@ class MainActivity : AppCompatActivity() {
     // ========================================================
 
     private fun readExtraNamChain(): MutableList<ExtraNamEntry> =
-        namChainRepository.readExtraNamChain()
+        namChainRepository.readExtraNamChain().map { it.copy(a2Full = false) }.toMutableList()
 
     private fun persistExtraNamChain(entries: List<ExtraNamEntry>) =
         namChainRepository.persistExtraNamChain(entries)
@@ -1505,7 +1505,7 @@ class MainActivity : AppCompatActivity() {
                     eqPre = prefs.getBoolean(PREF_NAM_EQ_PRE, false),
                     eqEnabled = prefs.getBoolean(PREF_NAM_EQ_ENABLED, true),
                     normalize = prefs.getBoolean(PREF_NAM_NORMALIZE, true),
-                    a2Full = prefs.getBoolean(PREF_NAM_A2_FULL, false),
+                    a2Full = false,
                     imageUrl = prefs.getString(PREF_LAST_TONE_IMAGE, "") ?: "",
                     moduleType = prefs.getString(PREF_LAST_MODEL_TYPE, "AMP") ?: "AMP",
                 )
@@ -1598,7 +1598,8 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    private fun persistNamChainEntries(entries: List<ExtraNamEntry>) {
+    private fun persistNamChainEntries(requestedEntries: List<ExtraNamEntry>) {
+        val entries = requestedEntries.map { it.copy(a2Full = false) }
         if (entries.isEmpty()) {
             clearActiveToneAsync()
             persistExtraNamChain(emptyList())
@@ -1646,7 +1647,7 @@ class MainActivity : AppCompatActivity() {
             .putBoolean(PREF_NAM_EQ_PRE, first.eqPre)
             .putBoolean(PREF_NAM_EQ_ENABLED, first.eqEnabled)
             .putBoolean(PREF_NAM_NORMALIZE, first.normalize)
-            .putBoolean(PREF_NAM_A2_FULL, first.a2Full)
+            .putBoolean(PREF_NAM_A2_FULL, false)
             .apply()
 
         persistExtraNamChain(entries.drop(1))
@@ -1683,7 +1684,7 @@ class MainActivity : AppCompatActivity() {
                 .putBoolean(PREF_NAM_EQ_PRE, entry.eqPre)
                 .putBoolean(PREF_NAM_EQ_ENABLED, entry.eqEnabled)
                 .putBoolean(PREF_NAM_NORMALIZE, entry.normalize)
-                .putBoolean(PREF_NAM_A2_FULL, entry.a2Full)
+                .putBoolean(PREF_NAM_A2_FULL, false)
                 .apply {
                     repeat(6) { band ->
                         putFloat(PresetPreferenceKeys.NAM_EQ_FREQUENCY_PREFIX + band, entry.eqFrequenciesHz.getOrElse(band) { NamEqDefaults.frequenciesHz[band] })
@@ -1698,7 +1699,7 @@ class MainActivity : AppCompatActivity() {
         val extraIndex = chainIndex - if (hasPrimary) 1 else 0
         val extras = readExtraNamChain()
         if (extraIndex !in extras.indices) return
-        extras[extraIndex] = entry
+        extras[extraIndex] = entry.copy(a2Full = false)
         persistExtraNamChain(extras)
     }
 
@@ -1723,7 +1724,7 @@ class MainActivity : AppCompatActivity() {
             audioEngine.nativeSetChainNamEqPre(index, entry.eqPre)
             audioEngine.nativeSetChainNamEqEnabled(index, entry.eqEnabled)
             audioEngine.nativeSetChainNamNormalize(index, entry.normalize && entry.moduleType != "PEDAL")
-            audioEngine.nativeSetChainNamQuality(index, entry.a2Full && entry.moduleType == "AMP")
+            audioEngine.nativeSetChainNamQuality(index, false)
         }
     }
 
@@ -2211,7 +2212,7 @@ class MainActivity : AppCompatActivity() {
         val entries = readNamChainEntries()
         if (entries.isNotEmpty()) {
             persistNamChainEntries(entries.map { entry ->
-                entry.copy(a2Full = entry.moduleType == "AMP")
+                entry.copy(a2Full = false)
             })
         }
 
